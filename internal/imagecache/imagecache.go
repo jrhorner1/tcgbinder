@@ -41,7 +41,7 @@ func Fetch(url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "MTGCollectorNativeApp/1.0")
+	req.Header.Set("User-Agent", "TCGBinder/0.1")
 	req.Header.Set("Accept", "*/*")
 
 	resp, err := httpClient.Do(req)

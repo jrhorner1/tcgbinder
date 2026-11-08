@@ -1,4 +1,4 @@
-module github.com/jrhorner1/mtgmanager
+module github.com/jrhorner1/tcgbinder
 
 go 1.26.6
 

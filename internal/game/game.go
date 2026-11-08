@@ -6,7 +6,8 @@ package game
 import (
 	"net/url"
 
-	"github.com/jrhorner1/mtgmanager/internal/collection"
+	"github.com/jrhorner1/tcgbinder/internal/collection"
+	"github.com/jrhorner1/tcgbinder/internal/scan"
 )
 
 // Game is a trading card game the app can manage.
@@ -18,35 +19,65 @@ type Game interface {
 
 	// Open prepares the game to use dir, its private data folder, for caches.
 	Open(dir string) error
-	// Upgrade converts entries saved by older versions of this game's code. It returns
-	// true if the card changed.
-	Upgrade(c *collection.Card) bool
 
 	// Catalog lookups. Returned cards carry catalog data only; ownership fields
 	// (finish, condition, quantity, price paid, date) are left for the caller.
 	Search(text, set, nextPage string) (SearchPage, error)
 	SearchHints() (text, set string) // placeholder text for the Add dialog
 	Refresh(ids []string, progress func(done, total int)) (map[string]collection.CatalogUpdate, error)
-	CardText(id string) (typeLine, text string, err error)
 	Sets() (map[string]collection.SetInfo, error) // keyed by uppercase set code
 
 	// Import reads another app's export (CSV) and matches it to catalog printings.
 	Import(data []byte, progress func(done, total int)) ([]collection.Card, ImportReport, error)
 
+	// Printings returns every printing of the same card (e.g. for moving a card to
+	// a different set), newest first.
+	Printings(c collection.Card) ([]collection.Card, error)
+	// SetCards lists every card in a set (by uppercase code), in collector-number order.
+	SetCards(code string) ([]collection.Card, error)
+
 	// Presentation.
-	Finishes() []string              // finish filter options
+	Finishes() []string              // finish IDs as stored, e.g. "nonfoil"
+	FinishName(finish string) string // display name, e.g. "Normal"
 	Rarities() []string              // rarity filter options, lowest first
 	Filters() []Filter               // extra filters shown with set/rarity/finish
 	Details(c collection.Card) []Row // extra rows in the card editor
 	CardLink(c collection.Card) (label string, link *url.URL)
 }
 
-// PriceHistorySource is implemented by games that can backfill daily prices.
+// PriceHistorySource is implemented by games that can load daily price history (Tools → Load price history).
 type PriceHistorySource interface {
 	// PriceHistory returns daily prices for the cards: ID -> finish -> date -> USD.
 	PriceHistory(cards []collection.Card, status func(string)) (map[string]map[string]map[string]float64, error)
 	// PriceHistoryInfo describes the source for the user, e.g. its size and window.
 	PriceHistoryInfo() string
+}
+
+// Scanner is implemented by games that can recognize a card from a photo: the text
+// read off the card (its name, set code, collector number, ...) is looked up in the
+// game's catalog.
+type Scanner interface {
+	// ScanKey summarizes what a reading says about the card, e.g. "shock|m19|156",
+	// and whether it says enough to look the card up. The camera captures once two
+	// readings in a row give the same complete key, so a blurry frame isn't used.
+	ScanKey(r scan.Reading) (key string, complete bool)
+	// Identify looks up the card a reading describes.
+	Identify(r scan.Reading) (ScanResult, error)
+}
+
+// ScanResult is the outcome of identifying a scanned card.
+type ScanResult struct {
+	// Read describes what was read off the card, e.g. "Shock · M19 · 156".
+	Read string
+	// Name is the card name read (or matched), for searching by hand.
+	Name string
+	// Candidates are the printings it could be, best first. Empty if nothing matched.
+	Candidates []collection.Card
+	// Exact reports that the first candidate is certainly the printing scanned (its
+	// set and collector number were read and agree with the name).
+	Exact bool
+	// Note explains a partial match, e.g. that the set couldn't be read.
+	Note string
 }
 
 // SearchPage is one page of catalog search results.

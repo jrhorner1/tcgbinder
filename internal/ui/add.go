@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -13,13 +14,13 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
-	"github.com/jrhorner1/mtgmanager/internal/collection"
-	"github.com/jrhorner1/mtgmanager/internal/imagecache"
+	"github.com/jrhorner1/tcgbinder/internal/collection"
+	"github.com/jrhorner1/tcgbinder/internal/imagecache"
 )
 
 // resultDetail is the second line of a search result row, e.g. "M19 #201 · Mythic · 2018 · $41.88".
 func resultDetail(c *collection.Card, finishes []string) string {
-	parts := []string{setNumber(strings.ToUpper(c.Set), c.Number)}
+	parts := []string{setNumber(strings.ToUpper(c.Set), c.CollectorNumber)}
 	if c.Rarity != "" {
 		parts = append(parts, titleCase(c.Rarity))
 	}
@@ -41,7 +42,10 @@ func resultDetail(c *collection.Card, finishes []string) string {
 
 // showAddDialog searches Scryfall, lets the user pick the exact printing from every
 // result, and adds it to the collection.
-func (ui *App) showAddDialog() {
+func (ui *App) showAddDialog() { ui.showAddDialogFor("", "") }
+
+// showAddDialogFor opens Add already searching for text in set (either may be empty).
+func (ui *App) showAddDialogFor(prefillText, prefillSet string) {
 	var (
 		results               []collection.Card
 		nextPage              string
@@ -107,12 +111,15 @@ func (ui *App) showAddDialog() {
 	qtyEntry.SetText("1")
 	priceEntry := widget.NewEntry()
 	priceEntry.SetPlaceHolder("0.00")
-	dateEntry := widget.NewEntry()
-	dateEntry.SetText(time.Now().Format("2006-01-02"))
-	finishSelect := widget.NewSelect([]string{"nonfoil"}, nil)
-	finishSelect.SetSelected("nonfoil")
+	defaultDate := ""
+	if ui.settings.Get().DefaultDate == "today" {
+		defaultDate = time.Now().Format("2006-01-02")
+	}
+	dateEntry := newDatePicker(defaultDate)
+	finishSelect := newFinishPicker(ui.g.game)
+	finishSelect.SetFinishes(nil, "")
 	condSelect := widget.NewSelect([]string{"NM", "LP", "MP", "HP", "DMG"}, nil)
-	condSelect.SetSelected("NM")
+	condSelect.SetSelected(ui.settings.Get().DefaultCondition)
 
 	detailCols := 2
 	if isMobile() {
@@ -125,7 +132,7 @@ func (ui *App) showAddDialog() {
 			widget.NewFormItem("Acquired", dateEntry),
 		),
 		widget.NewForm(
-			widget.NewFormItem("Finish", finishSelect),
+			widget.NewFormItem("Finish", finishSelect.Select),
 			widget.NewFormItem("Condition", condSelect),
 		),
 	)
@@ -213,24 +220,23 @@ func (ui *App) showAddDialog() {
 		selected = &card
 		addButton.Enable()
 
-		finishes := card.Finishes
-		if len(finishes) == 0 {
-			finishes = []string{"nonfoil"}
+		// Offer only this printing's finishes, keeping the user's choice when it has it.
+		prev := finishSelect.Finish()
+		if !slices.Contains(card.Finishes, prev) {
+			prev = ""
 		}
-		prev := finishSelect.Selected
-		finishSelect.SetOptions(finishes)
-		finishSelect.SetSelected(finishes[0])
-		for _, f := range finishes {
-			if f == prev {
-				finishSelect.SetSelected(prev) // keep the user's finish choice when this printing has it
-			}
-		}
+		finishSelect.SetFinishes(card.Finishes, prev)
 
 		rulesLabel.SetText(fmt.Sprintf("%s\n%s — %s\n%s\n\n%s",
-			card.Name, card.SetName, setNumber(strings.ToUpper(card.Set), card.Number), card.TypeLine, card.Text))
+			card.Name, card.SetName, setNumber(strings.ToUpper(card.Set), card.CollectorNumber), card.TypeLine, card.RulesText))
 
 		imageGen++
 		gen := imageGen
+		if !ui.settings.Get().ShowImages {
+			cardImage.Resource = theme.FileImageIcon()
+			cardImage.Refresh()
+			return
+		}
 		cardImage.Resource = theme.DownloadIcon()
 		cardImage.Refresh()
 		go func() {
@@ -268,14 +274,11 @@ func (ui *App) showAddDialog() {
 			}
 		}
 
-		entry := *selected // catalog data from the search result
-		entry.Finish = finishSelect.Selected
-		entry.Condition = collection.Condition(condSelect.Selected)
-		entry.Quantity = qty
-		entry.PurchasePrice = price
-		entry.AcquiredDate = strings.TrimSpace(dateEntry.Text)
-		// Adding a printing you already own (same finish/condition) increases its quantity.
-		_, merged, err := ui.g.store.AddCards([]collection.Card{entry})
+		newCard := *selected // catalog data from the search result
+		newCard.AddPurchase(finishSelect.Finish(), collection.Condition(condSelect.Selected),
+			collection.Purchase{Quantity: qty, PricePaid: price, AcquiredDate: pickedDate(dateEntry)})
+		// Adding a printing you already own adds these copies to its card.
+		_, merged, err := ui.g.store.AddCards([]collection.Card{newCard})
 		if err != nil {
 			dialog.ShowError(fmt.Errorf("save failed: %w", err), ui.window)
 			return
@@ -284,9 +287,9 @@ func (ui *App) showAddDialog() {
 		ui.RefreshDataIndex()
 		verb := "Added"
 		if merged > 0 {
-			verb = "Added to existing entry:"
+			verb = "Added to the copies you own:"
 		}
-		ui.statusLabel.SetText(fmt.Sprintf("%s %d× %s (%s)", verb, qty, selected.Name, setNumber(strings.ToUpper(selected.Set), selected.Number)))
+		ui.statusLabel.SetText(fmt.Sprintf("%s %d× %s (%s)", verb, qty, selected.Name, setNumber(strings.ToUpper(selected.Set), selected.CollectorNumber)))
 	})
 	addButton.Importance = widget.HighImportance
 	addButton.Disable()
@@ -299,4 +302,9 @@ func (ui *App) showAddDialog() {
 	d.Resize(size)
 	d.Show()
 	ui.window.Canvas().Focus(nameEntry)
+	if prefillText != "" || prefillSet != "" {
+		nameEntry.SetText(prefillText)
+		setEntry.SetText(prefillSet)
+		runSearch()
+	}
 }

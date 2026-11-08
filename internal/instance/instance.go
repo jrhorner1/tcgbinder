@@ -16,7 +16,7 @@ import (
 var ErrRunning = errors.New("another copy of the app is already running")
 
 // LockFileName is created in the data folder; it holds the owner's process ID.
-const LockFileName = "mtgmanager.lock"
+const LockFileName = "tcgbinder.lock"
 
 // Lock is a held single-instance lock. Keep it for the life of the process.
 type Lock struct {

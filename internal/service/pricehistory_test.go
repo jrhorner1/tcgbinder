@@ -8,13 +8,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jrhorner1/mtgmanager/internal/collection"
-	"github.com/jrhorner1/mtgmanager/internal/games/mtg"
-	"github.com/jrhorner1/mtgmanager/internal/games/mtg/mtgjson"
+	"github.com/jrhorner1/tcgbinder/internal/collection"
+	"github.com/jrhorner1/tcgbinder/internal/games/mtg"
+	"github.com/jrhorner1/tcgbinder/internal/games/mtg/mtgjson"
 	"github.com/ulikunitz/xz"
 )
 
-func TestBackfillMergesHistory(t *testing.T) {
+func TestLoadPriceHistoryMergesHistory(t *testing.T) {
 	var xzBuf bytes.Buffer
 	xw, _ := xz.NewWriter(&xzBuf)
 	xw.Write([]byte(`{"meta":{},"data":{"u1":{"paper":{"tcgplayer":{"retail":{"normal":{"2026-10-01":0.5,"2026-11-01":0.75}}}}}}}`))
@@ -34,16 +34,25 @@ func TestBackfillMergesHistory(t *testing.T) {
 	defer srv.Close()
 
 	store, _ := collection.OpenStore(filepath.Join(t.TempDir(), "collection.json"), mtg.ID)
-	store.AddCards([]collection.Card{{ID: "sf1", Set: "M19", Finish: "nonfoil", Quantity: 2}, {ID: "sf2", Set: "M19", Finish: "nonfoil", Quantity: 1}})
+	store.AddCards([]collection.Card{
+		held(collection.Card{ID: "sf1", Set: "M19"}, "nonfoil", "", collection.Purchase{Quantity: 2}),
+		held(collection.Card{ID: "sf2", Set: "M19"}, "nonfoil", "", collection.Purchase{Quantity: 1}),
+	})
 	g := &mtg.Game{MTGJSON: &mtgjson.Client{BaseURL: srv.URL, HTTP: srv.Client()}}
 	svc := FromStore(g, store)
 	h := svc.Prices
 	var msgs []string
-	n, err := svc.Backfill(func(m string) { msgs = append(msgs, m) })
+	n, err := svc.LoadPriceHistory(func(m string) { msgs = append(msgs, m) })
 	if err != nil || n != 1 {
-		t.Fatalf("backfill = %d, %v", n, err)
+		t.Fatalf("load price history = %d, %v", n, err)
 	}
-	if h.Cards["sf1"]["nonfoil"]["2026-11-01"] != 0.75 || h.BackfilledOn() == "" || len(msgs) == 0 {
+	if p, _ := h.Price("sf1", "nonfoil", "2026-11-01"); p != 0.75 || h.HistoryLoadedOn() == "" || len(msgs) == 0 {
 		t.Fatalf("history = %+v, msgs = %v", h.Cards, msgs)
 	}
+}
+
+// held gives c copies in one finish and condition (test fixtures).
+func held(c collection.Card, finish string, cond collection.Condition, l collection.Purchase) collection.Card {
+	c.AddPurchase(finish, cond, l)
+	return c
 }

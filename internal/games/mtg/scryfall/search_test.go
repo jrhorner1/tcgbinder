@@ -3,8 +3,8 @@ package scryfall_test
 import (
 	"testing"
 
-	"github.com/jrhorner1/mtgmanager/internal/games/mtg/scryfall"
-	"github.com/jrhorner1/mtgmanager/internal/games/mtg/scryfall/scryfalltest"
+	"github.com/jrhorner1/tcgbinder/internal/games/mtg/scryfall"
+	"github.com/jrhorner1/tcgbinder/internal/games/mtg/scryfall/scryfalltest"
 )
 
 func TestBuildSearchQuery(t *testing.T) {

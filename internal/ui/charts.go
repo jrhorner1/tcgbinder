@@ -7,9 +7,10 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
-	"github.com/jrhorner1/mtgmanager/internal/collection"
+	"github.com/jrhorner1/tcgbinder/internal/collection"
 )
 
 var (
@@ -57,6 +58,28 @@ type BarChart struct {
 	Items []BarItem
 	Max   float64 // scale maximum; 0 means the largest item value
 	Color color.Color
+	// OnTapped, if set, is called with the index of the row tapped.
+	OnTapped func(i int)
+}
+
+// rowHeight matches the renderer's rows, so a tap can find its row.
+func (b *BarChart) rowHeight() float32 {
+	return chartText("Ag", theme.TextSize(), color.Black).MinSize().Height + theme.Padding()*2
+}
+
+// Tapped calls OnTapped with the row under the tap.
+func (b *BarChart) Tapped(ev *fyne.PointEvent) {
+	if i := int(ev.Position.Y / b.rowHeight()); b.OnTapped != nil && i >= 0 && i < len(b.Items) {
+		b.OnTapped(i)
+	}
+}
+
+// Cursor shows a pointer over rows that open something.
+func (b *BarChart) Cursor() desktop.Cursor {
+	if b.OnTapped != nil {
+		return desktop.PointerCursor
+	}
+	return desktop.DefaultCursor
 }
 
 func NewBarChart(items []BarItem, max float64, c color.Color) *BarChart {

@@ -3,24 +3,24 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MTG Manager</title>
+<title>TCG Binder</title>
 <link rel="icon" href="icon.png">
 <link rel="apple-touch-icon" href="icon.png">
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
 <header class="topbar">
-  <a class="brand" href="#/home"><img src="icon.png" alt=""><span>MTG Manager</span></a>
+  <a class="brand" href="#/home"><img src="icon.png" alt=""><span>TCG Binder</span></a>
   <select id="game" aria-label="Game" hidden></select>
   <nav id="nav">
     <a href="#/home" data-view="home">Home</a>
     <a href="#/collection" data-view="collection">Collection</a>
+    <a href="#/tools" data-view="tools">Tools</a>
+    <a href="#/settings" data-view="settings">Settings</a>
     <a href="#/add" data-view="add">Add</a>
-    <a href="#/import" data-view="import">Import</a>
   </nav>
   <div class="actions">
-    <button id="refresh" type="button">Refresh prices</button>
-    <a id="export" class="button" href="#" download>Export</a>
+    <form id="globalsearch" role="search"><input type="search" id="gsq" placeholder="Search all cards" aria-label="Search all cards"></form>
   </div>
 </header>
 <main id="main"><p class="muted">Loading…</p></main>

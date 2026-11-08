@@ -3,6 +3,8 @@ package ui
 import (
 	"fmt"
 	"io"
+	"os"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -11,10 +13,11 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-// ImportButton imports into the active game: a CSV export from another collection
+// startImport imports into the active game: a CSV export from another collection
 // app, or a collection .json file written by this app (a backup or another device's).
-func (ui *App) ImportButton(window fyne.Window) *widget.Button {
-	return widget.NewButton("Import", func() {
+func (ui *App) startImport() {
+	window := ui.window
+	{
 		fileDialog := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
 			if err != nil {
 				dialog.ShowError(fmt.Errorf("file access error: %w", err), window)
@@ -35,7 +38,36 @@ func (ui *App) ImportButton(window fyne.Window) *widget.Button {
 		fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".csv", ".CSV", ".json", ".JSON"}))
 		fileDialog.Resize(fyne.NewSize(700, 500))
 		fileDialog.Show()
-	})
+	}
+}
+
+// exportCollection saves the active game's collection file where the user chooses;
+// Import accepts it (e.g. as a backup or to move to another device).
+func (ui *App) exportCollection() {
+	gs := ui.g
+	data, err := os.ReadFile(gs.store.FilePath())
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("could not read the collection: %w", err), ui.window)
+		return
+	}
+	save := dialog.NewFileSave(func(w fyne.URIWriteCloser, err error) {
+		if err != nil {
+			dialog.ShowError(err, ui.window)
+			return
+		}
+		if w == nil {
+			return // cancelled
+		}
+		defer w.Close()
+		if _, err := w.Write(data); err != nil {
+			dialog.ShowError(fmt.Errorf("export failed: %w", err), ui.window)
+			return
+		}
+		ui.statusLabel.SetText("Exported " + gs.game.Name() + " collection to " + w.URI().Name())
+	}, ui.window)
+	save.SetFileName(fmt.Sprintf("%s-collection-%s.json", gs.game.ID(), time.Now().Format("2006-01-02")))
+	save.Resize(fyne.NewSize(700, 500))
+	save.Show()
 }
 
 func (ui *App) runImport(data []byte, window fyne.Window) {
@@ -63,7 +95,7 @@ func (ui *App) runImport(data []byte, window fyne.Window) {
 				return
 			}
 			ui.RefreshDataIndex()
-			ui.statusLabel.SetText(fmt.Sprintf("Imported %d cards from %s", res.Copies, res.Report.Format))
+			ui.statusLabel.SetText(fmt.Sprintf("Imported %d cards from %s", res.Cards, res.Report.Format))
 
 			text := widget.NewLabel(res.Summary())
 			text.Wrapping = fyne.TextWrapWord

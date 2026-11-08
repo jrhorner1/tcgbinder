@@ -1,8 +1,12 @@
 package ui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/jrhorner1/tcgbinder/internal/collection"
+	"github.com/jrhorner1/tcgbinder/internal/game"
 )
 
 // formatUSD renders 1234.5 as "$1,234.50".
@@ -33,4 +37,30 @@ func setNumber(set, number string) string {
 		return set
 	}
 	return set + " · " + number
+}
+
+// copiesSummary describes a card's copies compactly: "×3" when they're all in the
+// default finish and near mint, otherwise per finish, e.g. "Normal ×2 · Foil ×1 (1 LP)".
+func copiesSummary(c collection.Card, g game.Game) string {
+	finishes := c.OwnedFinishes(g.Finishes()...)
+	var parts []string
+	simple := len(finishes) == 1 && len(g.Finishes()) > 0 && finishes[0] == g.Finishes()[0]
+	for _, f := range finishes {
+		var worn []string
+		for _, cond := range collection.Conditions[1:] {
+			if n := c.ConditionCopyCount(f, cond); n > 0 {
+				worn = append(worn, fmt.Sprintf("%d %s", n, cond))
+				simple = false
+			}
+		}
+		part := fmt.Sprintf("%s ×%d", g.FinishName(f), c.FinishCopyCount(f))
+		if len(worn) > 0 {
+			part += " (" + strings.Join(worn, ", ") + ")"
+		}
+		parts = append(parts, part)
+	}
+	if simple {
+		return fmt.Sprintf("×%d", c.CopyCount())
+	}
+	return strings.Join(parts, " · ")
 }

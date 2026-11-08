@@ -8,7 +8,7 @@ import (
 )
 
 // Version is the release version; keep it in step with FyneApp.toml. Builds can
-// override it: go build -ldflags "-X github.com/jrhorner1/mtgmanager/internal/version.Version=1.2.3"
+// override it: go build -ldflags "-X github.com/jrhorner1/tcgbinder/internal/version.Version=1.2.3"
 var Version = "0.1.0"
 
 // String is the one-line version shown by --version.

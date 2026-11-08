@@ -72,11 +72,33 @@ func BuildSearchQuery(text, setCode string) (string, error) {
 // then newest first. Pass the previous page's NextPage to continue; a search with no
 // matches returns an empty page, not an error.
 func (c *Client) SearchCards(query, nextPage string) (SearchPage, error) {
-	path := "/cards/search?" + url.Values{
-		"q":      {query},
-		"unique": {"prints"},
-		"order":  {"name"},
-	}.Encode()
+	return c.search(url.Values{"q": {query}, "unique": {"prints"}, "order": {"name"}}, nextPage)
+}
+
+// SearchAll returns every printing matching query in collector-number order, following
+// all result pages (up to maxPages of 175 cards). Extras and variations are included,
+// so a set query lists every card Scryfall counts in the set.
+func (c *Client) SearchAll(query string, maxPages int) ([]Card, error) {
+	params := url.Values{"q": {query}, "unique": {"prints"}, "order": {"set"},
+		"include_extras": {"true"}, "include_variations": {"true"}}
+	var out []Card
+	next := ""
+	for page := 0; page < maxPages; page++ {
+		res, err := c.search(params, next)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, res.Cards...)
+		if res.NextPage == "" {
+			break
+		}
+		next = res.NextPage
+	}
+	return out, nil
+}
+
+func (c *Client) search(params url.Values, nextPage string) (SearchPage, error) {
+	path := "/cards/search?" + params.Encode()
 	if nextPage != "" {
 		if !strings.HasPrefix(nextPage, c.BaseURL+"/") {
 			return SearchPage{}, fmt.Errorf("unexpected next page URL %q", nextPage)
@@ -120,4 +142,36 @@ func (c *Client) GetCard(id string) (*Card, error) {
 		return nil, err
 	}
 	return &card, nil
+}
+
+// CardByNumber fetches the printing with a set code and collector number, in a
+// language (Scryfall code, e.g. "ja"; "" for English). found is false on a 404.
+func (c *Client) CardByNumber(set, number, lang string) (card *Card, found bool, err error) {
+	path := "/cards/" + url.PathEscape(strings.ToLower(set)) + "/" + url.PathEscape(number)
+	if lang != "" && lang != "en" {
+		path += "/" + url.PathEscape(lang)
+	}
+	var sc Card
+	status, err := c.Do("GET", path, nil, &sc, false)
+	if status == http.StatusNotFound {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return &sc, true, nil
+}
+
+// NamedFuzzy finds a card by an approximate name, tolerating typos (Scryfall's
+// /cards/named?fuzzy=). found is false when nothing (or more than one card) matches.
+func (c *Client) NamedFuzzy(name string) (card *Card, found bool, err error) {
+	var sc Card
+	status, err := c.Do("GET", "/cards/named?fuzzy="+url.QueryEscape(name), nil, &sc, false)
+	if status == http.StatusNotFound {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return &sc, true, nil
 }

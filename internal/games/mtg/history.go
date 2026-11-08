@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jrhorner1/mtgmanager/internal/collection"
+	"github.com/jrhorner1/tcgbinder/internal/collection"
 )
 
 func (g *Game) PriceHistoryInfo() string {

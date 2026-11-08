@@ -8,13 +8,13 @@ import (
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
-	"github.com/jrhorner1/mtgmanager/internal/collection"
-	"github.com/jrhorner1/mtgmanager/internal/games/mtg"
-	"github.com/jrhorner1/mtgmanager/internal/games/mtg/scryfall/scryfalltest"
+	"github.com/jrhorner1/tcgbinder/internal/collection"
+	"github.com/jrhorner1/tcgbinder/internal/games/mtg"
+	"github.com/jrhorner1/tcgbinder/internal/games/mtg/scryfall/scryfalltest"
 )
 
 // TestAddDialogFlow drives the Add dialog against a fake Scryfall: search, page,
-// pick a non-first printing, narrow by set, and add. Set MTG_SNAPSHOT_DIR to save
+// pick a non-first printing, narrow by set, and add. Set TCGBINDER_SNAPSHOT_DIR to save
 // screenshots of each step.
 func TestAddDialogFlow(t *testing.T) {
 	a := test.NewTempApp(t)
@@ -80,8 +80,14 @@ func TestAddDialogFlow(t *testing.T) {
 
 	onUI(func() { test.Tap(confirm) })
 	cards := store.GetCollection()
-	if len(cards) != 1 || cards[0].Set != "M11" || cards[0].Quantity != 1 {
+	if len(cards) != 1 || cards[0].Set != "M11" || cards[0].CopyCount() != 1 {
 		t.Fatalf("collection after add = %+v", cards)
 	}
 	snapshot(t, w, "4-after-add.png")
+}
+
+// held gives c copies in one finish and condition (test fixtures).
+func held(c collection.Card, finish string, cond collection.Condition, l collection.Purchase) collection.Card {
+	c.AddPurchase(finish, cond, l)
+	return c
 }

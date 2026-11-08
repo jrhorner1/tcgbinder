@@ -6,6 +6,7 @@ package ui
 import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/widget"
+	"github.com/jrhorner1/tcgbinder/internal/settings"
 )
 
 // runOnUI schedules f on the UI goroutine. It is fyne.Do in the app; tests replace it
@@ -26,12 +27,13 @@ func cols(desktop int) int {
 // App is the running desktop/mobile UI: collection tree, pages and dialogs.
 type App struct {
 	window      fyne.Window
+	settings    *settings.Store
 	statusLabel *widget.Label
 	tree        *widget.Tree
 	rightPane   *fyne.Container
 	view        collectionView
 	editorGen   int    // bumped each time the editor is rebuilt; only touched on the UI thread
-	page        string // what the right pane shows: "home", "set:<code>", "card"
+	page        string // what the right pane shows: "home", "tools", "settings", "set:<code>", "card"
 	selected    string // tree node currently selected
 
 	games []*gameState // one per game, each with its own files
@@ -44,7 +46,7 @@ type App struct {
 	detailTitle *widget.Label
 }
 
-// RefreshDataIndex reloads every game's entries from its store and refreshes the view.
+// RefreshDataIndex reloads every game's cards from its store and refreshes the view.
 func (ui *App) RefreshDataIndex() {
 	for _, gs := range ui.games {
 		gs.cards = gs.store.GetCollection()

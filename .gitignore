@@ -7,7 +7,7 @@ price-history*.tmp
 *.csv
 
 # Build output
-/mtgmanager
+/tcgbinder
 /bin/
 /dist/
 *.app

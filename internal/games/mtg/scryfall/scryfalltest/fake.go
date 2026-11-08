@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jrhorner1/mtgmanager/internal/games/mtg/scryfall"
+	"github.com/jrhorner1/tcgbinder/internal/games/mtg/scryfall"
 )
 
 // fakeSearch serves /cards/search: "bolt" yields 5 printings in pages of 3; anything
@@ -27,6 +27,24 @@ func NewSearchServer(t *testing.T) *scryfall.Client {
 			t.Errorf("search should request every printing, got unique=%q", r.URL.Query().Get("unique"))
 		}
 		q := r.URL.Query().Get("q")
+		// "e:<set>" lists that set's cards: Shock (156), Opt (60) and Bolt (1).
+		if code, ok := strings.CutPrefix(q, "e:"); ok {
+			var data []scryfall.Card
+			for _, c := range []struct{ id, name, num string }{
+				{"aaaaaaaa-0000-4000-8000-000000000101", "Lightning Bolt", "1"},
+				{"aaaaaaaa-0000-4000-8000-000000000060", "Opt", "60"},
+				{"aaaaaaaa-0000-4000-8000-000000000001", "Shock", "156"},
+			} {
+				data = append(data, scryfall.Card{ID: c.id, Name: c.name, Set: code, SetName: strings.ToUpper(code) + " Edition",
+					Number: c.num, Rarity: "common", Finishes: []string{"nonfoil", "foil"}, Prices: scryfall.Prices{USD: "0.25"}})
+			}
+			_ = json.NewEncoder(w).Encode(scryfall.SearchResponse{TotalCards: len(data), Data: data})
+			return
+		}
+		// "oracleid:..." finds every printing of a card: treat it as Lightning Bolt.
+		if strings.HasPrefix(q, "oracleid:") || strings.Contains(q, `"Lightning Bolt"`) {
+			q = "bolt"
+		}
 		if !strings.Contains(q, "bolt") {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"object":"error","code":"not_found"}`))

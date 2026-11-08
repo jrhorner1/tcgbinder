@@ -2,16 +2,17 @@ package collection
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
 func sampleCards() []Card {
 	return []Card{
-		{ID: "1", Name: "Scapeshift", Set: "M19", SetName: "Core Set 2019", Number: "201", Rarity: "rare", Quantity: 2, PurchasePrice: 40, Finish: "nonfoil"},
-		{ID: "2", Name: "Lightning Bolt", Set: "2XM", SetName: "Double Masters", Number: "10", Rarity: "uncommon", Quantity: 4, PurchasePrice: 1.5, Finish: "foil"},
-		{ID: "3", Name: "Sol Ring", Set: "C21", SetName: "Commander 2021", Number: "2", Rarity: "uncommon", Quantity: 1, PurchasePrice: 2, Finish: "NonFoil"},
-		{ID: "4", Name: "Niv-Mizzet, Parun", Set: "GRN", SetName: "Guilds of Ravnica", Number: "192", Rarity: "rare", Quantity: 1, PurchasePrice: 3, Finish: "nonfoil"},
-		{ID: "5", Name: "Lightning Bolt", Set: "2XM", SetName: "Double Masters", Number: "10a", Rarity: "uncommon", Quantity: 1, Finish: "etched"},
+		held(Card{ID: "1", Name: "Scapeshift", Set: "M19", SetName: "Core Set 2019", CollectorNumber: "201", Rarity: "rare"}, "nonfoil", "", Purchase{Quantity: 2, PricePaid: 40}),
+		held(Card{ID: "2", Name: "Lightning Bolt", Set: "2XM", SetName: "Double Masters", CollectorNumber: "10", Rarity: "uncommon"}, "foil", "", Purchase{Quantity: 4, PricePaid: 1.5}),
+		held(Card{ID: "3", Name: "Sol Ring", Set: "C21", SetName: "Commander 2021", CollectorNumber: "2", Rarity: "uncommon"}, "NonFoil", "", Purchase{Quantity: 1, PricePaid: 2}),
+		held(Card{ID: "4", Name: "Niv-Mizzet, Parun", Set: "GRN", SetName: "Guilds of Ravnica", CollectorNumber: "192", Rarity: "rare"}, "nonfoil", "", Purchase{Quantity: 1, PricePaid: 3}),
+		held(Card{ID: "5", Name: "Lightning Bolt", Set: "2XM", SetName: "Double Masters", CollectorNumber: "10a", Rarity: "uncommon"}, "etched", "", Purchase{Quantity: 1}),
 	}
 }
 
@@ -38,7 +39,7 @@ func TestApplyQuery(t *testing.T) {
 		{"rarity", Query{Rarity: "rare"}, []string{"4", "1"}},
 		{"finish ignores case", Query{Finish: "Nonfoil"}, []string{"4", "1", "3"}},
 		{"any is no filter", Query{Set: FilterAny, Rarity: FilterAny}, []string{"2", "5", "4", "1", "3"}},
-		{"price descending", Query{SortBy: SortPrice, Descending: true}, []string{"1", "4", "3", "2", "5"}},
+		{"price paid descending (total per printing)", Query{SortBy: SortPrice, Descending: true}, []string{"1", "2", "4", "3", "5"}},
 		{"quantity ascending ties by name", Query{SortBy: SortQuantity}, []string{"5", "4", "3", "1", "2"}},
 		{"collector number is natural", Query{SortBy: SortNumber}, []string{"3", "2", "5", "4", "1"}},
 		{"rarity uses the game's order", Query{SortBy: SortRarity, RarityOrder: []string{"common", "uncommon", "rare"}}, []string{"2", "5", "3", "4", "1"}},
@@ -69,5 +70,50 @@ func TestSetOptions(t *testing.T) {
 	}
 	if byLabel["GRN — Guilds of Ravnica"] != "GRN" || byLabel[FilterAny] != "" {
 		t.Fatalf("bad mapping: %v", byLabel)
+	}
+}
+
+func TestFoldHelpers(t *testing.T) {
+	for _, tc := range []struct {
+		s, sub string
+		want   bool
+	}{
+		{"Lightning Bolt", "bolt", true}, {"Lightning Bolt", "ning b", true}, {"Bolt", "bolts", false},
+		{"Æther Vial", "æther", true}, {"Jötun Grunt", "jötun", true}, {"M19", "m1", true}, {"", "a", false}, {"x", "", true},
+	} {
+		if got := containsFold(tc.s, tc.sub); got != tc.want {
+			t.Errorf("containsFold(%q, %q) = %v", tc.s, tc.sub, got)
+		}
+	}
+	for _, pair := range [][2]string{{"apple", "Banana"}, {"Bolt", "bolt"}, {"Æther", "aether"}, {"opt", "Opt II"}, {"Zed", "ábc"}} {
+		want := strings.Compare(strings.ToLower(pair[0]), strings.ToLower(pair[1]))
+		if got := compareFold(pair[0], pair[1]); got != want {
+			t.Errorf("compareFold(%q, %q) = %d, want %d", pair[0], pair[1], got, want)
+		}
+	}
+}
+
+func TestSortCards(t *testing.T) {
+	cards := []Card{
+		held(Card{ID: "a", Name: "Opt", Set: "XLN", CollectorNumber: "65", ReleasedAt: "2017-09-29", Market: map[string]float64{"nonfoil": 0.1}}, "nonfoil", "", Purchase{Quantity: 1}),
+		held(Card{ID: "b", Name: "Shock", Set: "M19", CollectorNumber: "156", ReleasedAt: "2018-07-13", Market: map[string]float64{"nonfoil": 0.2}}, "nonfoil", "", Purchase{Quantity: 1}),
+		held(Card{ID: "c", Name: "Bolt", Set: "M19", CollectorNumber: "12", ReleasedAt: "2018-07-13", Market: map[string]float64{"nonfoil": 2}}, "nonfoil", "", Purchase{Quantity: 1}),
+	}
+	ids := func(cs []Card) string {
+		var s []string
+		for _, c := range cs {
+			s = append(s, c.ID)
+		}
+		return strings.Join(s, ",")
+	}
+	for order, want := range map[string]string{
+		OrderName: "c,a,b", OrderNewest: "c,b,a", OrderOldest: "a,c,b", OrderValue: "c,b,a", "": "c,a,b",
+	} {
+		if got := ids(SortCards(cards, order)); got != want {
+			t.Errorf("%q order = %s, want %s", order, got, want)
+		}
+	}
+	if ids(cards) != "a,b,c" {
+		t.Error("SortCards changed its input")
 	}
 }

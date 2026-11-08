@@ -1,20 +1,20 @@
 #!/bin/sh
-# Builds MTG Manager for the iOS Simulator without a signing certificate.
+# Builds TCG Binder for the iOS Simulator without a signing certificate.
 #
 # `fyne package -os iossimulator` builds through Xcode for devices first and so needs
 # an Apple development certificate; the Simulator only needs an ad-hoc signature, so
 # this script cross-compiles with Go and assembles the .app itself.
 #
 #   scripts/build-ios-simulator.sh [output-dir]      (default: dist/ios-simulator)
-#   xcrun simctl install booted "dist/ios-simulator/MTG Manager.app"
+#   xcrun simctl install booted "dist/ios-simulator/TCG Binder.app"
 set -eu
 
 cd "$(dirname "$0")/.."
 OUT=${1:-dist/ios-simulator}
-APP="$OUT/MTG Manager.app"
-BUNDLE_ID=io.github.jrhorner1.mtgmanager
-VERSION=$(sed -n 's/^ *Version *= *"\(.*\)"/\1/p' cmd/mtgmanager/FyneApp.toml)
-BUILD=$(sed -n 's/^ *Build *= *\([0-9]*\)/\1/p' cmd/mtgmanager/FyneApp.toml)
+APP="$OUT/TCG Binder.app"
+BUNDLE_ID=io.github.jrhorner1.tcgbinder
+VERSION=$(sed -n 's/^ *Version *= *"\(.*\)"/\1/p' cmd/tcgbinder/FyneApp.toml)
+BUILD=$(sed -n 's/^ *Build *= *\([0-9]*\)/\1/p' cmd/tcgbinder/FyneApp.toml)
 MIN_IOS=13.0
 
 SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
@@ -28,11 +28,11 @@ mkdir -p "$APP"
 echo "Compiling for the iOS Simulator ($ARCH)…"
 GOOS=ios GOARCH=$ARCH CGO_ENABLED=1 CC="$CC" CXX="$CC++" \
   CGO_CFLAGS="$FLAGS" CGO_CXXFLAGS="$FLAGS" CGO_LDFLAGS="$FLAGS" \
-  go build -tags ios -ldflags=-w -o "$APP/main" ./cmd/mtgmanager
+  go build -tags ios -ldflags=-w -o "$APP/main" ./cmd/tcgbinder
 
 # App icons (iPhone 60pt at 2x and 3x, iPad 76pt at 2x) from the 1024px icon.
 for spec in AppIcon60x60@2x:120 AppIcon60x60@3x:180 AppIcon76x76@2x~ipad:152; do
-  sips -z "${spec#*:}" "${spec#*:}" cmd/mtgmanager/Icon.png --out "$APP/${spec%:*}.png" >/dev/null
+  sips -z "${spec#*:}" "${spec#*:}" cmd/tcgbinder/Icon.png --out "$APP/${spec%:*}.png" >/dev/null
 done
 
 cat > "$APP/Info.plist" <<PLIST
@@ -44,8 +44,8 @@ cat > "$APP/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>main</string>
   <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-  <key>CFBundleName</key><string>MTG Manager</string>
-  <key>CFBundleDisplayName</key><string>MTG Manager</string>
+  <key>CFBundleName</key><string>TCG Binder</string>
+  <key>CFBundleDisplayName</key><string>TCG Binder</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$BUILD</string>
@@ -60,6 +60,7 @@ cat > "$APP/Info.plist" <<PLIST
   </dict></dict>
   <key>MinimumOSVersion</key><string>$MIN_IOS</string>
   <key>LSRequiresIPhoneOS</key><true/>
+  <key>NSCameraUsageDescription</key><string>TCG Binder uses the camera to scan your cards and identify them.</string>
   <key>UILaunchScreen</key><dict/>
   <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
   <key>UIRequiresFullScreen</key><true/>

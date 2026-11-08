@@ -4,22 +4,22 @@
 package mtg
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
-	"maps"
 	"net/url"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/jrhorner1/mtgmanager/internal/collection"
-	"github.com/jrhorner1/mtgmanager/internal/game"
-	"github.com/jrhorner1/mtgmanager/internal/games/mtg/importer"
-	"github.com/jrhorner1/mtgmanager/internal/games/mtg/mtgjson"
-	"github.com/jrhorner1/mtgmanager/internal/games/mtg/scryfall"
+	"github.com/jrhorner1/tcgbinder/internal/collection"
+	"github.com/jrhorner1/tcgbinder/internal/game"
+	"github.com/jrhorner1/tcgbinder/internal/games/mtg/importer"
+	"github.com/jrhorner1/tcgbinder/internal/games/mtg/mtgjson"
+	"github.com/jrhorner1/tcgbinder/internal/games/mtg/scryfall"
 )
 
 // ID is the game's identifier and data folder name.
@@ -30,6 +30,9 @@ type Game struct {
 	Scryfall *scryfall.Client
 	MTGJSON  *mtgjson.Client
 	dir      string
+
+	mu       sync.Mutex
+	setCards map[string][]collection.Card // SetCards cache
 }
 
 var (
@@ -52,7 +55,7 @@ func (g *Game) Open(dir string) error {
 
 // --- Catalog -----------------------------------------------------------------
 
-// FromScryfall copies a printing's catalog data into a collection entry. Magic-only
+// FromScryfall copies a printing's catalog data into a collection card. Magic-only
 // fields go into Attrs under the same JSON names earlier versions used.
 func FromScryfall(sc *scryfall.Card) collection.Card {
 	manaCost, colors := sc.ManaCost, sc.Colors
@@ -71,20 +74,20 @@ func FromScryfall(sc *scryfall.Card) collection.Card {
 		}
 	}
 	c := collection.Card{
-		ID:            sc.ID,
-		Name:          sc.Name,
-		Set:           strings.ToUpper(sc.Set),
-		SetName:       sc.SetName,
-		Number:        sc.Number,
-		Rarity:        sc.Rarity,
-		ReleasedAt:    sc.ReleasedAt,
-		ImageURI:      sc.ImageURL(),
-		TypeLine:      sc.TypeLine,
-		Text:          sc.Text(),
-		Language:      sc.Language,
-		Finishes:      sc.Finishes,
-		Market:        marketFromPrices(sc.Prices, sc.Finishes),
-		PricesUpdated: time.Now().Format("2006-01-02"),
+		ID:              sc.ID,
+		Name:            sc.Name,
+		Set:             strings.ToUpper(sc.Set),
+		SetName:         sc.SetName,
+		CollectorNumber: sc.Number,
+		Rarity:          sc.Rarity,
+		ReleasedAt:      sc.ReleasedAt,
+		ImageURI:        sc.ImageURL(),
+		TypeLine:        sc.TypeLine,
+		RulesText:       sc.Text(),
+		Language:        sc.Language,
+		Finishes:        sc.Finishes,
+		Market:          marketFromPrices(sc.Prices, sc.Finishes),
+		PricesUpdated:   time.Now().Format("2006-01-02"),
 	}
 	c.SetAttr("oracle_id", sc.OracleID)
 	c.SetAttr("multiverse_ids", sc.MultiverseIDs)
@@ -119,31 +122,6 @@ func marketFromPrices(p scryfall.Prices, finishes []string) map[string]float64 {
 		return nil
 	}
 	return m
-}
-
-// Upgrade converts entries saved before multi-game support: Scryfall's "prices"
-// object becomes the per-finish market price, and old finish spellings are fixed.
-func (g *Game) Upgrade(c *collection.Card) bool {
-	changed := false
-	if raw := c.Attr("prices"); raw != nil {
-		var p scryfall.Prices
-		if json.Unmarshal(raw, &p) == nil && len(c.Market) == 0 {
-			c.Market = marketFromPrices(p, c.Finishes)
-		}
-		c.SetAttr("prices", nil)
-		changed = true
-	}
-	if _, ok := c.Market["etched"]; ok && !slices.Contains(c.Finishes, "etched") && len(c.Finishes) > 0 {
-		// An earlier build gave every card an etched price copied from foil.
-		c.Market = maps.Clone(c.Market)
-		delete(c.Market, "etched")
-		changed = true
-	}
-	if f := importer.ParseFinish(c.Finish); f != c.Finish {
-		c.Finish = f // e.g. "NonFoil" from early versions, or "" -> "nonfoil"
-		changed = true
-	}
-	return changed
 }
 
 func (g *Game) Search(text, set, nextPage string) (game.SearchPage, error) {
@@ -184,21 +162,13 @@ func (g *Game) Refresh(ids []string, progress func(done, total int)) (map[string
 		}
 		for i := range resp.Data {
 			sc := &resp.Data[i]
-			out[sc.ID] = collection.CatalogUpdate{Market: marketFromPrices(sc.Prices, sc.Finishes), TypeLine: sc.TypeLine, Text: sc.Text()}
+			out[sc.ID] = collection.CatalogUpdate{Market: marketFromPrices(sc.Prices, sc.Finishes), TypeLine: sc.TypeLine, RulesText: sc.Text()}
 		}
 		if progress != nil {
 			progress(end, len(list))
 		}
 	}
 	return out, nil
-}
-
-func (g *Game) CardText(id string) (string, string, error) {
-	sc, err := g.Scryfall.GetCard(id)
-	if err != nil {
-		return "", "", err
-	}
-	return sc.TypeLine, sc.Text(), nil
 }
 
 // Sets loads Scryfall's set list, cached for a week in the game's data folder.
@@ -217,7 +187,7 @@ func (g *Game) Sets() (map[string]collection.SetInfo, error) {
 // --- Import ------------------------------------------------------------------
 
 // Import reads a CSV export, matches every row to its exact Scryfall printing and
-// returns the entries to add.
+// returns the cards to add.
 func (g *Game) Import(data []byte, progress func(done, total int)) ([]collection.Card, game.ImportReport, error) {
 	rows, format, err := importer.ParseCSV(data)
 	report := game.ImportReport{Format: format, Rows: len(rows)}
@@ -238,13 +208,10 @@ func (g *Game) Import(data []byte, progress func(done, total int)) ([]collection
 		if r.Approximate {
 			approx = append(approx, fmt.Sprintf("  %s → %s · %s", r.Row.Describe(), strings.ToUpper(r.Card.Set), r.Card.Number))
 		}
-		entry := FromScryfall(r.Card)
-		entry.Finish = importer.ChooseFinish(r.Row.Finish, r.Card.Finishes)
-		entry.Condition = r.Row.Condition
-		entry.Quantity = r.Row.Quantity
-		entry.PurchasePrice = r.Row.PurchasePrice
-		entry.AcquiredDate = r.Row.AcquiredDate
-		cards = append(cards, entry)
+		card := FromScryfall(r.Card)
+		card.AddPurchase(importer.ChooseFinish(r.Row.Finish, r.Card.Finishes), r.Row.Condition,
+			collection.Purchase{Quantity: r.Row.Quantity, PricePaid: r.Row.PricePaid, AcquiredDate: r.Row.AcquiredDate})
+		cards = append(cards, card)
 	}
 	if len(approx) > 0 {
 		report.Notes = append(report.Notes, fmt.Sprintf("Matched by name only, so the printing may differ (%d) — please check:", len(approx)))
@@ -260,6 +227,72 @@ func (g *Game) Import(data []byte, progress func(done, total int)) ([]collection
 // --- Presentation ------------------------------------------------------------
 
 func (g *Game) Finishes() []string { return []string{"nonfoil", "foil", "etched"} }
+
+// FinishName is the finish as players say it: Scryfall's "nonfoil" is "Normal".
+func (g *Game) FinishName(f string) string {
+	switch f {
+	case "nonfoil":
+		return "Normal"
+	case "foil":
+		return "Foil"
+	case "etched":
+		return "Etched"
+	case "":
+		return ""
+	}
+	return strings.ToUpper(f[:1]) + f[1:]
+}
+
+// Printings finds every printing of c's card by its Oracle ID (or exact name).
+func (g *Game) Printings(c collection.Card) ([]collection.Card, error) {
+	q := fmt.Sprintf("!%q", frontFaceName(c.Name))
+	if id := c.AttrString("oracle_id"); id != "" {
+		q = "oracleid:" + id
+	}
+	found, err := g.Scryfall.SearchAll(q, 5)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]collection.Card, 0, len(found))
+	for i := range found {
+		out = append(out, FromScryfall(&found[i]))
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].ReleasedAt > out[j].ReleasedAt })
+	return out, nil
+}
+
+func frontFaceName(name string) string {
+	if i := strings.Index(name, " // "); i > 0 {
+		return name[:i]
+	}
+	return name
+}
+
+// SetCards lists a set's cards, cached for the session (sets rarely change).
+func (g *Game) SetCards(code string) ([]collection.Card, error) {
+	code = strings.ToUpper(code)
+	g.mu.Lock()
+	cached, ok := g.setCards[code]
+	g.mu.Unlock()
+	if ok {
+		return cached, nil
+	}
+	found, err := g.Scryfall.SearchAll("e:"+strings.ToLower(code), 20)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]collection.Card, 0, len(found))
+	for i := range found {
+		out = append(out, FromScryfall(&found[i]))
+	}
+	g.mu.Lock()
+	if g.setCards == nil {
+		g.setCards = map[string][]collection.Card{}
+	}
+	g.setCards[code] = out
+	g.mu.Unlock()
+	return out, nil
+}
 
 func (g *Game) Rarities() []string {
 	return []string{"common", "uncommon", "rare", "mythic", "special", "bonus"}
@@ -305,6 +338,6 @@ func (g *Game) Details(c collection.Card) []game.Row {
 
 func (g *Game) CardLink(c collection.Card) (string, *url.URL) {
 	u, _ := url.Parse(fmt.Sprintf("https://scryfall.com/card/%s/%s",
-		url.PathEscape(strings.ToLower(c.Set)), url.PathEscape(c.Number)))
+		url.PathEscape(strings.ToLower(c.Set)), url.PathEscape(c.CollectorNumber)))
 	return "View on Scryfall", u
 }

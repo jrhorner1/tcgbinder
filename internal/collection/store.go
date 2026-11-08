@@ -1,8 +1,9 @@
-// Package collection holds the game-neutral collection model: entries, the JSON file
+// Package collection holds the game-neutral collection model: cards, the JSON file
 // store (one per game), price history, filtering, and value/completion statistics.
 package collection
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 // Store is one game's collection, persisted as a JSON file. Each game has its own.
 type Store struct {
 	mu       sync.RWMutex
+	saveMu   sync.Mutex // serializes Save so an older state never lands last
 	filePath string
 	Game     string          `json:"game,omitempty"` // ID of the game this file belongs to
 	Cards    map[string]Card `json:"cards"`
@@ -26,8 +28,7 @@ type Store struct {
 }
 
 // OpenStore opens (or creates) the collection file for game at path. A file that
-// belongs to a different game is refused; a file without a game (from versions
-// before multi-game support) is claimed for this one.
+// belongs to a different game is refused; a new file is claimed for this one.
 func OpenStore(path, game string) (*Store, error) {
 	s, err := NewStore(path)
 	if err != nil {
@@ -85,6 +86,8 @@ func NewStore(filename string) (*Store, error) {
 
 // Save flushes the current state of the collection to disk using an atomic write.
 func (cs *Store) Save() error {
+	cs.saveMu.Lock()
+	defer cs.saveMu.Unlock()
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
 
@@ -105,11 +108,16 @@ func (cs *Store) Save() error {
 		_ = os.Remove(tmpName) // Safely clean up if rename fails
 	}()
 
-	// Encode with indentation for human-readable diffs (critical for open-source local-first apps)
-	encoder := json.NewEncoder(tmpFile)
+	// Encode with indentation for human-readable diffs (critical for open-source local-first apps),
+	// buffered: the encoder makes many small writes.
+	buf := bufio.NewWriterSize(tmpFile, 1<<16)
+	encoder := json.NewEncoder(buf)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(cs); err != nil {
 		return fmt.Errorf("failed to encode collection JSON: %w", err)
+	}
+	if err := buf.Flush(); err != nil {
+		return fmt.Errorf("failed to write collection file: %w", err)
 	}
 
 	// Sync to physical media
@@ -160,81 +168,74 @@ func (cs *Store) Load() error {
 
 	cs.History = tempStore.History
 	cs.Game = tempStore.Game
-
-	// Re-key every entry so older files (keyed by Scryfall ID alone, or with
-	// inconsistent finish spellings) collapse into the current scheme.
-	cs.Cards = make(map[string]Card, len(tempStore.Cards))
-	for _, card := range tempStore.Cards {
-		normalizeEntry(&card)
-		key := EntryKey(card)
-		if existing, ok := cs.Cards[key]; ok {
-			cs.Cards[key] = mergeEntries(existing, card)
-		} else {
-			cs.Cards[key] = card
-		}
+	cs.Cards = tempStore.Cards
+	if cs.Cards == nil {
+		cs.Cards = make(map[string]Card)
 	}
-
 	return nil
 }
 
-// EntryKey identifies a collection entry: copies of the same printing in the same
-// finish, condition and language are one entry with a quantity.
-func EntryKey(c Card) string {
-	return strings.Join([]string{c.ID, c.Finish, string(c.Condition), c.Language}, "|")
-}
+// CardKey identifies a collection card: one per printing, with its copies grouped
+// by finish and condition in Copies.
+func CardKey(c Card) string { return c.ID }
 
-// normalizeEntry applies the canonical spellings EntryKey depends on.
-func normalizeEntry(c *Card) {
-	c.Finish = strings.ToLower(strings.TrimSpace(c.Finish))
-	if c.Condition == "" {
-		c.Condition = ConditionNearMint
-	}
+// normalizeCard applies the canonical spellings: lowercase finishes and language,
+// NM for a missing condition, and no empty purchases.
+func normalizeCard(c *Card) {
 	if c.Language == "" {
 		c.Language = "en"
 	}
 	c.Language = strings.ToLower(c.Language)
+	h := Copies{}
+	for _, l := range c.PurchaseRows() {
+		h.add(l.Finish, l.Condition, l.Purchase)
+	}
+	if len(h) == 0 {
+		h = nil
+	}
+	c.Copies = h
 }
 
-// mergeEntries adds incoming copies to an existing entry. Quantities sum, the purchase
-// price becomes the quantity-weighted average of the known prices, the earliest
-// acquisition date is kept, and catalog data (image, prices) is taken from whichever
-// side has the newer Scryfall data.
-func mergeEntries(existing, incoming Card) Card {
-	merged := existing
+// mergeCards adds incoming's purchases to an existing card for the same printing
+// (identical purchases combine). Catalog data (image, prices) comes from whichever
+// side is newer; fields only one side has, such as game attributes or rules text,
+// are kept either way.
+func mergeCards(existing, incoming Card) Card {
+	older, merged := incoming, existing
 	if incoming.PricesUpdated > existing.PricesUpdated {
-		merged = incoming
+		older, merged = existing, incoming
 	}
-	merged.Quantity = existing.Quantity + incoming.Quantity
-
-	switch {
-	case existing.PurchasePrice > 0 && incoming.PurchasePrice > 0:
-		total := existing.PurchasePrice*float64(existing.Quantity) + incoming.PurchasePrice*float64(incoming.Quantity)
-		merged.PurchasePrice = math.Round(total/float64(merged.Quantity)*100) / 100
-	case existing.PurchasePrice > 0:
-		merged.PurchasePrice = existing.PurchasePrice
-	default:
-		merged.PurchasePrice = incoming.PurchasePrice
+	for k, v := range older.Attrs {
+		if merged.Attr(k) == nil {
+			merged.SetAttr(k, v)
+		}
 	}
-
-	merged.AcquiredDate = existing.AcquiredDate
-	if merged.AcquiredDate == "" || (incoming.AcquiredDate != "" && incoming.AcquiredDate < merged.AcquiredDate) {
-		merged.AcquiredDate = incoming.AcquiredDate
+	if merged.RulesText == "" {
+		merged.TypeLine, merged.RulesText = older.TypeLine, older.RulesText
+	}
+	merged.Copies = existing.Copies.clone()
+	if merged.Copies == nil {
+		merged.Copies = Copies{}
+	}
+	for _, l := range incoming.PurchaseRows() {
+		merged.Copies.add(l.Finish, l.Condition, l.Purchase)
 	}
 	return merged
 }
 
-// AddCards adds copies to the collection, merging into existing entries with the same
-// EntryKey, and saves once. It reports how many entries were created vs. merged into.
+// AddCards adds copies to the collection, merging into the card for the same
+// printing when there is one, and saves once. It reports how many new cards were
+// created and how many cards were added to existing ones.
 func (cs *Store) AddCards(cards []Card) (created, merged int, err error) {
 	cs.mu.Lock()
 	for _, card := range cards {
-		if card.ID == "" || card.Quantity <= 0 {
+		if card.ID == "" || card.CopyCount() <= 0 {
 			continue
 		}
-		normalizeEntry(&card)
-		key := EntryKey(card)
+		normalizeCard(&card)
+		key := CardKey(card)
 		if existing, ok := cs.Cards[key]; ok {
-			cs.Cards[key] = mergeEntries(existing, card)
+			cs.Cards[key] = mergeCards(existing, card)
 			merged++
 		} else {
 			cs.Cards[key] = card
@@ -246,47 +247,32 @@ func (cs *Store) AddCards(cards []Card) (created, merged int, err error) {
 	return created, merged, cs.Save()
 }
 
-// UpsertCard replaces the entry for card (by EntryKey) and saves. A quantity of zero removes it.
+// UpsertCard saves card in place of the one for its printing. No copies removes it.
 func (cs *Store) UpsertCard(card Card) error {
-	if card.ID == "" {
-		return errors.New("cannot track card with empty identifier ID")
-	}
-	if card.Quantity < 0 {
-		return errors.New("card quantity cannot be negative")
-	}
-	normalizeEntry(&card)
-	key := EntryKey(card)
-
-	cs.mu.Lock()
-	if card.Quantity == 0 {
-		delete(cs.Cards, key)
-	} else {
-		cs.Cards[key] = card
-	}
-	cs.snapshotLocked()
-	cs.mu.Unlock()
-
-	return cs.Save()
+	_, _, err := cs.SaveCard(CardKey(card), card)
+	return err
 }
 
-// UpdateEntry saves an edited entry that was stored under oldKey. Editing the finish,
-// condition or language changes the entry's key; if another entry already has the new
-// key, the edited copies are merged into it. A quantity of zero deletes the entry.
-func (cs *Store) UpdateEntry(oldKey string, card Card) (newKey string, merged bool, err error) {
+// SaveCard saves an edited card that was stored under oldKey (its copies replace
+// the old ones). If the card moved to another printing that is already in the
+// collection, its copies merge into that card. No copies left deletes the card.
+func (cs *Store) SaveCard(oldKey string, card Card) (newKey string, merged bool, err error) {
 	if card.ID == "" {
-		return "", false, errors.New("cannot save a card without a Scryfall ID")
+		return "", false, errors.New("cannot save a card without a catalog ID")
 	}
-	if card.Quantity < 0 {
-		return "", false, errors.New("quantity cannot be negative")
+	for _, l := range card.PurchaseRows() {
+		if l.Quantity < 0 {
+			return "", false, errors.New("quantity cannot be negative")
+		}
 	}
-	normalizeEntry(&card)
-	newKey = EntryKey(card)
+	normalizeCard(&card)
+	newKey = CardKey(card)
 
 	cs.mu.Lock()
 	delete(cs.Cards, oldKey)
-	if card.Quantity > 0 {
+	if card.CopyCount() > 0 {
 		if existing, ok := cs.Cards[newKey]; ok && newKey != oldKey {
-			cs.Cards[newKey] = mergeEntries(existing, card)
+			cs.Cards[newKey] = mergeCards(existing, card)
 			merged = true
 		} else {
 			cs.Cards[newKey] = card
@@ -297,21 +283,7 @@ func (cs *Store) UpdateEntry(oldKey string, card Card) (newKey string, merged bo
 	return newKey, merged, cs.Save()
 }
 
-// SetCatalogText fills in rules text and type line for every entry of a printing that
-// lacks them (entries imported before these fields were stored). It does not save;
-// the next write persists it.
-func (cs *Store) SetCatalogText(id, typeLine, text string) {
-	cs.mu.Lock()
-	defer cs.mu.Unlock()
-	for key, c := range cs.Cards {
-		if c.ID == id && (c.Text == "" || c.TypeLine == "") {
-			c.TypeLine, c.Text = typeLine, text
-			cs.Cards[key] = c
-		}
-	}
-}
-
-// RemoveCard drops the entry with the given EntryKey.
+// RemoveCard drops the card with the given CardKey.
 func (cs *Store) RemoveCard(key string) error {
 	cs.mu.Lock()
 	if _, exists := cs.Cards[key]; !exists {
@@ -329,14 +301,14 @@ func (cs *Store) RemoveCard(key string) error {
 func (cs *Store) snapshotLocked() {
 	snap := ValueSnapshot{Date: time.Now().Format("2006-01-02")}
 	for _, c := range cs.Cards {
-		snap.Copies += c.Quantity
-		snap.Cost += c.PurchasePrice * float64(c.Quantity)
-		if p, ok := MarketPrice(c); ok {
-			snap.Market += p * float64(c.Quantity)
-		}
+		snap.Cards += c.CopyCount()
+		paid, _ := c.PricePaid()
+		value, _ := c.MarketValue()
+		snap.PricePaid += paid
+		snap.MarketValue += value
 	}
-	snap.Market = math.Round(snap.Market*100) / 100
-	snap.Cost = math.Round(snap.Cost*100) / 100
+	snap.MarketValue = math.Round(snap.MarketValue*100) / 100
+	snap.PricePaid = math.Round(snap.PricePaid*100) / 100
 	cs.History = upsertSnapshot(cs.History, snap)
 }
 
@@ -356,13 +328,17 @@ func (cs *Store) ValueHistory() []ValueSnapshot {
 	return append([]ValueSnapshot(nil), cs.History...)
 }
 
-// PricesStale reports whether any entry's market prices were last refreshed before today.
-func (cs *Store) PricesStale() bool {
-	today := time.Now().Format("2006-01-02")
+// PricesStale reports whether any card's market prices were last refreshed before today.
+func (cs *Store) PricesStale() bool { return cs.PricesOlderThan(1) }
+
+// PricesOlderThan reports whether any card's market prices are at least days old
+// (1: from before today; 7: from a week ago or earlier).
+func (cs *Store) PricesOlderThan(days int) bool {
+	cutoff := time.Now().AddDate(0, 0, 1-days).Format("2006-01-02")
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
 	for _, c := range cs.Cards {
-		if c.ID != "" && c.PricesUpdated < today {
+		if c.ID != "" && c.PricesUpdated < cutoff {
 			return true
 		}
 	}
@@ -385,7 +361,7 @@ func (cs *Store) IDs() []string {
 }
 
 // UpdateCatalog applies fresh prices (and missing rules text) from the game's
-// catalog, records today's value snapshot and saves. It returns the entries updated.
+// catalog, records today's value snapshot and saves. It returns the cards updated.
 func (cs *Store) UpdateCatalog(updates map[string]CatalogUpdate, date string) (int, error) {
 	updated := 0
 	cs.mu.Lock()
@@ -396,8 +372,8 @@ func (cs *Store) UpdateCatalog(updates map[string]CatalogUpdate, date string) (i
 		}
 		c.Market = maps.Clone(u.Market)
 		c.PricesUpdated = date
-		if c.Text == "" && u.Text != "" { // fill in text for entries saved without it
-			c.TypeLine, c.Text = u.TypeLine, u.Text
+		if c.RulesText == "" && u.RulesText != "" { // fill in text for cards saved without it
+			c.TypeLine, c.RulesText = u.TypeLine, u.RulesText
 		}
 		cs.Cards[key] = c
 		updated++
@@ -407,38 +383,8 @@ func (cs *Store) UpdateCatalog(updates map[string]CatalogUpdate, date string) (i
 	return updated, cs.Save()
 }
 
-// Transform applies fn to every entry (fn returns true when it changed the card),
-// re-keys changed entries, and saves if anything changed. Games use it for one-time
-// upgrades of their stored data.
-func (cs *Store) Transform(fn func(*Card) bool) (int, error) {
-	changed := 0
-	cs.mu.Lock()
-	next := make(map[string]Card, len(cs.Cards))
-	for _, c := range cs.Cards {
-		if fn(&c) {
-			changed++
-			normalizeEntry(&c)
-		}
-		key := EntryKey(c)
-		if existing, ok := next[key]; ok {
-			next[key] = mergeEntries(existing, c)
-		} else {
-			next[key] = c
-		}
-	}
-	if changed > 0 {
-		cs.Cards = next
-	}
-	cs.mu.Unlock()
-	if changed == 0 {
-		return 0, nil
-	}
-	return changed, cs.Save()
-}
-
 // ReadExport parses a collection file written by this app (for importing a backup or
-// another device's collection). It returns the file's game ("" for files from before
-// multi-game support) and its entries.
+// another device's collection). It returns the file's game and its cards.
 func ReadExport(data []byte) (game string, cards []Card, err error) {
 	var f struct {
 		Game  string          `json:"game"`
@@ -451,11 +397,19 @@ func ReadExport(data []byte) (game string, cards []Card, err error) {
 		return "", nil, errors.New("not a collection file: no \"cards\" found")
 	}
 	for _, c := range f.Cards {
-		if c.ID != "" && c.Quantity > 0 {
+		if c.ID != "" && c.CopyCount() > 0 {
 			cards = append(cards, c)
 		}
 	}
 	return f.Game, cards, nil
+}
+
+// Get returns the card with the given CardKey.
+func (cs *Store) Get(key string) (Card, bool) {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	c, ok := cs.Cards[key]
+	return c, ok
 }
 
 // GetCollection returns a copied slice of the active collection safely isolating raw thread access.
