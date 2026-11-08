@@ -1,0 +1,20 @@
+# Personal collection data and caches written by the app
+collection.json
+collection_*.tmp
+scryfall-sets.json
+price-history.json
+price-history*.tmp
+*.csv
+
+# Build output
+/mtgmanager
+/bin/
+/dist/
+*.app
+*.ipa
+*.apk
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

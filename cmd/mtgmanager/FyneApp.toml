@@ -1,0 +1,8 @@
+Website = "https://github.com/jrhorner1/mtgmanager"
+
+[Details]
+  Icon = "Icon.png"
+  Name = "MTG Manager"
+  ID = "io.github.jrhorner1.mtgmanager"
+  Version = "0.1.0"
+  Build = 1
