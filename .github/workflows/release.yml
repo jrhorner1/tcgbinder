@@ -1,0 +1,113 @@
+# Builds TCG Binder for Linux (x86-64, ARM64), Windows (x86-64) and macOS (universal)
+# and publishes a GitHub release with the archives and their SHA-256 checksums.
+#
+# Release: push a version tag, e.g.  git tag -s v0.2.0 -m "TCG Binder 0.2.0" && git push origin v0.2.0
+# Try the builds without releasing: Actions → Release → Run workflow (artifacts only).
+#
+# Fyne needs cgo, so each platform builds on its own runner rather than cross-compiling.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to stamp on a test build (no release is published)"
+        required: true
+        default: "0.0.0-dev"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-amd64, os: ubuntu-latest }
+          - { target: linux-arm64, os: ubuntu-24.04-arm }
+          - { target: windows-amd64, os: windows-latest }
+          - { target: macos-universal, os: macos-latest }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = push ]; then v="${GITHUB_REF_NAME#v}"; else v="${{ inputs.version }}"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "name=tcgbinder-$v-${{ matrix.target }}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Fyne's build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc libgl1-mesa-dev xorg-dev
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          name=${{ steps.version.outputs.name }}
+          mkdir -p "out/$name"
+          go build -trimpath -ldflags "-s -w -X github.com/jrhorner1/tcgbinder/internal/version.Version=${{ steps.version.outputs.version }}" \
+            -o "out/$name/tcgbinder" ./cmd/tcgbinder
+          cp README.md LICENSE cmd/tcgbinder/Icon.png "out/$name/"
+          tar -C out -czf "out/$name.tar.gz" "$name"
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          name=${{ steps.version.outputs.name }}
+          mkdir -p "out/$name"
+          # windowsgui: no console window behind the desktop app.
+          go build -trimpath -ldflags "-s -w -H=windowsgui -X github.com/jrhorner1/tcgbinder/internal/version.Version=${{ steps.version.outputs.version }}" \
+            -o "out/$name/tcgbinder.exe" ./cmd/tcgbinder
+          cp README.md LICENSE "out/$name/"
+          (cd out && 7z a -tzip "$name.zip" "$name" >/dev/null)
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          name=${{ steps.version.outputs.name }}
+          scripts/build-macos.sh "${{ steps.version.outputs.version }}" "out/$name"
+          cp README.md LICENSE "out/$name/"
+          (cd out && ditto -c -k --norsrc --noextattr --noacl --keepParent "$name" "$name.zip")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.name }}
+          path: |
+            out/*.tar.gz
+            out/*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Checksums
+        run: cd assets && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" assets/* --repo "$GITHUB_REPOSITORY" \
+            --title "TCG Binder ${GITHUB_REF_NAME#v}" --generate-notes --verify-tag $prerelease

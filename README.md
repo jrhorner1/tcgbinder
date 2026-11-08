@@ -108,6 +108,47 @@ MTG_IMPORT_FILE=$PWD/export.csv TCGBINDER_SNAPSHOT_DIR=/tmp go test -run TestDas
 
 `TCGBINDER_SNAPSHOT_DIR` also makes the UI tests save PNG screenshots of each step.
 
+## CI and releases
+
+GitHub Actions run two workflows:
+
+- **CI** (`.github/workflows/ci.yml`), on every pull request and push to `main`:
+  gofmt, `go vet`, a tidy `go.mod`, the web UI's JavaScript and the shell scripts,
+  then `go test -race ./...` and a build on Linux, macOS and Windows.
+- **Release** (`.github/workflows/release.yml`), on a version tag: builds TCG Binder
+  on each platform's own runner (Fyne needs cgo, so there's no cross-compiling) and
+  publishes a GitHub release with `SHA256SUMS.txt`:
+
+  | Download | Contents |
+  |---|---|
+  | `tcgbinder-<version>-linux-amd64.tar.gz`, `-linux-arm64.tar.gz` | `tcgbinder` binary, icon |
+  | `tcgbinder-<version>-windows-amd64.zip` | `tcgbinder.exe` (no console window) |
+  | `tcgbinder-<version>-macos-universal.zip` | `TCG Binder.app` and the `tcgbinder` binary, Apple silicon and Intel |
+
+To release, tag a commit on `main` and push the tag. A tag with a hyphen
+(`v0.2.0-beta.1`) is published as a pre-release.
+
+```bash
+git tag -s v0.2.0 -m "TCG Binder 0.2.0"
+git push origin v0.2.0
+```
+
+To try the builds without releasing: **Actions → Release → Run workflow**. The
+archives are attached to the run as artifacts.
+
+The macOS build can also be made locally with `scripts/build-macos.sh [version]`
+(writes `dist/macos/`).
+
+Notes for people downloading a release:
+- **macOS:** the app is ad-hoc signed, not notarized, so the first launch is
+  blocked. Right-click the app → **Open**, or run
+  `xattr -d com.apple.quarantine "TCG Binder.app"`.
+- **Windows:** SmartScreen may warn about an unrecognized app. Choose **More info →
+  Run anyway**. Because the `.exe` has no console window, `--version` and `--help`
+  print nothing there; use them on macOS or Linux.
+- **Linux:** needs OpenGL and X11 libraries (on Debian/Ubuntu: `libgl1` and
+  `libx11-6`, which desktop installs already have).
+
 ## iPhone / iPad
 
 iOS builds need the full Xcode app (the Command Line Tools alone are not enough)

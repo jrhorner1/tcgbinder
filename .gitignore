@@ -10,6 +10,7 @@ price-history*.tmp
 /tcgbinder
 /bin/
 /dist/
+/out/
 *.app
 *.ipa
 *.apk
