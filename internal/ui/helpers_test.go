@@ -12,10 +12,11 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
-	"github.com/jrhorner1/mtgmanager/internal/collection"
-	"github.com/jrhorner1/mtgmanager/internal/game"
-	"github.com/jrhorner1/mtgmanager/internal/games/mtg"
-	"github.com/jrhorner1/mtgmanager/internal/service"
+	"github.com/jrhorner1/tcgbinder/internal/collection"
+	"github.com/jrhorner1/tcgbinder/internal/game"
+	"github.com/jrhorner1/tcgbinder/internal/games/mtg"
+	"github.com/jrhorner1/tcgbinder/internal/service"
+	"github.com/jrhorner1/tcgbinder/internal/settings"
 )
 
 // walk visits every object in a canvas object tree.
@@ -88,7 +89,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 }
 
 func snapshot(t *testing.T, w fyne.Window, name string) {
-	dir := os.Getenv("MTG_SNAPSHOT_DIR")
+	dir := os.Getenv("TCGBINDER_SNAPSHOT_DIR")
 	if dir == "" {
 		return
 	}
@@ -108,7 +109,7 @@ func newMTG() *mtg.Game { return mtg.New() }
 
 // newTestApp builds the UI for one game and store.
 func newTestApp(w fyne.Window, g game.Game, store *collection.Store) *App {
-	return New(w, service.FromStore(g, store))
+	return New(w, settings.Memory(), service.FromStore(g, store))
 }
 
 // liveImport imports a real export into store through the Magic game (live Scryfall).

@@ -9,17 +9,17 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
-	"github.com/jrhorner1/mtgmanager/internal/collection"
-	"github.com/jrhorner1/mtgmanager/internal/games/mtg"
+	"github.com/jrhorner1/tcgbinder/internal/collection"
+	"github.com/jrhorner1/tcgbinder/internal/games/mtg"
 )
 
 // TestDashboardSnapshots imports a real export against live Scryfall into a temporary
 // collection and saves screenshots of Home, a set page and a card. Skipped unless
-// MTG_IMPORT_FILE and MTG_SNAPSHOT_DIR are set.
+// MTG_IMPORT_FILE and TCGBINDER_SNAPSHOT_DIR are set.
 func TestDashboardSnapshots(t *testing.T) {
-	csv, dir := os.Getenv("MTG_IMPORT_FILE"), os.Getenv("MTG_SNAPSHOT_DIR")
+	csv, dir := os.Getenv("MTG_IMPORT_FILE"), os.Getenv("TCGBINDER_SNAPSHOT_DIR")
 	if csv == "" || dir == "" {
-		t.Skip("set MTG_IMPORT_FILE and MTG_SNAPSHOT_DIR")
+		t.Skip("set MTG_IMPORT_FILE and TCGBINDER_SNAPSHOT_DIR")
 	}
 	data, err := os.ReadFile(csv)
 	if err != nil {
@@ -45,15 +45,16 @@ func TestDashboardSnapshots(t *testing.T) {
 	})
 	snapshot(t, w, "6-home.png")
 
-	onUI(func() {
-		ui.tree.OpenBranch(setNode(mtg.ID, "M19"))
-		ui.tree.Select(setNode(mtg.ID, "M19"))
-	})
+	onUI(func() { ui.openSet("M19") })
 	snapshot(t, w, "7-set.png")
 
 	var first string
 	onUI(func() {
-		first = ui.g.setCards["M19"][len(ui.g.setCards["M19"])-1] // a rare near the end of the set
+		for i, c := range ui.g.filtered { // a rare near the end of the set
+			if c.Set == "M19" && (first == "" || c.CollectorNumber > ui.g.cardNodes[first].CollectorNumber) {
+				first = ui.g.cardIDs[i]
+			}
+		}
 		ui.tree.Select(first)
 	})
 	time.Sleep(2 * time.Second) // card image download

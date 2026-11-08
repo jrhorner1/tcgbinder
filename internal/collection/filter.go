@@ -1,10 +1,12 @@
 package collection
 
 import (
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // SortField identifies a column the collection list can be ordered by.
@@ -46,10 +48,10 @@ type Query struct {
 // The input slice is not modified.
 func ApplyQuery(cards []Card, q Query) []Card {
 	terms := strings.Fields(strings.ToLower(q.Text))
-	out := make([]Card, 0, len(cards))
-	for _, c := range cards {
-		if matchesQuery(c, q, terms) {
-			out = append(out, c)
+	var matched []int
+	for i := range cards {
+		if matchesQuery(&cards[i], q, terms) {
+			matched = append(matched, i)
 		}
 	}
 
@@ -57,76 +59,130 @@ func ApplyQuery(cards []Card, q Query) []Card {
 	if field == "" {
 		field = SortName
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		cmp := compareBy(out[i], out[j], field, q.RarityOrder)
+	return sortedCards(cards, matched, func(a, b *Card) int {
+		cmp := compareBy(a, b, field, q.RarityOrder)
 		if cmp == 0 {
-			cmp = DefaultOrder(out[i], out[j])
+			cmp = DefaultOrder(*a, *b)
 		}
 		if q.Descending {
-			return cmp > 0
+			return -cmp
 		}
-		return cmp < 0
+		return cmp
 	})
+}
+
+// sortedCards returns cards[i] for each i in idx, stably ordered by cmp. It sorts
+// the indexes rather than the cards, which are large structs to move.
+func sortedCards(cards []Card, idx []int, cmp func(a, b *Card) int) []Card {
+	slices.SortStableFunc(idx, func(i, j int) int { return cmp(&cards[i], &cards[j]) })
+	out := make([]Card, len(idx))
+	for k, i := range idx {
+		out[k] = cards[i]
+	}
 	return out
 }
 
 func IsAny(s string) bool { return s == "" || s == FilterAny }
 
-func matchesQuery(c Card, q Query, terms []string) bool {
+func matchesQuery(c *Card, q Query, terms []string) bool {
 	if !IsAny(q.Set) && !strings.EqualFold(c.Set, q.Set) {
 		return false
 	}
 	if !IsAny(q.Rarity) && !strings.EqualFold(c.Rarity, q.Rarity) {
 		return false
 	}
-	if !IsAny(q.Finish) && !strings.EqualFold(c.Finish, q.Finish) {
+	if !IsAny(q.Finish) && !c.HasFinish(q.Finish) {
 		return false
 	}
-	if q.Match != nil && !q.Match(c) {
+	if q.Match != nil && !q.Match(*c) {
 		return false
 	}
-	if len(terms) > 0 {
-		haystack := strings.ToLower(c.Name + "\x00" + c.Set + "\x00" + c.SetName + "\x00" + c.Number)
-		for _, t := range terms {
-			if !strings.Contains(haystack, t) {
-				return false
-			}
+	for _, t := range terms { // each term in the name, set code, set name or number
+		if !containsFold(c.Name, t) && !containsFold(c.Set, t) && !containsFold(c.SetName, t) && !containsFold(c.CollectorNumber, t) {
+			return false
 		}
 	}
 	return true
 }
 
+// containsFold reports whether s contains sub (already lowercase), ignoring case,
+// without allocating for ASCII text.
+func containsFold(s, sub string) bool {
+	if len(sub) > len(s) {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			return strings.Contains(strings.ToLower(s), sub)
+		}
+	}
+	for i := 0; i+len(sub) <= len(s); i++ {
+		j := 0
+		for j < len(sub) && lowerASCII(s[i+j]) == sub[j] {
+			j++
+		}
+		if j == len(sub) {
+			return true
+		}
+	}
+	return false
+}
+
+func lowerASCII(c byte) byte {
+	if 'A' <= c && c <= 'Z' {
+		return c + 'a' - 'A'
+	}
+	return c
+}
+
+// compareFold compares strings as strings.Compare(strings.ToLower(a), strings.ToLower(b))
+// does, without allocating for ASCII text.
+func compareFold(a, b string) int {
+	for i := 0; i < len(a) && i < len(b); i++ {
+		ca, cb := a[i], b[i]
+		if ca >= utf8.RuneSelf || cb >= utf8.RuneSelf {
+			return strings.Compare(strings.ToLower(a[i:]), strings.ToLower(b[i:]))
+		}
+		if ca, cb = lowerASCII(ca), lowerASCII(cb); ca != cb {
+			return compareInt(int(ca), int(cb))
+		}
+	}
+	return compareInt(len(a), len(b))
+}
+
 // compareBy returns -1, 0 or 1 comparing a and b on a single field.
-func compareBy(a, b Card, field SortField, rarityOrder []string) int {
+func compareBy(a, b *Card, field SortField, rarityOrder []string) int {
 	switch field {
 	case SortSet:
-		return strings.Compare(strings.ToLower(a.SetName), strings.ToLower(b.SetName))
+		return compareFold(a.SetName, b.SetName)
 	case SortNumber:
-		return compareCollectorNumber(a.Number, b.Number)
+		return compareCollectorNumber(a.CollectorNumber, b.CollectorNumber)
 	case SortRarity:
 		return compareInt(rank(rarityOrder, a.Rarity), rank(rarityOrder, b.Rarity))
 	case SortQuantity:
-		return compareInt(a.Quantity, b.Quantity)
+		return compareInt(a.CopyCount(), b.CopyCount())
 	case SortPrice:
-		return compareFloat(a.PurchasePrice, b.PurchasePrice)
+		ac, _ := a.PricePaid()
+		bc, _ := b.PricePaid()
+		return compareFloat(ac, bc)
 	case SortAcquired:
-		return strings.Compare(a.AcquiredDate, b.AcquiredDate)
+		return strings.Compare(a.EarliestAcquired(), b.EarliestAcquired())
 	case SortReleased:
 		return strings.Compare(a.ReleasedAt, b.ReleasedAt)
 	default:
-		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+		return compareFold(a.Name, b.Name)
 	}
 }
 
 // defaultOrder is the tiebreaker: name, then set, then collector number, then ID for determinism.
 func DefaultOrder(a, b Card) int {
-	if c := strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)); c != 0 {
+	if c := compareFold(a.Name, b.Name); c != 0 {
 		return c
 	}
-	if c := strings.Compare(strings.ToLower(a.Set), strings.ToLower(b.Set)); c != 0 {
+	if c := compareFold(a.Set, b.Set); c != 0 {
 		return c
 	}
-	if c := compareCollectorNumber(a.Number, b.Number); c != 0 {
+	if c := compareCollectorNumber(a.CollectorNumber, b.CollectorNumber); c != 0 {
 		return c
 	}
 	return strings.Compare(a.ID, b.ID)

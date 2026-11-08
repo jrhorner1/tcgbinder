@@ -13,54 +13,39 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jrhorner1/mtgmanager/internal/collection"
-	"github.com/jrhorner1/mtgmanager/internal/datadir"
-	"github.com/jrhorner1/mtgmanager/internal/game"
+	"github.com/jrhorner1/tcgbinder/internal/collection"
+	"github.com/jrhorner1/tcgbinder/internal/datadir"
+	"github.com/jrhorner1/tcgbinder/internal/game"
+	"github.com/jrhorner1/tcgbinder/internal/settings"
 )
 
+// PriceCheckInterval is how often running apps check whether prices need refreshing.
+// Prices refresh at most once a day, when the stored ones are from an earlier day.
+const PriceCheckInterval = time.Hour
+
 // AppFileFormat names collection files written by this app in import reports.
-const AppFileFormat = "MTG Manager collection file"
+const AppFileFormat = "TCG Binder collection file"
 
 // Game is one game with its open collection and price history.
 type Game struct {
 	Game   game.Game
 	Store  *collection.Store
 	Prices *collection.PriceHistory
+	// Settings, if set, returns the app settings (price refresh frequency, automatic
+	// price history).
+	Settings func() settings.Settings
 
 	mu   sync.Mutex
 	sets map[string]collection.SetInfo
 }
 
-// OpenOptions controls Open.
-type OpenOptions struct {
-	// LegacyFiles moves files from before multi-game support (kept at the top of the
-	// data folder) into this game's folder. Only the game that existed then sets it.
-	LegacyFiles bool
-	// LegacyCWD also copies a collection.json from the working directory, where the
-	// earliest versions kept it (desktop only).
-	LegacyCWD bool
-}
-
-// Open prepares g's folder inside root, opens its collection (upgrading entries
-// from older versions) and its price history.
-func Open(root string, g game.Game, opt OpenOptions) (*Game, error) {
+// Open prepares g's folder inside root and opens its collection and price history.
+func Open(root string, g game.Game) (*Game, error) {
 	dir, err := datadir.GameDir(root, g.ID())
 	if err != nil {
 		return nil, err
 	}
 	path := filepath.Join(dir, datadir.CollectionFile)
-	if opt.LegacyFiles {
-		moved, err := datadir.MoveLegacyFiles(root, dir)
-		if err != nil {
-			return nil, err
-		}
-		if len(moved) > 0 {
-			slog.Info("moved files into game folder", "files", moved, "dir", dir)
-		}
-	}
-	if opt.LegacyCWD {
-		copyLegacyCWD(path)
-	}
 	if err := g.Open(dir); err != nil {
 		return nil, err
 	}
@@ -68,49 +53,23 @@ func Open(root string, g game.Game, opt OpenOptions) (*Game, error) {
 	if err != nil {
 		return nil, err
 	}
-	if n, err := store.Transform(g.Upgrade); err != nil {
-		return nil, err
-	} else if n > 0 {
-		slog.Info("upgraded entries", "game", g.ID(), "entries", n)
-	}
-	slog.Info("collection opened", "game", g.ID(), "path", path, "entries", len(store.GetCollection()))
+	slog.Info("collection opened", "game", g.ID(), "path", path, "cards", len(store.GetCollection()))
 	return FromStore(g, store), nil
 }
 
 // FromStore wraps an open store, loading the price history kept next to it.
 func FromStore(g game.Game, store *collection.Store) *Game {
 	path := filepath.Join(filepath.Dir(store.FilePath()), "price-history.json")
-	prices, err := collection.LoadPriceHistory(path)
+	prices, err := collection.OpenPriceHistory(path)
 	if err != nil {
 		slog.Warn("price history", "game", g.ID(), "err", err)
 	}
 	if prices == nil {
 		// The file exists but couldn't be read or set aside: keep the history in memory
 		// for this session and leave the file untouched.
-		prices, _ = collection.LoadPriceHistory(filepath.Join(os.TempDir(), "mtgmanager-"+g.ID()+"-price-history.json"))
+		prices, _ = collection.OpenPriceHistory(filepath.Join(os.TempDir(), "tcgbinder-"+g.ID()+"-price-history.json"))
 	}
 	return &Game{Game: g, Store: store, Prices: prices}
-}
-
-// copyLegacyCWD copies a collection.json from the working directory into dest the
-// first time; the original is left in place.
-func copyLegacyCWD(dest string) {
-	if _, err := os.Stat(dest); err == nil {
-		return
-	}
-	src, err := filepath.Abs(datadir.CollectionFile)
-	if err != nil || src == dest {
-		return
-	}
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return // nothing to migrate
-	}
-	if err := os.WriteFile(dest, data, 0o600); err != nil {
-		slog.Warn("could not copy legacy collection", "from", src, "err", err)
-		return
-	}
-	slog.Info("copied legacy collection", "from", src, "to", dest)
 }
 
 func today() string {
@@ -150,7 +109,7 @@ func (s *Game) RecordToday() error {
 }
 
 // RefreshPrices fetches current prices from the game's catalog, saves them and
-// records today's prices. It returns the number of entries updated.
+// records today's prices. It returns the number of cards updated.
 func (s *Game) RefreshPrices(progress func(done, total int)) (int, error) {
 	updates, err := s.Game.Refresh(s.Store.IDs(), progress)
 	if err != nil {
@@ -164,16 +123,16 @@ func (s *Game) RefreshPrices(progress func(done, total int)) (int, error) {
 	return n, s.Prices.Save()
 }
 
-// CanBackfill reports whether the game offers price history.
-func (s *Game) CanBackfill() (game.PriceHistorySource, bool) {
+// PriceHistorySource reports whether the game offers price history.
+func (s *Game) PriceHistorySource() (game.PriceHistorySource, bool) {
 	src, ok := s.Game.(game.PriceHistorySource)
 	return src, ok
 }
 
-// Backfill merges the game's daily price history (keeping prices already recorded)
+// LoadPriceHistory merges the game's daily price history (keeping prices already recorded)
 // and returns how many printings had history.
-func (s *Game) Backfill(status func(string)) (int, error) {
-	src, ok := s.CanBackfill()
+func (s *Game) LoadPriceHistory(status func(string)) (int, error) {
+	src, ok := s.PriceHistorySource()
 	if !ok {
 		return 0, errors.New("this game has no price history source")
 	}
@@ -191,25 +150,53 @@ func (s *Game) Backfill(status func(string)) (int, error) {
 	for id, byFinish := range prices {
 		s.Prices.Merge(id, byFinish)
 	}
-	s.Prices.MarkBackfilled(today())
+	s.Prices.MarkHistoryLoaded(today())
 	return len(prices), s.Prices.Save()
 }
 
-// DailySync is the startup routine: load price history the first time (when
-// autoBackfill is set), refresh prices once a day, and record today's value.
-func (s *Game) DailySync(autoBackfill bool) {
-	if _, ok := s.CanBackfill(); ok && autoBackfill && s.Prices.BackfilledOn() == "" && len(s.Store.IDs()) > 0 {
-		if n, err := s.Backfill(nil); err != nil {
-			slog.Warn("price history backfill failed", "game", s.Game.ID(), "err", err)
+// settings returns the app settings that steer automatic price updates. Without them
+// (tests, tools), prices refresh daily and price history loads automatically.
+func (s *Game) settings() settings.Settings {
+	if s.Settings == nil {
+		return settings.Defaults()
+	}
+	return s.Settings()
+}
+
+// PricesDue reports whether automatic updates should refresh prices now: they are from
+// an earlier day (daily), a week or more old (weekly), or never (manual).
+func (s *Game) PricesDue() bool {
+	switch s.settings().PriceRefresh {
+	case "manual":
+		return false
+	case "weekly":
+		return s.Store.PricesOlderThan(7)
+	}
+	return s.Store.PricesStale()
+}
+
+// AutoLoadHistoryDue reports whether to load price history without being asked: the
+// game offers it, it was never loaded, there are cards, and the setting allows it.
+func (s *Game) AutoLoadHistoryDue() bool {
+	_, ok := s.PriceHistorySource()
+	return ok && s.settings().AutoPriceHistory && s.Prices.HistoryLoadedOn() == "" && len(s.Store.IDs()) > 0
+}
+
+// DailySync is the startup routine: load price history the first time (when allowed),
+// refresh prices when due, and record today's value.
+func (s *Game) DailySync() {
+	if s.AutoLoadHistoryDue() {
+		if n, err := s.LoadPriceHistory(nil); err != nil {
+			slog.Warn("loading price history failed", "game", s.Game.ID(), "err", err)
 		} else {
 			slog.Info("price history loaded", "game", s.Game.ID(), "printings", n)
 		}
 	}
-	if s.Store.PricesStale() {
+	if s.PricesDue() {
 		if n, err := s.RefreshPrices(nil); err != nil {
 			slog.Warn("price refresh failed", "game", s.Game.ID(), "err", err)
 		} else {
-			slog.Info("prices refreshed", "game", s.Game.ID(), "entries", n)
+			slog.Info("prices refreshed", "game", s.Game.ID(), "cards", n)
 		}
 		return
 	}
@@ -218,10 +205,31 @@ func (s *Game) DailySync(autoBackfill bool) {
 	}
 }
 
+// RunPriceSchedule refreshes prices whenever they are due, checking every
+// PriceCheckInterval until stop is closed. Used by the web server.
+func (s *Game) RunPriceSchedule(stop <-chan struct{}) {
+	t := time.NewTicker(PriceCheckInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			if s.PricesDue() {
+				if n, err := s.RefreshPrices(nil); err != nil {
+					slog.Warn("scheduled price refresh failed", "game", s.Game.ID(), "err", err)
+				} else {
+					slog.Info("prices refreshed", "game", s.Game.ID(), "cards", n)
+				}
+			}
+		}
+	}
+}
+
 // ImportResult summarizes an import.
 type ImportResult struct {
-	Report                  game.ImportReport
-	Copies, Created, Merged int
+	Report                        game.ImportReport
+	Cards, NewCards, AlreadyOwned int
 }
 
 // Summary describes the result for people.
@@ -229,11 +237,11 @@ func (r ImportResult) Summary() string {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "Format: %s\n", r.Report.Format)
 	if r.Report.Format == AppFileFormat {
-		fmt.Fprintf(&b, "Entries read: %d\n", r.Report.Rows)
+		fmt.Fprintf(&b, "Cards read: %d\n", r.Report.Rows)
 	} else {
 		fmt.Fprintf(&b, "Rows read: %d\n", r.Report.Rows)
 	}
-	fmt.Fprintf(&b, "Cards imported: %d (%d new entries, %d added to existing quantities)\n", r.Copies, r.Created, r.Merged)
+	fmt.Fprintf(&b, "Cards imported: %d (%d new cards, %d added to cards you already own)\n", r.Cards, r.NewCards, r.AlreadyOwned)
 	for i, n := range r.Report.Notes {
 		if i == 0 {
 			b.WriteString("\n")
@@ -244,7 +252,7 @@ func (r ImportResult) Summary() string {
 }
 
 // Import adds a file's cards: a CSV export from another app, or a collection file
-// written by this app. Entries for a printing already owned add to its quantity.
+// written by this app. Cards for a printing already owned add to its quantity.
 func (s *Game) Import(data []byte, progress func(done, total int)) (ImportResult, error) {
 	cards, report, err := ParseImport(s.Game, data, progress)
 	res := ImportResult{Report: report}
@@ -252,11 +260,11 @@ func (s *Game) Import(data []byte, progress func(done, total int)) (ImportResult
 		return res, err
 	}
 	for _, c := range cards {
-		res.Copies += c.Quantity
+		res.Cards += c.CopyCount()
 	}
-	res.Created, res.Merged, err = s.Store.AddCards(cards)
+	res.NewCards, res.AlreadyOwned, err = s.Store.AddCards(cards)
 	if err == nil {
-		slog.Info("import complete", "game", s.Game.ID(), "format", report.Format, "cards", res.Copies, "new", res.Created, "merged", res.Merged)
+		slog.Info("import complete", "game", s.Game.ID(), "format", report.Format, "cards", res.Cards, "new", res.NewCards, "merged", res.AlreadyOwned)
 	}
 	return res, err
 }
@@ -267,10 +275,9 @@ func IsAppFile(data []byte) bool {
 	return len(trimmed) > 0 && trimmed[0] == '{'
 }
 
-// ParseImport turns a file into entries for g without saving them. App collection
-// files already carry exact catalog IDs and prices, so they are used as-is (after
-// upgrading entries from older versions); anything else goes to the game's CSV
-// importer.
+// ParseImport turns a file into cards for g without saving them. App collection
+// files already carry exact catalog IDs and prices, so they are used as-is; anything
+// else goes to the game's CSV importer.
 func ParseImport(g game.Game, data []byte, progress func(done, total int)) ([]collection.Card, game.ImportReport, error) {
 	if !IsAppFile(data) {
 		return g.Import(data, progress)
@@ -280,11 +287,8 @@ func ParseImport(g game.Game, data []byte, progress func(done, total int)) ([]co
 	if err != nil {
 		return nil, report, err
 	}
-	if fileGame != "" && fileGame != g.ID() {
+	if fileGame != g.ID() {
 		return nil, report, fmt.Errorf("this file is a %q collection; it can't be imported into %s", fileGame, g.Name())
-	}
-	for i := range cards {
-		g.Upgrade(&cards[i])
 	}
 	report.Rows = len(cards)
 	if len(cards) == 0 {

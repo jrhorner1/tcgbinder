@@ -3,38 +3,40 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
-	"github.com/jrhorner1/mtgmanager/internal/collection"
-	"github.com/jrhorner1/mtgmanager/internal/game"
-	"github.com/jrhorner1/mtgmanager/internal/service"
+	"github.com/jrhorner1/tcgbinder/internal/collection"
+	"github.com/jrhorner1/tcgbinder/internal/game"
+	"github.com/jrhorner1/tcgbinder/internal/service"
 )
 
 // Tree node IDs carry the game ID so games never collide:
 //
 //	home
-//	game:<game>
-//	set:<game>:<set code>
-//	card:<game>:<entry key>
+//	game:<game>                the game's cards, in the Card order setting's order
+//	card:<game>:<card key>
+//	tools
+//	settings
 const (
-	nodeHome   = "home"
-	prefixGame = "game:"
-	prefixSet  = "set:"
-	prefixCard = "card:"
+	nodeHome     = "home"
+	nodeTools    = "tools"
+	nodeSettings = "settings"
+	prefixGame   = "game:"
+	prefixCard   = "card:"
 )
 
-func gameNode(gameID string) string      { return prefixGame + gameID }
-func setNode(gameID, code string) string { return prefixSet + gameID + ":" + code }
+func gameNode(gameID string) string { return prefixGame + gameID }
 func cardNode(gameID string, c collection.Card) string {
-	return prefixCard + gameID + ":" + collection.EntryKey(c)
+	return prefixCard + gameID + ":" + collection.CardKey(c)
 }
 
 // parseNode splits a node ID into its kind prefix, game ID and remainder.
 func parseNode(id string) (kind, gameID, rest string) {
-	for _, p := range []string{prefixGame, prefixSet, prefixCard} {
+	for _, p := range []string{prefixGame, prefixCard} {
 		if strings.HasPrefix(id, p) {
 			gameID, rest, _ = strings.Cut(strings.TrimPrefix(id, p), ":")
 			return p, gameID, rest
@@ -50,18 +52,21 @@ type gameState struct {
 	store  *collection.Store
 	prices *collection.PriceHistory
 	sets   map[string]collection.SetInfo // nil until loaded
-	cards  []collection.Card             // every entry
+	cards  []collection.Card             // every card
 
-	refreshing, backfilling bool
+	refreshing, loadingHistory bool
 
 	// Tree data, rebuilt by applyFilter.
-	filtered  []collection.Card
-	setOrder  []string                       // set codes, newest release first
-	setStats  map[string]collection.SetStats // per set, for the filtered cards
-	setCards  map[string][]string            // set code -> card node IDs in collector-number order
-	cardNodes map[string]collection.Card     // card node ID -> entry
-	copies    int                            // copies in the filtered view
+	filtered    []collection.Card          // matching cards, in the Card order setting's order
+	cardIDs     []string                   // their node IDs, in the same order
+	cardNodes   map[string]collection.Card // card node ID -> card
+	cardCount   int                        // copies in the filtered view
+	uniqueCount int                        // distinct printings in the filtered view
+	setCount    int                        // sets in the filtered view
 }
+
+// searchDelay is how long typing must pause before the collection is filtered.
+const searchDelay = 150 * time.Millisecond
 
 // collectionView holds the search and filter controls. Filters other than the
 // search text apply to the active game, whose menus they come from.
@@ -108,9 +113,21 @@ func (ui *App) buildFilterBar() fyne.CanvasObject {
 	v.searchEntry = widget.NewEntry()
 	v.searchEntry.SetPlaceHolder("Search name, set, or collector number")
 	v.searchEntry.ActionItem = widget.NewIcon(theme.SearchIcon())
+	// Filter once typing pauses, not on every keystroke: regrouping a large collection
+	// takes long enough on a phone to make typing lag.
+	var pending *time.Timer
 	v.searchEntry.OnChanged = func(s string) {
-		v.query.Text = s
-		ui.applyFilter()
+		if pending != nil {
+			pending.Stop()
+		}
+		pending = time.AfterFunc(searchDelay, func() {
+			runOnUI(func() {
+				if v.searchEntry.Text == s { // the latest text: apply it
+					v.query.Text = s
+					ui.applyFilter()
+				}
+			})
+		})
 	}
 
 	clearButton := widget.NewButtonWithIcon("", theme.ContentClearIcon(), func() {
@@ -150,6 +167,9 @@ func (ui *App) rebuildFilterMenus() {
 	v.setSelect = newFilterSelect("Set", nil, func(label string) {
 		v.query.Set = v.setCodeByLabel[label]
 		ui.applyFilter()
+		if v.query.Set != "" && !isMobile() { // beside the set's cards, its page
+			ui.openSet(v.query.Set)
+		}
 	})
 	menus := []fyne.CanvasObject{v.setSelect}
 	v.selects = []*widget.Select{v.setSelect}
@@ -166,8 +186,14 @@ func (ui *App) rebuildFilterMenus() {
 		v.query.Rarity = s
 		ui.applyFilter()
 	})
-	finish := newFilterSelect("Finish", titleCaseAll(g.Finishes()), func(s string) {
-		v.query.Finish = s
+	finishByName := map[string]string{}
+	var finishNames []string
+	for _, f := range g.Finishes() {
+		finishByName[g.FinishName(f)] = f
+		finishNames = append(finishNames, g.FinishName(f))
+	}
+	finish := newFilterSelect("Finish", finishNames, func(s string) {
+		v.query.Finish = finishByName[s]
 		ui.applyFilter()
 	})
 	menus = append(menus, rarity, finish)
@@ -196,47 +222,38 @@ func (v *collectionView) filtering() bool {
 func (ui *App) applyFilter() {
 	v := &ui.view
 	for _, gs := range ui.games {
-		q := collection.Query{Text: v.query.Text, SortBy: collection.SortNumber, RarityOrder: gs.game.Rarities()}
+		q := collection.Query{Text: v.query.Text, RarityOrder: gs.game.Rarities()}
 		if gs == ui.g {
 			q = v.query // menus come from the active game
 		}
-		gs.filtered = collection.ApplyQuery(gs.cards, q) // ordered by collector number
-
-		st := collection.ComputeStats(gs.filtered, gs.sets)
-		gs.setOrder = gs.setOrder[:0]
-		gs.setStats = map[string]collection.SetStats{}
-		for _, s := range st.BySet { // already newest first
-			gs.setOrder = append(gs.setOrder, s.Code)
-			gs.setStats[s.Code] = s
-		}
-		gs.setCards = map[string][]string{}
-		gs.cardNodes = map[string]collection.Card{}
-		gs.copies = st.Copies
-		for _, c := range gs.filtered {
-			code := strings.ToUpper(c.Set)
+		gs.filtered = collection.SortCards(collection.ApplyQuery(gs.cards, q), ui.settings.Get().CardOrder)
+		gs.cardIDs = make([]string, len(gs.filtered))
+		gs.cardNodes = make(map[string]collection.Card, len(gs.filtered))
+		sets := map[string]bool{}
+		gs.cardCount = 0
+		for i, c := range gs.filtered {
 			id := cardNode(gs.game.ID(), c)
-			gs.setCards[code] = append(gs.setCards[code], id)
-			gs.cardNodes[id] = c
+			gs.cardIDs[i], gs.cardNodes[id] = id, c
+			gs.cardCount += c.CopyCount()
+			sets[strings.ToUpper(c.Set)] = true
 		}
+		gs.uniqueCount, gs.setCount = collection.UniqueCards(gs.filtered), len(sets)
 	}
 
 	if ui.tree != nil {
 		ui.tree.Refresh()
-		if v.filtering() {
-			ui.tree.OpenAllBranches() // show every match without manual expanding
-		} else {
-			for _, gs := range ui.games {
-				ui.tree.OpenBranch(gameNode(gs.game.ID()))
-			}
+		for _, gs := range ui.games { // the cards are always in view under their game
+			ui.tree.OpenBranch(gameNode(gs.game.ID()))
 		}
 	}
 	if v.summaryLabel != nil {
 		gs := ui.g
+		counts := fmt.Sprintf("%s · %s · %s", plural(gs.uniqueCount, "unique card", "unique cards"),
+			plural(gs.cardCount, "total card", "total cards"), plural(gs.setCount, "set", "sets"))
 		if v.filtering() {
-			v.summaryLabel.SetText(fmt.Sprintf("%d of %s match · %s", len(gs.filtered), plural(len(gs.cards), "entry", "entries"), plural(gs.copies, "card", "cards")))
-		} else {
-			v.summaryLabel.SetText(fmt.Sprintf("%s · %s · %s", plural(len(gs.cards), "entry", "entries"), plural(gs.copies, "card", "cards"), plural(len(gs.setOrder), "set", "sets")))
+			counts = "Matching: " + counts
 		}
+		v.summaryLabel.SetText(counts)
 	}
 }
 
@@ -261,7 +278,8 @@ func (ui *App) activate(gs *gameState) {
 	ui.applyFilter()
 }
 
-// buildTree creates the Home / game / set / card navigation tree.
+// buildTree creates the navigation tree: Home, each game with its cards, Tools and
+// Settings.
 func (ui *App) buildTree() *widget.Tree {
 	tree := widget.NewTree(
 		func(id widget.TreeNodeID) []widget.TreeNodeID {
@@ -270,28 +288,18 @@ func (ui *App) buildTree() *widget.Tree {
 				for _, gs := range ui.games {
 					out = append(out, gameNode(gs.game.ID()))
 				}
-				return out
+				return append(out, nodeTools, nodeSettings)
 			}
-			kind, gameID, code := parseNode(id)
-			gs := ui.gameByID(gameID)
-			if gs == nil {
-				return nil
-			}
-			switch kind {
-			case prefixGame:
-				out := make([]string, len(gs.setOrder))
-				for i, c := range gs.setOrder {
-					out[i] = setNode(gameID, c)
+			if kind, gameID, _ := parseNode(id); kind == prefixGame {
+				if gs := ui.gameByID(gameID); gs != nil {
+					return gs.cardIDs
 				}
-				return out
-			case prefixSet:
-				return gs.setCards[code]
 			}
 			return nil
 		},
 		func(id widget.TreeNodeID) bool {
 			kind, _, _ := parseNode(id)
-			return id == "" || kind == prefixGame || kind == prefixSet
+			return id == "" || kind == prefixGame
 		},
 		func(branch bool) fyne.CanvasObject {
 			name := widget.NewLabel("")
@@ -306,12 +314,20 @@ func (ui *App) buildTree() *widget.Tree {
 			icon := row.Objects[1].(*widget.Icon)
 			detail := row.Objects[2].(*widget.Label)
 
-			kind, gameID, rest := parseNode(id)
+			kind, gameID, _ := parseNode(id)
 			gs := ui.gameByID(gameID)
 			switch {
 			case id == nodeHome:
 				icon.SetResource(theme.HomeIcon())
 				name.SetText("Home")
+				detail.SetText("")
+			case id == nodeTools:
+				icon.SetResource(theme.MenuIcon())
+				name.SetText("Tools")
+				detail.SetText("")
+			case id == nodeSettings:
+				icon.SetResource(theme.SettingsIcon())
+				name.SetText("Settings")
 				detail.SetText("")
 			case gs == nil:
 				name.SetText("")
@@ -319,32 +335,12 @@ func (ui *App) buildTree() *widget.Tree {
 			case kind == prefixGame:
 				icon.SetResource(theme.StorageIcon())
 				name.SetText(gs.game.Name())
-				detail.SetText(plural(gs.copies, "card", "cards"))
-			case kind == prefixSet:
-				s := gs.setStats[rest]
-				icon.SetResource(theme.FolderIcon())
-				name.SetText(s.Name)
-				if s.Name == "" {
-					name.SetText(rest)
-				}
-				if s.SetSize > 0 {
-					detail.SetText(fmt.Sprintf("%s · %d/%d", rest, s.UniqueNumbers, s.SetSize))
-				} else {
-					detail.SetText(fmt.Sprintf("%s · %d", rest, s.UniqueNumbers))
-				}
+				detail.SetText(plural(gs.cardCount, "card", "cards")) // as Home's Cards tile
 			default:
 				c := gs.cardNodes[id]
 				icon.SetResource(nil)
-				name.SetText(fmt.Sprintf("%s   %s", c.Number, c.Name))
-				parts := []string{}
-				if f := c.Finish; f != "" && len(gs.game.Finishes()) > 0 && f != gs.game.Finishes()[0] {
-					parts = append(parts, f) // show non-default finishes only
-				}
-				if c.Condition != "" && c.Condition != collection.ConditionNearMint {
-					parts = append(parts, string(c.Condition))
-				}
-				parts = append(parts, fmt.Sprintf("×%d", c.Quantity))
-				detail.SetText(strings.Join(parts, " · "))
+				name.SetText(c.Name)
+				detail.SetText(setNumber(c.Set, c.CollectorNumber) + " · " + copiesSummary(c, gs.game))
 			}
 			row.Refresh() // re-run the Border layout now that the labels have real widths
 		},
@@ -352,7 +348,7 @@ func (ui *App) buildTree() *widget.Tree {
 
 	tree.OnSelected = func(id widget.TreeNodeID) {
 		ui.selected = id
-		kind, gameID, rest := parseNode(id)
+		kind, gameID, _ := parseNode(id)
 		if gs := ui.gameByID(gameID); gs != nil {
 			ui.activate(gs)
 		}
@@ -360,13 +356,12 @@ func (ui *App) buildTree() *widget.Tree {
 		case id == nodeHome || kind == prefixGame:
 			ui.showHome()
 			ui.showDetail("Home")
-		case kind == prefixSet:
-			ui.showSet(rest)
-			title := ui.g.setStats[rest].Name
-			if title == "" {
-				title = rest
-			}
-			ui.showDetail(title)
+		case id == nodeTools:
+			ui.showTools()
+			ui.showDetail("Tools")
+		case id == nodeSettings:
+			ui.showSettings()
+			ui.showDetail("Settings")
 		case kind == prefixCard:
 			if c, ok := ui.g.cardNodes[id]; ok {
 				ui.renderEditor(c)
@@ -375,6 +370,27 @@ func (ui *App) buildTree() *widget.Tree {
 		}
 	}
 	return tree
+}
+
+// openSet shows a set's page (completion, value, missing cards).
+func (ui *App) openSet(code string) {
+	code = strings.ToUpper(code)
+	title := code
+	if info, ok := ui.g.sets[code]; ok && info.Name != "" {
+		title = info.Name
+	} else {
+		for _, c := range ui.g.cards {
+			if strings.EqualFold(c.Set, code) && c.SetName != "" {
+				title = c.SetName
+				break
+			}
+		}
+	}
+	if !isMobile() {
+		ui.tree.UnselectAll() // the page isn't in the tree
+	}
+	ui.showSet(code)
+	ui.showDetail(title)
 }
 
 // refreshSetOptions rebuilds the set filter choices from the active game's sets,
@@ -393,7 +409,7 @@ func (ui *App) refreshSetOptions() {
 	}
 }
 
-// plural formats a count with the right noun, e.g. "1 entry", "3 entries".
+// plural formats a count with the right noun, e.g. "1 card", "3 cards".
 func plural(n int, one, many string) string {
 	if n == 1 {
 		return fmt.Sprintf("%d %s", n, one)

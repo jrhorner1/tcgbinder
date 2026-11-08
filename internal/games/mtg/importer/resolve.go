@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/jrhorner1/mtgmanager/internal/games/mtg/scryfall"
+	"github.com/jrhorner1/tcgbinder/internal/games/mtg/scryfall"
 )
 
 // identifier is one way of asking Scryfall for a printing, in /cards/collection form.

@@ -17,94 +17,32 @@ const (
 	ConditionDamaged   Condition = "DMG"
 )
 
-// Card is one collection entry: a printing of a card in one finish, condition and
-// language, with a quantity. The fields here are common to every game; anything a
-// particular game adds (Magic's mana cost, colors, Oracle ID, ...) lives in Attrs and
-// is stored at the top level of the card's JSON object alongside these fields.
+// Card is a card in the collection: one printing, with the copies owned grouped by
+// finish, then condition (Copies; the card editor's "Your Copies"). The fields here are common to every game;
+// anything a particular game adds (Magic's mana cost, colors, Oracle ID, ...) lives in
+// Attrs, stored as the card's "attrs" object.
 type Card struct {
-	ID         string `json:"id"` // the game catalog's printing ID (a Scryfall ID for Magic)
-	Name       string `json:"name"`
-	Set        string `json:"set"` // set code, uppercase
-	SetName    string `json:"set_name"`
-	Number     string `json:"collector_number"`
-	Rarity     string `json:"rarity"`
-	ReleasedAt string `json:"released_at"`
-	ImageURI   string `json:"image_uri"`
-	TypeLine   string `json:"type_line,omitempty"`
-	Text       string `json:"oracle_text,omitempty"` // rules text
-	Language   string `json:"lang"`
-	// Finishes are the variants the printing exists in (e.g. nonfoil, foil); Finish is
-	// the one owned.
-	Finishes      []string           `json:"finishes"`
-	Finish        string             `json:"finish"`
-	Condition     Condition          `json:"condition"`
-	Quantity      int                `json:"quantity"`
-	PurchasePrice float64            `json:"purchase_price,omitempty"` // per copy
-	AcquiredDate  string             `json:"acquired_date,omitempty"`  // YYYY-MM-DD
+	ID              string `json:"id"` // the game catalog's printing ID (a Scryfall ID for Magic)
+	Name            string `json:"name"`
+	Set             string `json:"set"` // set code, uppercase
+	SetName         string `json:"set_name"`
+	CollectorNumber string `json:"collector_number"`
+	Rarity          string `json:"rarity"`
+	ReleasedAt      string `json:"released_at"`
+	ImageURI        string `json:"image_uri"`
+	TypeLine        string `json:"type_line,omitempty"`
+	RulesText       string `json:"oracle_text,omitempty"` // rules text
+	Language        string `json:"lang"`
+	// Finishes are the variants the printing exists in (e.g. nonfoil, foil).
+	Finishes []string `json:"finishes"`
+	// Copies are the copies owned: finish -> condition -> purchases.
+	Copies        Copies             `json:"copies,omitempty"`
 	Market        map[string]float64 `json:"market,omitempty"`         // USD market price per finish at PricesUpdated
 	PricesUpdated string             `json:"prices_updated,omitempty"` // YYYY-MM-DD
 
 	// Attrs holds game-specific fields as raw JSON, keyed by their JSON name. Use the
-	// Attr helpers; maps are copied on write so entries never share them.
-	Attrs map[string]json.RawMessage `json:"-"`
-}
-
-type cardFields Card // same fields, without the custom JSON methods
-
-var knownKeys = func() map[string]bool {
-	m := map[string]bool{}
-	b, _ := json.Marshal(cardFields{})
-	var fields map[string]json.RawMessage
-	_ = json.Unmarshal(b, &fields)
-	for k := range fields {
-		m[k] = true
-	}
-	// omitempty fields don't appear in a zero marshal
-	for _, k := range []string{"type_line", "oracle_text", "purchase_price", "acquired_date", "market", "prices_updated"} {
-		m[k] = true
-	}
-	return m
-}()
-
-// UnmarshalJSON reads the common fields and keeps every other key in Attrs.
-func (c *Card) UnmarshalJSON(b []byte) error {
-	var f cardFields
-	if err := json.Unmarshal(b, &f); err != nil {
-		return err
-	}
-	var all map[string]json.RawMessage
-	if err := json.Unmarshal(b, &all); err != nil {
-		return err
-	}
-	*c = Card(f)
-	c.Attrs = nil
-	for k, v := range all {
-		if !knownKeys[k] {
-			if c.Attrs == nil {
-				c.Attrs = map[string]json.RawMessage{}
-			}
-			c.Attrs[k] = v
-		}
-	}
-	return nil
-}
-
-// MarshalJSON writes the common fields and the game-specific Attrs as one object.
-func (c Card) MarshalJSON() ([]byte, error) {
-	b, err := json.Marshal(cardFields(c))
-	if err != nil || len(c.Attrs) == 0 {
-		return b, err
-	}
-	var all map[string]json.RawMessage
-	if err := json.Unmarshal(b, &all); err != nil {
-		return nil, err
-	}
-	for k, v := range c.Attrs {
-		if !knownKeys[k] { // common fields always win
-			all[k] = v
-		}
-	}
-	return json.Marshal(all)
+	// Attr helpers; maps are copied on write so cards never share them.
+	Attrs map[string]json.RawMessage `json:"attrs,omitempty"`
 }
 
 // Attr returns a game-specific field's raw JSON, or nil.
@@ -163,9 +101,9 @@ func ParseCondition(raw string) Condition {
 
 // CatalogUpdate is fresh catalog data for one printing, from the game's price refresh.
 type CatalogUpdate struct {
-	Market   map[string]float64 // USD per finish
-	TypeLine string
-	Text     string
+	Market    map[string]float64 // USD per finish
+	TypeLine  string
+	RulesText string
 }
 
 // SetInfo describes a set for completion stats.

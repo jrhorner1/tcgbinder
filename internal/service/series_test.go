@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jrhorner1/mtgmanager/internal/collection"
+	"github.com/jrhorner1/tcgbinder/internal/collection"
 )
 
 func day(s string) time.Time {

@@ -3,16 +3,19 @@ package ui
 import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
-	"github.com/jrhorner1/mtgmanager/internal/service"
+	"github.com/jrhorner1/tcgbinder/internal/service"
+	"github.com/jrhorner1/tcgbinder/internal/settings"
 )
 
 // New creates the UI for the given games (each already opened, with its own files),
-// shown in window. The first game starts active.
-func New(window fyne.Window, games ...*service.Game) *App {
-	ui := &App{window: window, statusLabel: widget.NewLabel("System Ready")}
+// shown in window, with the user's settings. The first game starts active.
+func New(window fyne.Window, prefs *settings.Store, games ...*service.Game) *App {
+	if prefs == nil {
+		prefs = settings.Memory()
+	}
+	ui := &App{window: window, settings: prefs, statusLabel: widget.NewLabel("System Ready")}
 	for _, svc := range games {
 		ui.games = append(ui.games, &gameState{svc: svc, game: svc.Game, store: svc.Store, prices: svc.Prices})
 	}
@@ -25,22 +28,47 @@ func New(window fyne.Window, games ...*service.Game) *App {
 // BuildLayout constructs the main window content: side-by-side tree and page on
 // desktop, or a list screen that pushes page screens on phones.
 func (ui *App) BuildLayout() fyne.CanvasObject {
+	// Pages draw some text and shapes in theme colors looked up when built, so redraw
+	// when light/dark mode changes (on iOS the mode is known only after startup).
+	ui.applyTheme(ui.settings.Get()) // before the listener: nothing to redraw yet
+	fyne.CurrentApp().Settings().AddListener(func(fyne.Settings) {
+		runOnUI(ui.refreshCurrentPage)
+	})
+	ui.settings.OnChange(func(old, new settings.Settings) {
+		runOnUI(func() { ui.settingsChanged(old, new) })
+	})
 	ui.rightPane = container.NewStack()
 
-	// Filters above the Home / Collection / set / card tree, Add at the bottom.
+	// Filters above the Home / Tools / Collection / Settings tree, Add at the bottom.
 	filterBar := ui.buildFilterBar()
 	ui.tree = ui.buildTree()
 	ui.RefreshDataIndex()
 	addButton := widget.NewButtonWithIcon("Add", theme.ContentAddIcon(), ui.showAddDialog)
 	addButton.Importance = widget.HighImportance
-	leftPane := container.NewBorder(filterBar, container.NewPadded(addButton), nil, nil, ui.tree)
+	var bottom fyne.CanvasObject = addButton
+	if ui.canScanCamera() || ui.canScanPhoto() { // Scan beside Add: camera on phones, a photo on desktop
+		scanButton := widget.NewButtonWithIcon("Scan", theme.MediaPhotoIcon(), func() {
+			if ui.canScanCamera() {
+				ui.startScan(false)
+			} else {
+				ui.scanPhotoFile()
+			}
+		})
+		scanButton.Importance = widget.HighImportance
+		bottom = container.NewGridWithColumns(2, addButton, scanButton)
+	}
+	leftPane := container.NewBorder(filterBar, container.NewPadded(bottom), nil, nil, ui.tree)
 
-	topBar := container.NewHBox(
-		widget.NewIcon(theme.StorageIcon()),
-		widget.NewLabelWithStyle("MTG Manager", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		layout.NewSpacer(),
-		ui.ImportButton(ui.window),
-	)
+	brand := container.NewHBox(widget.NewIcon(theme.StorageIcon()),
+		widget.NewLabelWithStyle("TCG Binder", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
+	search := ui.globalSearchEntry()
+	var topBar fyne.CanvasObject
+	if isMobile() { // search gets its own row on narrow screens
+		topBar = container.NewVBox(brand, search)
+	} else {
+		topBar = container.NewBorder(nil, nil, brand,
+			container.NewGridWrap(fyne.NewSize(260, search.MinSize().Height), search))
+	}
 	statusBar := container.NewVBox(widget.NewSeparator(), ui.statusLabel)
 
 	if isMobile() {

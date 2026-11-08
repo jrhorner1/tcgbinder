@@ -13,7 +13,6 @@ type SetInfo struct {
 	Name       string `json:"name"`
 	CardCount  int    `json:"card_count"`
 	ReleasedAt string `json:"released_at"`
-	SetType    string `json:"set_type"`
 }
 
 type setsCache struct {

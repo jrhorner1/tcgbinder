@@ -37,11 +37,23 @@ func ParseLevel(s string) (slog.Level, error) {
 	return 0, fmt.Errorf("unknown log level %q (use debug, info, warn or error)", s)
 }
 
+// level is the logger's minimum level; SetLevel changes it while the app runs.
+var level = new(slog.LevelVar)
+
+// SetLevel changes the minimum level of the logger Setup installed.
+func SetLevel(name string) error {
+	l, err := ParseLevel(name)
+	if err != nil {
+		return err
+	}
+	level.Set(l)
+	return nil
+}
+
 // Setup installs the default slog logger (which also receives the standard log
 // package's output) and returns a function that closes the log file.
 func Setup(o Options) (closeFn func() error, err error) {
-	level, err := ParseLevel(o.Level)
-	if err != nil {
+	if err := SetLevel(o.Level); err != nil {
 		return nil, err
 	}
 	var writers []io.Writer

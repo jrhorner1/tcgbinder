@@ -3,9 +3,9 @@ package importer
 import (
 	"testing"
 
-	"github.com/jrhorner1/mtgmanager/internal/collection"
-	"github.com/jrhorner1/mtgmanager/internal/games/mtg/scryfall"
-	"github.com/jrhorner1/mtgmanager/internal/games/mtg/scryfall/scryfalltest"
+	"github.com/jrhorner1/tcgbinder/internal/collection"
+	"github.com/jrhorner1/tcgbinder/internal/games/mtg/scryfall"
+	"github.com/jrhorner1/tcgbinder/internal/games/mtg/scryfall/scryfalltest"
 )
 
 func TestParseImportFormats(t *testing.T) {
@@ -20,7 +20,7 @@ func TestParseImportFormats(t *testing.T) {
 				"1,2,3,1.0,LP,EN,0.11,2018-08-08,Forest (266),DOM,Dominaria,266,999,100055030,0.2,0.0,2026-10-31 15:28:08\n",
 			want: Row{Name: "Forest (266)", SetCode: "dom", SetName: "Dominaria", Number: "266", TCGPlayerID: 999,
 				MultiverseID: 100055030, Quantity: 1, Finish: "foil", Condition: collection.ConditionLightPlay, Language: "en",
-				PurchasePrice: 0.11, AcquiredDate: "2018-08-08"},
+				PricePaid: 0.11, AcquiredDate: "2018-08-08"},
 		},
 		{
 			name:   "Moxfield",
@@ -28,7 +28,7 @@ func TestParseImportFormats(t *testing.T) {
 			csv: `"Count","Tradelist Count","Name","Edition","Condition","Language","Foil","Tags","Last Modified","Collector Number","Alter","Proxy","Purchase Price"` + "\n" +
 				`"3","0","Lightning Bolt","2xm","Near Mint","English","foil","","2024-01-02 10:00:00.000000","117","False","False","1.50"` + "\n",
 			want: Row{Name: "Lightning Bolt", SetCode: "2xm", Number: "117", Quantity: 3, Finish: "foil",
-				Condition: collection.ConditionNearMint, Language: "en", PurchasePrice: 1.5},
+				Condition: collection.ConditionNearMint, Language: "en", PricePaid: 1.5},
 		},
 		{
 			name:   "ManaBox",
@@ -37,7 +37,7 @@ func TestParseImportFormats(t *testing.T) {
 				"Sol Ring,C21,Commander 2021,263,normal,uncommon,2,1,0afa0e33-4804-4b00-b625-c2d6b61090fc,2.00,false,false,near_mint,ja,USD\n",
 			want: Row{Name: "Sol Ring", SetCode: "c21", SetName: "Commander 2021", Number: "263", Quantity: 2,
 				ScryfallID: "0afa0e33-4804-4b00-b625-c2d6b61090fc", Finish: "nonfoil", Condition: collection.ConditionNearMint,
-				Language: "ja", PurchasePrice: 2},
+				Language: "ja", PricePaid: 2},
 		},
 		{
 			name:   "Deckbox",
@@ -61,7 +61,7 @@ func TestParseImportFormats(t *testing.T) {
 			csv: "sep=,\nFolder Name,Quantity,Trade Quantity,Card Name,Set Code,Set Name,Card Number,Condition,Printing,Language,Price Bought,Date Bought,LOW,MID,MARKET\n" +
 				"Binder,1,0,Shock,M19,Core Set 2019,156,Excellent,Foil,English,0.25,2019-03-04,0.1,0.2,0.3\n",
 			want: Row{Name: "Shock", SetCode: "m19", SetName: "Core Set 2019", Number: "156", Quantity: 1,
-				Finish: "foil", Condition: collection.ConditionLightPlay, Language: "en", PurchasePrice: 0.25, AcquiredDate: "2019-03-04"},
+				Finish: "foil", Condition: collection.ConditionLightPlay, Language: "en", PricePaid: 0.25, AcquiredDate: "2019-03-04"},
 		},
 	}
 	for _, tt := range tests {

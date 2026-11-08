@@ -10,20 +10,16 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
-	"github.com/jrhorner1/mtgmanager/internal/collection"
-	"github.com/jrhorner1/mtgmanager/internal/game"
-	"github.com/jrhorner1/mtgmanager/internal/service"
+	"github.com/jrhorner1/tcgbinder/internal/collection"
+	"github.com/jrhorner1/tcgbinder/internal/game"
+	"github.com/jrhorner1/tcgbinder/internal/service"
+	"github.com/jrhorner1/tcgbinder/internal/settings"
 )
-
-const prefChartRange = "valueChartRange"
 
 var colorEstimate = color.NRGBA{R: 0x8a, G: 0x93, B: 0xa6, A: 0xff} // muted grey
 
 func (ui *App) chartRange() string {
-	if r := fyne.CurrentApp().Preferences().String(prefChartRange); r != "" {
-		return r
-	}
-	return service.DefaultChartRange
+	return ui.settings.Get().ChartRange
 }
 
 // valueSection builds the Value Over Time chart with its range picker and the
@@ -35,8 +31,8 @@ func (ui *App) valueSection(st collection.Stats) fyne.CanvasObject {
 	from, historyStart := vc.From, vc.HistoryStart
 
 	series := []Series{
-		{Name: "Market value", Color: colorMarket, Points: vc.Market},
-		{Name: "Price paid", Color: colorPaid, Points: vc.Paid, Step: true},
+		{Name: "Market value", Color: colorMarket, Points: vc.MarketValue},
+		{Name: "Price paid", Color: colorPaid, Points: vc.PricePaid, Step: true},
 	}
 	if vc.Estimate != nil { // values older purchases before recorded prices begin
 		series = append(series, Series{
@@ -57,30 +53,32 @@ func (ui *App) valueSection(st collection.Stats) fyne.CanvasObject {
 		if r == "" || r == sel {
 			return
 		}
-		fyne.CurrentApp().Preferences().SetString(prefChartRange, r)
+		if err := ui.settings.Update(func(s *settings.Settings) { s.ChartRange = r }); err != nil {
+			slog.Warn("could not save chart range", "err", err)
+		}
 		ui.showHome()
 	}
 
-	// Price history status and, for games that offer it, the backfill control.
+	// Price history status and, for games that offer it, the Load price history control.
 	var notes []string
 	var controls fyne.CanvasObject = container.NewHBox()
-	backfilled := ui.g.prices.BackfilledOn()
-	src, canBackfill := ui.g.game.(game.PriceHistorySource)
-	if canBackfill {
+	historyLoaded := ui.g.prices.HistoryLoadedOn()
+	src, canLoadHistory := ui.g.game.(game.PriceHistorySource)
+	if canLoadHistory {
 		label := "Load price history"
-		if backfilled != "" {
+		if historyLoaded != "" {
 			label = "Update price history"
 		}
 		gs := ui.g
-		load := widget.NewButtonWithIcon(label, theme.DownloadIcon(), func() { ui.backfillPrices(gs) })
-		if ui.g.backfilling {
+		load := widget.NewButtonWithIcon(label, theme.DownloadIcon(), func() { ui.loadPriceHistory(gs) })
+		if ui.g.loadingHistory {
 			load.SetText("Loading price history…")
 			load.Disable()
 		}
 		controls = container.NewHBox(load)
 	}
 	switch {
-	case canBackfill && backfilled == "":
+	case canLoadHistory && historyLoaded == "":
 		notes = append(notes, "Market value uses daily prices recorded each day you open the app. "+
 			"Load "+src.PriceHistoryInfo()+" to fill in the history.")
 	case !historyStart.IsZero():
@@ -93,26 +91,29 @@ func (ui *App) valueSection(st collection.Stats) fyne.CanvasObject {
 		notes = append(notes, "Before recorded prices begin, the grey line values the cards you owned at today's prices.")
 	}
 
-	header := container.NewBorder(nil, nil, nil, picker, sectionTitle("Value Over Time"))
+	var header fyne.CanvasObject = container.NewBorder(nil, nil, nil, picker, sectionTitle("Value Over Time"))
+	if isMobile() { // not enough width for both on one line
+		header = container.NewVBox(sectionTitle("Value Over Time"), picker)
+	}
 	return container.NewVBox(header, chart, caption(strings.Join(notes, " ")), controls)
 }
 
-// backfillPrices loads a game's daily price history from its history source.
-func (ui *App) backfillPrices(gs *gameState) {
-	if _, ok := gs.svc.CanBackfill(); !ok || gs.backfilling || len(gs.store.IDs()) == 0 {
+// loadPriceHistory loads a game's daily price history from its history source.
+func (ui *App) loadPriceHistory(gs *gameState) {
+	if _, ok := gs.svc.PriceHistorySource(); !ok || gs.loadingHistory || len(gs.store.IDs()) == 0 {
 		return
 	}
-	gs.backfilling = true
+	gs.loadingHistory = true
 	ui.statusLabel.SetText("Loading price history…")
 	ui.refreshCurrentPage()
 	go func() {
-		matched, err := gs.svc.Backfill(func(msg string) {
+		matched, err := gs.svc.LoadPriceHistory(func(msg string) {
 			runOnUI(func() { ui.statusLabel.SetText(msg) })
 		})
 		runOnUI(func() {
-			gs.backfilling = false
+			gs.loadingHistory = false
 			if err != nil {
-				slog.Warn("price history backfill failed", "game", gs.game.ID(), "err", err)
+				slog.Warn("loading price history failed", "game", gs.game.ID(), "err", err)
 				ui.statusLabel.SetText(fmt.Sprintf("Price history failed: %v", err))
 			} else {
 				ui.statusLabel.SetText(fmt.Sprintf("Loaded price history for %d printings", matched))

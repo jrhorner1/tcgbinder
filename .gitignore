@@ -7,9 +7,10 @@ price-history*.tmp
 *.csv
 
 # Build output
-/mtgmanager
+/tcgbinder
 /bin/
 /dist/
+/out/
 *.app
 *.ipa
 *.apk

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -13,7 +14,8 @@ import (
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
-	"github.com/jrhorner1/mtgmanager/internal/collection"
+	"github.com/jrhorner1/tcgbinder/internal/collection"
+	"github.com/jrhorner1/tcgbinder/internal/service"
 )
 
 var (
@@ -33,9 +35,12 @@ func statTile(caption, value, detail string, valueColor color.Color) fyne.Canvas
 	v := canvas.NewText(value, valueColor)
 	v.TextSize = 22
 	v.TextStyle = fyne.TextStyle{Bold: true}
-	d := canvas.NewText(detail, theme.Color(theme.ColorNamePlaceHolder))
-	d.TextSize = theme.CaptionTextSize()
-	return container.NewStack(bg, container.New(layout.NewCustomPaddedLayout(10, 10, 14, 14), container.NewVBox(c, v, d)))
+	// The detail line shortens with "…" instead of forcing the tile wider (phones).
+	d := widget.NewRichText(&widget.TextSegment{Text: detail, Style: widget.RichTextStyle{
+		SizeName: theme.SizeNameCaptionText, ColorName: theme.ColorNamePlaceHolder}})
+	d.Truncation = fyne.TextTruncateEllipsis
+	return container.NewStack(bg, container.New(layout.NewCustomPaddedLayout(10, 10, 14, 14),
+		container.NewVBox(c, v, container.New(layout.NewCustomPaddedLayout(-theme.Padding(), -theme.Padding(), -theme.Padding(), 0), d))))
 }
 
 func sectionTitle(text string) fyne.CanvasObject {
@@ -59,43 +64,40 @@ func caption(text string) *widget.Label {
 	return l
 }
 
-func gainLoss(cost, market float64) (string, string, color.Color) {
-	diff := market - cost
+func gainLoss(paid, value float64) (string, string, color.Color) {
+	diff := value - paid
 	col := color.Color(colorGain)
 	sign := "+"
 	if diff < 0 {
 		col, sign = colorLoss, ""
 	}
 	pct := ""
-	if cost > 0 {
-		pct = fmt.Sprintf("%s%.1f%% vs. price paid", sign, diff/cost*100)
+	if paid > 0 {
+		pct = fmt.Sprintf("%s%.1f%% vs. price paid", sign, diff/paid*100)
 	}
 	return sign + formatUSD(diff), pct, col
 }
 
-func finishLabel(c collection.Card) string {
-	if c.Finish == "" || c.Finish == "nonfoil" {
-		return ""
-	}
-	return " " + c.Finish
-}
-
-// topCardsTable lists the most valuable entries.
-func topCardsTable(cards []collection.CardValue) fyne.CanvasObject {
+// topCardsTable lists valuable cards; tapping a row opens the card. With oneCopy
+// the value shown is a single copy's (as ranked), otherwise the card's total.
+func (ui *App) topCardsTable(cards []collection.CardValue, oneCopy bool) fyne.CanvasObject {
 	if len(cards) == 0 {
-		return caption("No market prices yet. Use Refresh Prices to fetch them from Scryfall.")
+		return caption("No market prices yet; they refresh automatically each day.")
 	}
+	g := ui.g.game
 	rows := container.NewVBox()
 	for i, cv := range cards {
-		name := widget.NewLabel(fmt.Sprintf("%d. %s", i+1, cv.Card.Name))
+		c := cv.Card
+		name := widget.NewLabel(fmt.Sprintf("%d. %s", i+1, c.Name))
 		name.Truncation = fyne.TextTruncateEllipsis
-		where := widget.NewLabel(setNumber(cv.Card.Set, cv.Card.Number) + finishLabel(cv.Card))
-		qty := ""
-		if cv.Card.Quantity > 1 {
-			qty = fmt.Sprintf("%d × %s = ", cv.Card.Quantity, formatUSD(cv.Each))
+		where := setNumber(c.Set, c.CollectorNumber) + " · " + copiesSummary(c, g)
+		amount := formatUSD(cv.Total) // every copy
+		if oneCopy {
+			amount = formatUSD(cv.Each) // one copy of the most valuable finish owned
 		}
-		value := widget.NewLabelWithStyle(qty+formatUSD(cv.Total), fyne.TextAlignTrailing, fyne.TextStyle{Bold: true})
-		rows.Add(container.NewBorder(nil, nil, nil, container.NewHBox(where, value), name))
+		value := widget.NewLabelWithStyle(amount, fyne.TextAlignTrailing, fyne.TextStyle{Bold: true})
+		rows.Add(newTapRow(container.NewBorder(nil, nil, nil, container.NewHBox(widget.NewLabel(where), value), name),
+			func() { ui.selectCardNode(c) }))
 	}
 	return rows
 }
@@ -108,9 +110,9 @@ func completionItems(sets []collection.SetStats) []BarItem {
 			label += " · " + s.Name
 		}
 		if c := s.Completion(); c >= 0 {
-			items = append(items, BarItem{label, c, fmt.Sprintf("%d / %d  (%.0f%%)", s.UniqueNumbers, s.SetSize, c*100)})
+			items = append(items, BarItem{label, c, fmt.Sprintf("%d / %d  (%.0f%%)", s.Collected, s.SetSize, c*100)})
 		} else {
-			items = append(items, BarItem{label, 0, fmt.Sprintf("%d owned · set size unknown", s.UniqueNumbers)})
+			items = append(items, BarItem{label, 0, fmt.Sprintf("%d owned · set size unknown", s.Collected)})
 		}
 	}
 	return items
@@ -121,52 +123,50 @@ func (ui *App) showHome() {
 	ui.page = "home"
 	st := collection.ComputeStats(ui.g.cards, ui.g.sets)
 
-	refresh := widget.NewButtonWithIcon("Refresh Prices", theme.ViewRefreshIcon(), func() { ui.refreshPrices(ui.g) })
-	if ui.g.refreshing {
-		refresh.Disable()
-		refresh.SetText("Refreshing…")
-	}
 	asOf := "never"
 	if st.PricesAsOf != "" {
 		asOf = st.PricesAsOf
 	}
-	header := container.NewBorder(nil, nil, nil, refresh, container.NewPadded(pageTitle("Collection Overview")))
+	header := container.NewPadded(pageTitle(ui.g.game.Name()))
 
 	paidDetail := "all cards have a price paid"
-	if st.CostUnknown > 0 {
-		paidDetail = fmt.Sprintf("%d cards without a price paid", st.CostUnknown)
+	if st.PricePaidUnknown > 0 {
+		paidDetail = fmt.Sprintf("%d cards without a price paid", st.PricePaidUnknown)
 	}
 	marketDetail := "prices as of " + asOf
-	if st.MarketUnknown > 0 {
-		marketDetail += fmt.Sprintf(" · %d unpriced", st.MarketUnknown)
+	if st.Unpriced > 0 {
+		marketDetail += fmt.Sprintf(" · %d unpriced", st.Unpriced)
 	}
-	diff, pct, col := gainLoss(st.Cost, st.Market)
+	diff, pct, col := gainLoss(st.PricePaid, st.MarketValue)
 	tiles := container.NewGridWithColumns(cols(4),
-		statTile("CARDS", fmt.Sprintf("%d", st.Copies), fmt.Sprintf("%d entries · %d sets", st.Entries, st.Sets), nil),
-		statTile("PRICE PAID", formatUSD(st.Cost), paidDetail, nil),
-		statTile("MARKET VALUE", formatUSD(st.Market), marketDetail, colorMarket),
+		statTile("CARDS", fmt.Sprintf("%d", st.Cards), fmt.Sprintf("%s · %s",
+			plural(collection.UniqueCards(ui.g.cards), "unique card", "unique cards"), plural(st.Sets, "set", "sets")), nil),
+		statTile("PRICE PAID", formatUSD(st.PricePaid), paidDetail, nil),
+		statTile("MARKET VALUE", formatUSD(st.MarketValue), marketDetail, colorMarket),
 		statTile("GAIN / LOSS", diff, pct, col),
 	)
 
 	// Set completion.
-	var completion fyne.CanvasObject = NewBarChart(completionItems(st.BySet), 1, colorMarket)
+	bars := NewBarChart(completionItems(st.BySet), 1, colorMarket)
+	bars.OnTapped = func(i int) { ui.openSet(st.BySet[i].Code) } // the set's page
+	var completion fyne.CanvasObject = bars
 	if len(st.BySet) == 0 {
 		completion = caption("No sets yet.")
 	}
-	completionNote := "Distinct collector numbers owned out of the set's total card count on Scryfall."
+	completionNote := "Distinct collector numbers owned out of the set's total card count on Scryfall. Tap a set to open its page."
 	if ui.g.sets == nil {
 		completionNote = "Loading set sizes from Scryfall…"
 	}
 
 	// Value by set, top 10.
 	bySet := append([]collection.SetStats(nil), st.BySet...)
-	sort.Slice(bySet, func(i, j int) bool { return bySet[i].Market > bySet[j].Market })
+	sort.Slice(bySet, func(i, j int) bool { return bySet[i].MarketValue > bySet[j].MarketValue })
 	var valueItems []BarItem
 	for _, s := range bySet {
-		if len(valueItems) == 10 || s.Market <= 0 {
+		if len(valueItems) == 10 || s.MarketValue <= 0 {
 			break
 		}
-		valueItems = append(valueItems, BarItem{s.Code + " · " + s.Name, s.Market, formatUSD(s.Market)})
+		valueItems = append(valueItems, BarItem{s.Code + " · " + s.Name, s.MarketValue, formatUSD(s.MarketValue)})
 	}
 	var valueBySet fyne.CanvasObject = NewBarChart(valueItems, 0, colorPaid)
 	if len(valueItems) == 0 {
@@ -183,7 +183,7 @@ func (ui *App) showHome() {
 		sectionTitle("Value by Set"),
 		valueBySet,
 		sectionTitle("Most Valuable Cards"),
-		topCardsTable(st.TopCards),
+		ui.topCardsTable(st.TopCards, false),
 	)
 	ui.setRightPane(container.NewVScroll(container.NewPadded(content)))
 }
@@ -216,16 +216,16 @@ func (ui *App) showSet(code string) {
 	completionDetail := "set size not loaded"
 	if c := s.Completion(); c >= 0 {
 		completion = fmt.Sprintf("%.0f%%", c*100)
-		completionDetail = fmt.Sprintf("%d of %d cards · %d missing", s.UniqueNumbers, s.SetSize, max(s.SetSize-s.UniqueNumbers, 0))
+		completionDetail = fmt.Sprintf("%d of %d cards · %d missing", s.Collected, s.SetSize, max(s.SetSize-s.Collected, 0))
 	}
-	diff, pct, col := gainLoss(s.Cost, s.Market)
+	diff, pct, col := gainLoss(s.PricePaid, s.MarketValue)
 
 	content := container.NewVBox(
 		container.NewPadded(container.NewVBox(pageTitle(title), caption(sub))),
 		container.NewGridWithColumns(cols(4),
 			statTile("COMPLETION", completion, completionDetail, colorMarket),
-			statTile("COPIES", fmt.Sprintf("%d", s.Copies), fmt.Sprintf("%d entries", s.Entries), nil),
-			statTile("MARKET VALUE", formatUSD(s.Market), "price paid "+formatUSD(s.Cost), colorMarket),
+			statTile("CARDS", fmt.Sprintf("%d", s.Cards), plural(s.UniqueCards, "unique card", "unique cards"), nil),
+			statTile("MARKET VALUE", formatUSD(s.MarketValue), "price paid "+formatUSD(s.PricePaid), colorMarket),
 			statTile("GAIN / LOSS", diff, pct, col),
 		),
 	)
@@ -233,7 +233,10 @@ func (ui *App) showSet(code string) {
 		content.Add(NewBarChart([]BarItem{{"Owned", c, fmt.Sprintf("%.0f%%", c*100)}}, 1, colorMarket))
 	}
 	content.Add(sectionTitle("Most Valuable in This Set"))
-	content.Add(topCardsTable(st.TopCards))
+	content.Add(caption("Ranked by the value of one copy."))
+	content.Add(ui.topCardsTable(collection.TopByEach(cards, 10), true))
+	content.Add(sectionTitle("Missing Cards"))
+	content.Add(ui.missingSection(s))
 	ui.setRightPane(container.NewVScroll(container.NewPadded(content)))
 }
 
@@ -248,6 +251,12 @@ func (ui *App) refreshCurrentPage() {
 	switch {
 	case ui.page == "home":
 		ui.showHome()
+	case ui.page == "tools":
+		ui.showTools()
+	case ui.page == "settings":
+		ui.showSettings()
+	case strings.HasPrefix(ui.page, "search:"):
+		ui.showSearchResults(strings.TrimPrefix(ui.page, "search:"))
 	case strings.HasPrefix(ui.page, "set:"):
 		ui.showSet(strings.TrimPrefix(ui.page, "set:"))
 	}
@@ -271,7 +280,7 @@ func (ui *App) refreshPrices(gs *gameState) {
 				slog.Warn("price refresh failed", "game", gs.game.ID(), "err", err)
 				ui.statusLabel.SetText(fmt.Sprintf("Price refresh failed: %v", err))
 			} else {
-				ui.statusLabel.SetText(fmt.Sprintf("Prices updated for %d entries", n))
+				ui.statusLabel.SetText(fmt.Sprintf("Prices updated for %d cards", n))
 			}
 			ui.RefreshDataIndex()
 		})
@@ -296,10 +305,10 @@ func (ui *App) StartBackgroundSync() {
 		}()
 		// Desktop loads price history automatically the first time; on phones the large
 		// download waits for the user to ask (Home → Load price history).
-		if _, ok := gs.svc.CanBackfill(); ok && !isMobile() && gs.prices.BackfilledOn() == "" && len(gs.cards) > 0 {
-			ui.backfillPrices(gs)
+		if !isMobile() && gs.svc.AutoLoadHistoryDue() {
+			ui.loadPriceHistory(gs)
 		}
-		if gs.store.PricesStale() {
+		if gs.svc.PricesDue() {
 			ui.refreshPrices(gs) // records today's prices when done
 			continue
 		}
@@ -310,4 +319,75 @@ func (ui *App) StartBackgroundSync() {
 		}
 	}
 	ui.refreshCurrentPage()
+	// Prices refresh on a schedule rather than by button: check hourly and refresh
+	// once the stored prices are from an earlier day (catalogs update about daily).
+	go func() {
+		for range time.Tick(service.PriceCheckInterval) {
+			runOnUI(func() {
+				for _, gs := range ui.games {
+					if gs.svc.PricesDue() {
+						ui.refreshPrices(gs)
+					}
+				}
+			})
+		}
+	}()
+}
+
+// missingSection offers the set's cards you don't own. The full card list comes from
+// the game's catalog, so it loads only when asked.
+func (ui *App) missingSection(s collection.SetStats) fyne.CanvasObject {
+	box := container.NewVBox()
+	gs := ui.g
+	code := s.Code
+	label := "Show missing cards"
+	if s.SetSize > 0 {
+		label = fmt.Sprintf("Show the %d missing cards", max(s.SetSize-s.Collected, 0))
+	}
+	var show *widget.Button
+	show = widget.NewButtonWithIcon(label, theme.SearchIcon(), func() {
+		show.Disable()
+		show.SetText("Loading the set's cards…")
+		go func() {
+			setCards, err := gs.game.SetCards(code)
+			runOnUI(func() {
+				if err != nil {
+					show.Enable()
+					show.SetText(label)
+					ui.statusLabel.SetText(fmt.Sprintf("Could not load %s: %v", code, err))
+					return
+				}
+				var owned []collection.Card
+				for _, c := range gs.cards {
+					if strings.EqualFold(c.Set, code) {
+						owned = append(owned, c)
+					}
+				}
+				missing := collection.Missing(setCards, owned)
+				box.Objects = nil
+				if len(missing) == 0 {
+					box.Add(caption("You have every card in this set."))
+				} else {
+					box.Add(caption(fmt.Sprintf("%s you don't own yet. Tap one to add it.", plural(len(missing), "card", "cards"))))
+				}
+				for _, c := range missing {
+					c := c
+					price := ""
+					if p, ok := c.Market[gs.game.Finishes()[0]]; ok {
+						price = formatUSD(p)
+					}
+					num := widget.NewLabel(c.CollectorNumber)
+					num.Alignment = fyne.TextAlignTrailing
+					name := widget.NewLabel(c.Name)
+					name.Truncation = fyne.TextTruncateEllipsis
+					right := widget.NewLabel(strings.TrimSpace(titleCase(c.Rarity) + "  " + price))
+					row := container.NewBorder(nil, nil, container.NewGridWrap(fyne.NewSize(56, num.MinSize().Height), num), right, name)
+					box.Add(newTapRow(row, func() { ui.showAddDialogFor(c.Name, code) }))
+				}
+				box.Refresh()
+			})
+		}()
+	})
+	box.Add(show)
+	return box
 }

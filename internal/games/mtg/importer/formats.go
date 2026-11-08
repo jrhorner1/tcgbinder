@@ -10,27 +10,27 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jrhorner1/mtgmanager/internal/collection"
+	"github.com/jrhorner1/tcgbinder/internal/collection"
 )
 
 // ImportRow is one line of an external collection export, normalized but not yet
 // matched to a Scryfall printing.
 type Row struct {
-	Line          int // 1-based line in the source file, for error reporting
-	Name          string
-	SetCode       string // lowercase Scryfall-style set code when known
-	SetName       string
-	Number        string // collector number
-	ScryfallID    string
-	MultiverseID  int
-	MTGOID        int
-	TCGPlayerID   int
-	Quantity      int
-	Finish        string // "nonfoil", "foil" or "etched"
-	Condition     collection.Condition
-	Language      string // Scryfall language code, e.g. "en", "ja"
-	PurchasePrice float64
-	AcquiredDate  string // YYYY-MM-DD or ""
+	Line         int // 1-based line in the source file, for error reporting
+	Name         string
+	SetCode      string // lowercase Scryfall-style set code when known
+	SetName      string
+	Number       string // collector number
+	ScryfallID   string
+	MultiverseID int
+	MTGOID       int
+	TCGPlayerID  int
+	Quantity     int
+	Finish       string // "nonfoil", "foil" or "etched"
+	Condition    collection.Condition
+	Language     string // Scryfall language code, e.g. "en", "ja"
+	PricePaid    float64
+	AcquiredDate string // YYYY-MM-DD or ""
 }
 
 // Describe is a short human label for reports, e.g. "Line 12: Lightning Bolt (2XM #117)".
@@ -198,21 +198,21 @@ func ParseCSV(data []byte) (rows []Row, format string, err error) {
 		line, _ := r.FieldPos(0)
 
 		row := Row{
-			Line:          line,
-			Name:          get(rec, fName),
-			SetCode:       strings.ToLower(get(rec, fSetCode)),
-			SetName:       get(rec, fSetName),
-			Number:        get(rec, fNumber),
-			ScryfallID:    strings.ToLower(get(rec, fScryfallID)),
-			MultiverseID:  parseIntLoose(get(rec, fMultiverseID)),
-			MTGOID:        parseIntLoose(get(rec, fMTGOID)),
-			TCGPlayerID:   parseIntLoose(get(rec, fTCGPlayerID)),
-			Quantity:      1,
-			Finish:        ParseFinish(get(rec, fFinish)),
-			Condition:     collection.ParseCondition(get(rec, fCondition)),
-			Language:      ParseLanguage(get(rec, fLanguage)),
-			PurchasePrice: parsePrice(get(rec, fPrice)),
-			AcquiredDate:  parseDate(get(rec, fDate)),
+			Line:         line,
+			Name:         get(rec, fName),
+			SetCode:      strings.ToLower(get(rec, fSetCode)),
+			SetName:      get(rec, fSetName),
+			Number:       get(rec, fNumber),
+			ScryfallID:   strings.ToLower(get(rec, fScryfallID)),
+			MultiverseID: parseIntLoose(get(rec, fMultiverseID)),
+			MTGOID:       parseIntLoose(get(rec, fMTGOID)),
+			TCGPlayerID:  parseIntLoose(get(rec, fTCGPlayerID)),
+			Quantity:     1,
+			Finish:       ParseFinish(get(rec, fFinish)),
+			Condition:    collection.ParseCondition(get(rec, fCondition)),
+			Language:     ParseLanguage(get(rec, fLanguage)),
+			PricePaid:    parsePrice(get(rec, fPrice)),
+			AcquiredDate: parseDate(get(rec, fDate)),
 		}
 		if _, ok := cols[fQuantity]; ok {
 			q := parseIntLoose(get(rec, fQuantity))

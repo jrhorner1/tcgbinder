@@ -15,7 +15,7 @@ import (
 	"github.com/ulikunitz/xz"
 )
 
-const userAgent = "MTGLedger/0.1 (+https://github.com/jrhorner1/mtgmanager)"
+const userAgent = "TCGBinder/0.1 (+https://github.com/jrhorner1/tcgbinder)"
 
 // Client downloads MTGJSON files.
 type Client struct {

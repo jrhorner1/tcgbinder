@@ -16,7 +16,7 @@ func day(s string) time.Time {
 }
 
 func TestMarketSeries(t *testing.T) {
-	h, _ := LoadPriceHistory(filepath.Join(t.TempDir(), "ph.json"))
+	h, _ := OpenPriceHistory(filepath.Join(t.TempDir(), "ph.json"))
 	h.Merge("shock", map[string]map[string]float64{
 		"nonfoil": {"2026-11-01": 1.00, "2026-11-03": 2.00},
 		"foil":    {"2026-11-01": 10.00},
@@ -24,9 +24,9 @@ func TestMarketSeries(t *testing.T) {
 	h.Set("opt", "nonfoil", "2026-11-02", 0.50)
 
 	cards := []Card{
-		{ID: "shock", Finish: "nonfoil", Quantity: 2},                                         // undated: owned all along
-		{ID: "opt", Finish: "nonfoil", Quantity: 4, AcquiredDate: "2026-11-02"},               // bought mid-range
-		{ID: "new", Finish: "nonfoil", Quantity: 1, Market: map[string]float64{"nonfoil": 3}}, // no history: current price
+		held(Card{ID: "shock"}, "nonfoil", "", Purchase{Quantity: 2}),                                         // undated: owned all along
+		held(Card{ID: "opt"}, "nonfoil", "", Purchase{Quantity: 4, AcquiredDate: "2026-11-02"}),               // bought mid-range
+		held(Card{ID: "new", Market: map[string]float64{"nonfoil": 3}}, "nonfoil", "", Purchase{Quantity: 1}), // no history: current price
 	}
 	got := h.MarketSeries(cards, day("2026-11-01"), day("2026-11-07"))
 	want := []struct {
@@ -53,13 +53,13 @@ func TestMarketSeries(t *testing.T) {
 
 	// A range with no recorded prices inside it still spans start to end, carrying the
 	// last known price forward.
-	late := h.MarketSeries([]Card{{ID: "opt", Finish: "nonfoil", Quantity: 1}}, day("2026-11-03"), day("2026-11-07"))
+	late := h.MarketSeries([]Card{held(Card{ID: "opt"}, "nonfoil", "", Purchase{Quantity: 1})}, day("2026-11-03"), day("2026-11-07"))
 	if len(late) != 2 || late[0].Value != 0.50 || late[1].Value != 0.50 ||
 		!late[0].Date.Equal(day("2026-11-03")) || !late[1].Date.Equal(day("2026-11-07")) {
 		t.Errorf("late range = %+v", late)
 	}
 	// A card whose history starts after a day uses its earliest price for that day.
-	early := h.MarketSeries([]Card{{ID: "opt", Finish: "nonfoil", Quantity: 1}}, day("2026-11-01"), day("2026-11-01"))
+	early := h.MarketSeries([]Card{held(Card{ID: "opt"}, "nonfoil", "", Purchase{Quantity: 1})}, day("2026-11-01"), day("2026-11-01"))
 	if len(early) != 1 || early[0].Value != 0.50 {
 		t.Errorf("early range = %+v", early)
 	}
@@ -70,17 +70,19 @@ func TestMarketSeries(t *testing.T) {
 
 func TestPriceHistoryRecordSaveLoad(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ph.json")
-	h, _ := LoadPriceHistory(path)
+	h, _ := OpenPriceHistory(path)
 	h.RecordCurrent([]Card{{ID: "x", Market: map[string]float64{"nonfoil": 1.25, "foil": 4.00}}}, "2026-11-07")
-	h.MarkBackfilled("2026-11-07")
+	h.MarkHistoryLoaded("2026-11-07")
 	if err := h.Save(); err != nil {
 		t.Fatal(err)
 	}
-	again, err := LoadPriceHistory(path)
+	again, err := OpenPriceHistory(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.Cards["x"]["nonfoil"]["2026-11-07"] != 1.25 || again.Cards["x"]["foil"]["2026-11-07"] != 4.00 || again.BackfilledOn() != "2026-11-07" {
+	nonfoil, _ := again.Price("x", "nonfoil", "2026-11-07")
+	foil, _ := again.Price("x", "foil", "2026-11-07")
+	if nonfoil != 1.25 || foil != 4.00 || again.HistoryLoadedOn() != "2026-11-07" {
 		t.Fatalf("reloaded = %+v", again)
 	}
 }
@@ -92,7 +94,7 @@ func TestPriceHistoryKeepsEveryDay(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ph.json")
 	start := day("2025-10-01")
 	for i := 0; i < 400; i++ {
-		h, err := LoadPriceHistory(path)
+		h, err := OpenPriceHistory(path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -102,8 +104,8 @@ func TestPriceHistoryKeepsEveryDay(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h, _ := LoadPriceHistory(path)
-	if n := len(h.Cards["x"]["nonfoil"]); n != 400 {
+	h, _ := OpenPriceHistory(path)
+	if n := h.Days("x", "nonfoil"); n != 400 {
 		t.Fatalf("kept %d of 400 days", n)
 	}
 	if !h.Start().Equal(start) {
@@ -111,24 +113,24 @@ func TestPriceHistoryKeepsEveryDay(t *testing.T) {
 	}
 }
 
-// TestBackfillAgainKeepsOlderDays: a later backfill covers a newer 90-day window;
+// TestLoadAgainKeepsOlderDays: loading price history again covers a newer 90-day window;
 // days only in the earlier one must stay, and prices the app recorded itself win.
-func TestBackfillAgainKeepsOlderDays(t *testing.T) {
-	h, _ := LoadPriceHistory(filepath.Join(t.TempDir(), "ph.json"))
+func TestLoadAgainKeepsOlderDays(t *testing.T) {
+	h, _ := OpenPriceHistory(filepath.Join(t.TempDir(), "ph.json"))
 	h.Merge("x", map[string]map[string]float64{"nonfoil": {"2026-01-01": 1, "2026-02-01": 2}})
 	h.Set("x", "nonfoil", "2026-05-01", 5) // recorded from Scryfall by the app
 	h.Merge("x", map[string]map[string]float64{"nonfoil": {"2026-04-01": 4, "2026-05-01": 99}})
-	got := h.Cards["x"]["nonfoil"]
-	if len(got) != 4 || got["2026-01-01"] != 1 || got["2026-02-01"] != 2 || got["2026-05-01"] != 5 {
-		t.Fatalf("after second backfill: %v", got)
+	price := func(date string) float64 { p, _ := h.Price("x", "nonfoil", date); return p }
+	if h.Days("x", "nonfoil") != 4 || price("2026-01-01") != 1 || price("2026-02-01") != 2 || price("2026-05-01") != 5 {
+		t.Fatalf("after loading again: %+v", h.Cards["x"]["nonfoil"])
 	}
 }
 
-// TestConcurrentSavesKeepEverything: the app records prices and runs a backfill at
+// TestConcurrentSavesKeepEverything: the app records prices and loads price history at
 // the same time; whichever save lands last must still contain every price.
 func TestConcurrentSavesKeepEverything(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ph.json")
-	h, _ := LoadPriceHistory(path)
+	h, _ := OpenPriceHistory(path)
 	var wg sync.WaitGroup
 	for i := 0; i < 60; i++ {
 		wg.Add(1)
@@ -141,7 +143,7 @@ func TestConcurrentSavesKeepEverything(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
-	again, err := LoadPriceHistory(path)
+	again, err := OpenPriceHistory(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +156,7 @@ func TestConcurrentSavesKeepEverything(t *testing.T) {
 // prices than the file held when loaded.
 func TestSaveRefusesToShrink(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ph.json")
-	h, _ := LoadPriceHistory(path)
+	h, _ := OpenPriceHistory(path)
 	h.Set("x", "nonfoil", "2026-11-06", 1)
 	h.Set("x", "nonfoil", "2026-11-07", 1)
 	if err := h.Save(); err != nil {
@@ -162,8 +164,8 @@ func TestSaveRefusesToShrink(t *testing.T) {
 	}
 	before, _ := os.ReadFile(path)
 
-	loaded, _ := LoadPriceHistory(path)
-	delete(loaded.Cards["x"]["nonfoil"], "2026-11-06") // simulate a bug that drops data
+	loaded, _ := OpenPriceHistory(path)
+	loaded.Cards["x"]["nonfoil"].Cents[0] = noPrice // simulate a bug that drops data
 	if err := loaded.Save(); err == nil {
 		t.Fatal("a shrinking save should be refused")
 	}
@@ -180,7 +182,7 @@ func TestUnreadableHistoryIsKept(t *testing.T) {
 	garbage := []byte(`{"cards": {"x": {"nonfoil": {"2026-11-07": 1.0` + "\x00")
 	os.WriteFile(path, garbage, 0o600)
 
-	h, err := LoadPriceHistory(path)
+	h, err := OpenPriceHistory(path)
 	if err == nil || h == nil {
 		t.Fatalf("want a fresh history and an explanation, got %v, %v", h, err)
 	}
@@ -197,5 +199,17 @@ func TestUnreadableHistoryIsKept(t *testing.T) {
 	}
 	if kept, _ := os.ReadFile(matches[0]); string(kept) != string(garbage) {
 		t.Fatal("saving the new history touched the set-aside file")
+	}
+}
+
+// TestMarketSeriesPerPurchase: each purchase counts from its own acquired date.
+func TestMarketSeriesPerPurchase(t *testing.T) {
+	h, _ := OpenPriceHistory(filepath.Join(t.TempDir(), "ph.json"))
+	h.Merge("x", map[string]map[string]float64{"nonfoil": {"2026-11-01": 1}})
+	c := held(Card{ID: "x"}, "nonfoil", "", Purchase{Quantity: 1, PricePaid: 0.10, AcquiredDate: "2026-11-01"})
+	c = held(c, "nonfoil", "", Purchase{Quantity: 2, PricePaid: 0.12, AcquiredDate: "2026-11-03"})
+	got := h.MarketSeries([]Card{c}, day("2026-11-01"), day("2026-11-05"))
+	if len(got) != 2 || got[0].Value != 1 || got[1].Value != 3 {
+		t.Fatalf("series = %+v", got)
 	}
 }

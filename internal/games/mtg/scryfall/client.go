@@ -1,5 +1,5 @@
 // Package scryfall is a small, rate-limited client for the Scryfall API
-// (https://scryfall.com/docs/api): card lookup, search, sets and image caching.
+// (https://scryfall.com/docs/api): card lookup, search, set listings and set metadata.
 package scryfall
 
 import (
@@ -26,7 +26,7 @@ type Client struct {
 	lastSlow time.Time
 }
 
-const userAgent = "MTGLedger/0.1 (+https://github.com/jrhorner1/mtgmanager)"
+const userAgent = "TCGBinder/0.1 (+https://github.com/jrhorner1/tcgbinder)"
 
 func NewClient() *Client {
 	return &Client{

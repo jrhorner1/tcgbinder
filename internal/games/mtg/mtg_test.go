@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jrhorner1/mtgmanager/internal/collection"
-	"github.com/jrhorner1/mtgmanager/internal/games/mtg/scryfall"
+	"github.com/jrhorner1/tcgbinder/internal/collection"
+	"github.com/jrhorner1/tcgbinder/internal/games/mtg/scryfall"
 )
 
 func TestFromScryfallKeepsMagicFieldsAsAttrs(t *testing.T) {
@@ -21,7 +21,7 @@ func TestFromScryfallKeepsMagicFieldsAsAttrs(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := FromScryfall(&resp.Data[0])
-	if c.Name != "Scapeshift" || c.Set != "M19" || c.Number != "201" || c.Text == "" {
+	if c.Name != "Scapeshift" || c.Set != "M19" || c.CollectorNumber != "201" || c.RulesText == "" {
 		t.Fatalf("common fields: %+v", c)
 	}
 	if c.AttrString("mana_cost") != "{2}{G}{G}" || strings.Join(c.AttrStrings("colors"), "") != "G" || c.AttrString("oracle_id") == "" {
@@ -32,7 +32,7 @@ func TestFromScryfallKeepsMagicFieldsAsAttrs(t *testing.T) {
 	}
 }
 
-// legacyEntry is an entry exactly as versions before multi-game support saved it.
+// legacyEntry is a card exactly as versions before multi-game support saved it.
 const legacyEntry = `{
   "id": "175e21a3-00f7-4c51-8a8e-fbfd7089efda",
   "oracle_id": "c235015e-a7a9-4f8d-bf4a-cf68b3847f83",
@@ -45,52 +45,6 @@ const legacyEntry = `{
   "purchase_price": 30, "acquired_date": "2018-08-08",
   "prices": {"usd": "41.88", "usd_foil": "65.77"}, "prices_updated": "2026-11-07"
 }`
-
-func TestUpgradeLegacyEntry(t *testing.T) {
-	var c collection.Card
-	if err := json.Unmarshal([]byte(legacyEntry), &c); err != nil {
-		t.Fatal(err)
-	}
-	g := New()
-	if !g.Upgrade(&c) {
-		t.Fatal("legacy entry should be upgraded")
-	}
-	if c.Market["nonfoil"] != 41.88 || c.Market["foil"] != 65.77 || c.Finish != "nonfoil" {
-		t.Fatalf("upgraded: market=%v finish=%q", c.Market, c.Finish)
-	}
-	if c.Attr("prices") != nil {
-		t.Error("the old prices object should be removed once converted")
-	}
-	if _, ok := c.Market["etched"]; ok {
-		t.Error("a card not printed etched must not get an etched price")
-	}
-	if g.Upgrade(&c) {
-		t.Error("upgrading twice should change nothing")
-	}
-	// Entries saved by the first multi-game build had an etched price for every card.
-	c.Market["etched"] = 65.77
-	if !g.Upgrade(&c) || c.Market["etched"] != 0 {
-		t.Errorf("bogus etched price should be removed: %v", c.Market)
-	}
-
-	// Every other field survives a save/load round trip exactly.
-	b, _ := json.Marshal(c)
-	var back map[string]any
-	json.Unmarshal(b, &back)
-	var orig map[string]any
-	json.Unmarshal([]byte(legacyEntry), &orig)
-	for k, v := range orig {
-		switch k {
-		case "prices", "finish":
-			continue // converted
-		}
-		if gotJSON, _ := json.Marshal(back[k]); string(gotJSON) != mustJSON(v) {
-			t.Errorf("%s: %s, want %s", k, gotJSON, mustJSON(v))
-		}
-	}
-}
-
-func mustJSON(v any) string { b, _ := json.Marshal(v); return string(b) }
 
 func TestColorFilter(t *testing.T) {
 	mk := func(colors ...string) collection.Card {
@@ -138,12 +92,12 @@ func TestLiveImport(t *testing.T) {
 	}
 	copies := 0
 	for _, c := range cards {
-		copies += c.Quantity
+		copies += c.CopyCount()
 	}
-	t.Logf("%s: %d rows, %d cards, %d new entries, %d merged, %d notes", report.Format, report.Rows, copies, created, merged, len(report.Notes))
+	t.Logf("%s: %d rows, %d cards, %d new cards, %d merged, %d notes", report.Format, report.Rows, copies, created, merged, len(report.Notes))
 	// Importing again only adds to quantities.
 	again, _, _ := g.Import(data, nil)
 	if c2, _, _ := store.AddCards(again); c2 != 0 {
-		t.Errorf("re-import created %d entries", c2)
+		t.Errorf("re-import created %d cards", c2)
 	}
 }

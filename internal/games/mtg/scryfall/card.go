@@ -5,9 +5,6 @@ type Prices struct {
 	USD       string `json:"usd,omitempty"`
 	USDFoil   string `json:"usd_foil,omitempty"`
 	USDEtched string `json:"usd_etched,omitempty"`
-	EUR       string `json:"eur,omitempty"`
-	EURFoil   string `json:"eur_foil,omitempty"`
-	Tix       string `json:"tix,omitempty"`
 }
 
 type imageURIs struct {

@@ -3,7 +3,7 @@ package service
 import (
 	"time"
 
-	"github.com/jrhorner1/mtgmanager/internal/collection"
+	"github.com/jrhorner1/tcgbinder/internal/collection"
 )
 
 // ChartRanges are the Value Over Time ranges offered by the UIs.
@@ -35,8 +35,8 @@ func RangeStart(r string, today time.Time) time.Time {
 type ValueChart struct {
 	From, To     time.Time              // From is zero for "All"
 	HistoryStart time.Time              // first day with recorded prices; zero if none
-	Market       []collection.TimePoint // real daily market value
-	Paid         []collection.TimePoint // running price paid (step line)
+	MarketValue  []collection.TimePoint // real daily market value
+	PricePaid    []collection.TimePoint // running price paid (step line)
 	// Estimate values cards at today's prices before recorded prices begin (step
 	// line); nil when the real line covers the whole range.
 	Estimate []collection.TimePoint
@@ -50,8 +50,8 @@ func BuildValueChart(cards []collection.Card, st collection.Stats, prices *colle
 	if marketFrom.IsZero() {
 		marketFrom = vc.HistoryStart
 	}
-	vc.Market = prices.MarketSeries(cards, marketFrom, today)
-	vc.Paid = ClipStep(st.CostHistory, from)
+	vc.MarketValue = prices.MarketSeries(cards, marketFrom, today)
+	vc.PricePaid = ClipStep(st.PricePaidHistory, from)
 	if vc.HistoryStart.IsZero() || from.IsZero() || from.Before(vc.HistoryStart) {
 		est := ClipStep(st.ValueHistory, from)
 		if !vc.HistoryStart.IsZero() {
