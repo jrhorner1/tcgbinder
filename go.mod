@@ -5,7 +5,7 @@ go 1.26.6
 require (
 	fyne.io/fyne/v2 v2.8.2
 	github.com/ulikunitz/xz v0.5.17
-	golang.org/x/sys v0.49.0
+	golang.org/x/sys v0.50.0
 )
 
 require (
