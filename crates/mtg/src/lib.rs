@@ -159,16 +159,27 @@ impl Game for Magic {
     /// Reads a CSV export, matches every row to its exact Scryfall printing and returns
     /// the cards to add.
     fn import(&self, data: &[u8], progress: Progress) -> Result<(Vec<Card>, ImportReport)> {
-        let (rows, format) = importer::parse_csv(data)?;
-        let mut report = ImportReport { format: format.clone(), rows: rows.len(), notes: Vec::new() };
-        if rows.is_empty() {
+        let parsed = importer::parse_csv(data)?;
+        let format = parsed.format;
+        let mut report = ImportReport {
+            format: format.clone(),
+            rows: parsed.rows.len(),
+            notes: parsed.warnings,
+            unmatched: Vec::new(),
+            header: parsed.header,
+        };
+        if parsed.rows.is_empty() {
             bail!("no card rows found in this {format} file");
         }
         let (mut approx, mut missing, mut cards) = (Vec::new(), Vec::new(), Vec::new());
-        for r in importer::resolve(&self.scryfall, rows, progress) {
+        for r in importer::resolve(&self.scryfall, parsed.rows, progress) {
             let Some(sc) = &r.card else {
                 tracing::info!(row = r.row.describe(), reason = r.error, "import row not matched");
                 missing.push(format!("  {}", r.row.describe()));
+                // A row split into regular and foil copies is one line of the file.
+                if report.unmatched.last().is_none_or(|u| u.line != r.row.line) {
+                    report.unmatched.push(game::UnmatchedRow { line: r.row.line, text: r.row.text.clone() });
+                }
                 continue;
             };
             if r.approximate {

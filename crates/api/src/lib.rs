@@ -9,8 +9,9 @@ mod views;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use http::{HeaderValue, Method, StatusCode, header};
 use serde::Deserialize;
@@ -22,7 +23,7 @@ use tcgbinder_core::collection::{
 };
 use tcgbinder_core::game::finish_names;
 use tcgbinder_core::scan::Reading;
-use tcgbinder_core::service::{self, GameService};
+use tcgbinder_core::service::{self, GameService, ImportPreview, ImportResult};
 use tcgbinder_core::settings::{Settings, SettingsStore, choices};
 use tcgbinder_core::{Purchase, dates};
 
@@ -91,6 +92,33 @@ pub struct Api {
     read_image: Option<ReadImage>,
     /// Where exports are saved, for apps that can't download files.
     export_dir: Option<PathBuf>,
+    /// Game ID → the import preview waiting to be committed (at most one per game).
+    previews: Mutex<HashMap<String, PendingImport>>,
+}
+
+/// How long an import preview can wait to be committed.
+const PREVIEW_LIFETIME: Duration = Duration::from_secs(15 * 60);
+
+/// An import preview kept until it is committed, replaced or too old.
+struct PendingImport {
+    token: String,
+    made: Instant,
+    preview: ImportPreview,
+}
+
+/// A token no other preview in this process has had.
+fn new_token() -> String {
+    static COUNT: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    format!("{nanos:x}-{:x}", COUNT.fetch_add(1, Ordering::Relaxed))
+}
+
+/// What an import did, as the API answers it.
+fn import_result(res: &ImportResult) -> Value {
+    json!({
+        "summary": res.summary(), "cards": res.cards, "newCards": res.new_cards,
+        "alreadyOwned": res.already_owned, "format": res.report.format,
+    })
 }
 
 /// An error answer.
@@ -160,6 +188,7 @@ impl Api {
             busy: Mutex::default(),
             read_image: None,
             export_dir: None,
+            previews: Mutex::default(),
         }
     }
 
@@ -231,7 +260,9 @@ impl Api {
                     ("GET", ["set"]) => self.set_page(g, q.get("code").map_or("", String::as_str)),
                     ("GET", ["missing"]) => self.missing(g, q.get("set").map_or("", String::as_str)),
                     ("GET", ["search"]) => self.search(g, &q),
+                    ("POST", ["import"]) if q.get("preview").is_some_and(|v| v == "1") => self.preview_import(g, req),
                     ("POST", ["import"]) => self.import(g, req),
+                    ("POST", ["import", "commit"]) => self.commit_import(g, body),
                     ("POST", ["refresh"]) => self.job(g, "refresh", || {
                         let n = g.refresh_prices(&mut |_, _| {})?;
                         Ok(json!({ "updated": n }))
@@ -534,21 +565,61 @@ impl Api {
         Ok(Reply::Json(serde_json::to_value(res).map_err(|e| internal(e.into()))?))
     }
 
+    /// The file sent as a multipart "file" field or as the raw body.
+    fn upload(req: &Request) -> Result<Vec<u8>> {
+        let content_type = req.headers().get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("");
+        if content_type.starts_with("multipart/") {
+            multipart_file(content_type, req.body()).ok_or_else(|| bad("no \"file\" in the upload"))
+        } else {
+            Ok(req.body().clone())
+        }
+    }
+
     /// Imports the file sent as a multipart "file" field or as the raw body.
     fn import(&self, g: &GameService, req: &Request) -> Result {
-        let content_type = req.headers().get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("");
-        let data = if content_type.starts_with("multipart/") {
-            multipart_file(content_type, req.body()).ok_or_else(|| bad("no \"file\" in the upload"))?
-        } else {
-            req.body().clone()
-        };
+        let data = Self::upload(req)?;
+        self.job(g, "import", || Ok(import_result(&g.import(&data, &mut |_, _| {})?)))
+    }
+
+    /// Reads and matches an import file without saving it, and keeps the result for
+    /// `import/commit`. A new preview replaces the game's previous one.
+    fn preview_import(&self, g: &GameService, req: &Request) -> Result {
+        let data = Self::upload(req)?;
         self.job(g, "import", || {
-            let res = g.import(&data, &mut |_, _| {})?;
-            Ok(json!({
-                "summary": res.summary(), "cards": res.cards, "newCards": res.new_cards,
-                "alreadyOwned": res.already_owned, "format": res.report.format,
-            }))
+            let preview = g.preview_import(&data, &mut |_, _| {})?;
+            let token = new_token();
+            let answer = json!({
+                "token": token, "format": preview.report.format, "rows": preview.report.rows,
+                "cards": preview.printings(), "copies": preview.copies, "newCards": preview.new_cards,
+                "alreadyOwned": preview.already_owned, "pricePaid": round_cents(preview.price_paid),
+                "notes": preview.report.notes, "unmatched": preview.report.unmatched, "header": preview.report.header,
+            });
+            let pending = PendingImport { token, made: Instant::now(), preview };
+            self.previews.lock().unwrap().insert(g.game.id().to_string(), pending);
+            Ok(answer)
         })
+    }
+
+    /// Saves the game's import preview, if `token` names it and it isn't too old.
+    fn commit_import(&self, g: &GameService, body: &[u8]) -> Result {
+        #[derive(Deserialize)]
+        struct Req {
+            token: String,
+        }
+        let req: Req = decode(body)?;
+        let pending = {
+            let mut previews = self.previews.lock().unwrap();
+            previews.retain(|_, p| p.made.elapsed() < PREVIEW_LIFETIME);
+            match previews.get(g.game.id()) {
+                Some(p) if p.token == req.token => previews.remove(g.game.id()),
+                _ => None,
+            }
+        };
+        let pending = pending.ok_or_else(|| Error {
+            status: StatusCode::GONE,
+            message: "this preview is no longer available; preview the file again".into(),
+        })?;
+        self.job(g, "import", || Ok(import_result(&g.commit_import(pending.preview)?)))
     }
 
     fn export_name(g: &GameService) -> String {

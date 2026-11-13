@@ -124,13 +124,33 @@ card isn't there, **Search the catalog** opens Add with the same search.
 The Tools page works on the selected game:
 - **Import…:** CSV exports from EchoMTG, ManaBox, Moxfield, Deckbox, TCGplayer,
   Dragon Shield, Archidekt and others, or a collection `.json` exported from this app.
-  Cards you already own gain the imported purchases.
+  Cards you already own gain the imported purchases. See **Importing** below.
 - **Export collection:** saves the collection file, which Import accepts. Use it for
   backups and moving to another device. The desktop app saves it to your Downloads
   folder; the iPhone app saves it to its folder in the Files app; the web app
   downloads it.
 - **Bulk edit…** (see above) and **Scan a card…**.
 - **Refresh prices now** and **Load/Update price history**, with when each last ran.
+
+## Importing
+
+Choose a file on **Tools → Import…** and press **Preview**. The app reads the file and
+matches every row to its exact printing on Scryfall (a minute or so for a large
+file), then shows what importing would do, before anything is saved:
+- how many cards and printings the file holds, how many you don't own yet and how
+  many add to cards you own, and the total price paid;
+- warnings about the file's columns: no quantity column (so every row counts as one
+  copy), or a price or date column that mostly couldn't be read;
+- rows matched by name only, whose printing may differ, so you can check them;
+- rows that matched no card. **Download the unmatched rows** saves them as a CSV with
+  the file's header, to fix and import again.
+
+**Import N cards** saves them; **Cancel** saves nothing. A preview waits 15 minutes.
+
+Files with separate regular and foil quantity columns ("Reg Qty" and "Foil Qty")
+import as non-foil and foil copies. EchoMTG's export lists one copy per row; its
+foil, condition, language, price acquired and date acquired columns are all
+imported.
 
 ## Settings
 

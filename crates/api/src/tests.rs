@@ -410,3 +410,56 @@ fn status_notices_another_devices_change() {
     assert!(get(&f.api, "/api/status")["revision"].as_u64().unwrap() > before);
     assert!(f.svc.store.get(OPT).is_none());
 }
+
+/// An export with EchoMTG's real header and made-up rows: four copies the fake
+/// Scryfall knows, a token and a basic land it doesn't.
+const ECHOMTG: &[u8] = include_bytes!("../../mtg/tests/echomtg-export.txt");
+
+fn preview(f: &Fixture) -> Value {
+    let resp = f.api.handle(&request("POST", "/api/games/mtg/import?preview=1", ECHOMTG.to_vec()));
+    assert_eq!(resp.status(), 200);
+    serde_json::from_slice(resp.body()).unwrap()
+}
+
+fn commit(f: &Fixture, token: &Value) -> (u16, Value) {
+    call(&f.api, "POST", "/api/games/mtg/import/commit", Some(json!({ "token": token })))
+}
+
+#[test]
+fn import_preview_then_commit() {
+    let direct = fixture();
+    let resp = direct.api.handle(&request("POST", "/api/games/mtg/import", ECHOMTG.to_vec()));
+    assert_eq!(resp.status(), 200);
+    let imported: Value = serde_json::from_slice(resp.body()).unwrap();
+
+    let f = fixture();
+    let (revision, cards) = (f.svc.store.revision(), f.svc.store.len());
+    let p = preview(&f);
+    assert_eq!(
+        (p["format"].as_str(), p["rows"].as_u64(), p["copies"].as_i64(), p["cards"].as_u64()),
+        (Some("EchoMTG"), Some(6), Some(4), Some(3))
+    );
+    assert_eq!((p["newCards"].as_u64(), p["alreadyOwned"].as_u64(), p["pricePaid"].as_f64()), (Some(2), Some(2), Some(1.95)));
+    assert_eq!(p["header"].as_str(), std::str::from_utf8(ECHOMTG).unwrap().lines().next());
+    let lines: Vec<u64> = p["unmatched"].as_array().unwrap().iter().map(|u| u["line"].as_u64().unwrap()).collect();
+    assert_eq!(lines, [6, 7]);
+    assert!(p["unmatched"][0]["text"].as_str().unwrap().contains("Soldier Token"));
+    assert_eq!((f.svc.store.revision(), f.svc.store.len()), (revision, cards), "a preview saves nothing");
+
+    assert_eq!(commit(&f, &json!("not the token")).0, 410);
+    let (status, committed) = commit(&f, &p["token"]);
+    assert_eq!(status, 200);
+    assert_eq!(committed, imported);
+    let all = |f: &Fixture| serde_json::to_value(f.svc.store.cards()).unwrap();
+    assert_eq!(all(&f), all(&direct));
+    assert_eq!(commit(&f, &p["token"]).0, 410, "a preview is committed once");
+}
+
+#[test]
+fn a_new_preview_replaces_the_old_one() {
+    let f = fixture();
+    let first = preview(&f);
+    let second = preview(&f);
+    assert_eq!(commit(&f, &first["token"]).0, 410);
+    assert_eq!(commit(&f, &second["token"]).0, 200);
+}

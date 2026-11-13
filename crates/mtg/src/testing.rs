@@ -68,35 +68,51 @@ impl FakeServer {
 /// A fake Scryfall for tests of the whole app: /cards/search answers "bolt" with five
 /// printings in pages of three (anything else matches nothing, as a 404), "e:<set>"
 /// lists that set's cards (Lightning Bolt 1, Opt 60, Shock 156), and "oracleid:..."
-/// (every printing of a card) is treated as Lightning Bolt.
+/// (every printing of a card) is treated as Lightning Bolt. /cards/collection finds
+/// those three by set code and collector number, in any set.
 pub fn search_server() -> (crate::scryfall::Client, FakeServer) {
-    use crate::scryfall::{Card, Prices, SearchResponse};
+    use crate::scryfall::{Card, CollectionResponse, Prices, SearchResponse};
+    let set_cards = |code: &str| -> Vec<Card> {
+        [
+            ("aaaaaaaa-0000-4000-8000-000000000101", "Lightning Bolt", "1"),
+            ("aaaaaaaa-0000-4000-8000-000000000060", "Opt", "60"),
+            ("aaaaaaaa-0000-4000-8000-000000000001", "Shock", "156"),
+        ]
+        .iter()
+        .map(|(id, name, num)| Card {
+            id: id.to_string(),
+            name: name.to_string(),
+            set: code.to_string(),
+            set_name: format!("{} Edition", code.to_uppercase()),
+            collector_number: num.to_string(),
+            rarity: "common".into(),
+            finishes: vec!["nonfoil".into(), "foil".into()],
+            prices: Prices { usd: Some("0.25".into()), ..Default::default() },
+            ..Default::default()
+        })
+        .collect()
+    };
     let base = Arc::new(Mutex::new(String::new()));
     let url_for_pages = base.clone();
     let srv = FakeServer::start(move |req| {
+        if req.path == "/cards/collection" {
+            let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
+            let mut resp = CollectionResponse::default();
+            for id in body["identifiers"].as_array().cloned().unwrap_or_default() {
+                let (set, number) = (id["set"].as_str().unwrap_or(""), id["collector_number"].as_str().unwrap_or(""));
+                match set_cards(set).into_iter().find(|c| !set.is_empty() && c.collector_number == number) {
+                    Some(c) => resp.data.push(c),
+                    None => resp.not_found.push(id.as_object().cloned().unwrap_or_default()),
+                }
+            }
+            return Reply::json(&resp);
+        }
         if req.path != "/cards/search" {
             return Reply::not_found();
         }
         let mut q = req.query.get("q").cloned().unwrap_or_default();
         if let Some(code) = q.strip_prefix("e:") {
-            let data = [
-                ("aaaaaaaa-0000-4000-8000-000000000101", "Lightning Bolt", "1"),
-                ("aaaaaaaa-0000-4000-8000-000000000060", "Opt", "60"),
-                ("aaaaaaaa-0000-4000-8000-000000000001", "Shock", "156"),
-            ]
-            .iter()
-            .map(|(id, name, num)| Card {
-                id: id.to_string(),
-                name: name.to_string(),
-                set: code.to_string(),
-                set_name: format!("{} Edition", code.to_uppercase()),
-                collector_number: num.to_string(),
-                rarity: "common".into(),
-                finishes: vec!["nonfoil".into(), "foil".into()],
-                prices: Prices { usd: Some("0.25".into()), ..Default::default() },
-                ..Default::default()
-            })
-            .collect::<Vec<_>>();
+            let data = set_cards(code);
             return Reply::json(&SearchResponse { total_cards: data.len(), data, ..Default::default() });
         }
         if q.starts_with("oracleid:") || q.contains("\"Lightning Bolt\"") {

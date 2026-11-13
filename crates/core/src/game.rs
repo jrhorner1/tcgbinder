@@ -124,8 +124,22 @@ pub struct ImportReport {
     pub format: String,
     /// The rows read from the file.
     pub rows: usize,
-    /// Rows needing attention (approximate matches, not found).
+    /// Warnings about the file's columns first, then rows needing attention
+    /// (approximate matches, not found).
     pub notes: Vec<String>,
+    /// The rows that matched no card, as they appear in the file.
+    pub unmatched: Vec<UnmatchedRow>,
+    /// The file's header line, to put above the unmatched rows.
+    pub header: String,
+}
+
+/// A line of an import file that matched no card.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct UnmatchedRow {
+    /// The 1-based line in the file.
+    pub line: u64,
+    /// The line as it appears in the file.
+    pub text: String,
 }
 
 /// A game-specific filter menu, e.g. Magic's colors.

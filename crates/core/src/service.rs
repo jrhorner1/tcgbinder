@@ -211,8 +211,23 @@ impl GameService {
     /// Adds a file's cards: a CSV export from another app, or a collection file written
     /// by this app. Cards for a printing already owned add to its quantity.
     pub fn import(&self, data: &[u8], progress: &mut dyn FnMut(usize, usize)) -> Result<ImportResult> {
+        self.commit_import(self.preview_import(data, progress)?)
+    }
+
+    /// Reads and matches a file's cards without saving anything, and says what
+    /// importing them would do.
+    pub fn preview_import(&self, data: &[u8], progress: &mut dyn FnMut(usize, usize)) -> Result<ImportPreview> {
         let (cards, report) = parse_import(self.game.as_ref(), data, progress)?;
+        let (new_cards, already_owned) = self.store.count_new(&cards);
         let copies = cards.iter().map(Card::copy_count).sum();
+        let price_paid = cards.iter().map(|c| c.price_paid().0).sum();
+        Ok(ImportPreview { cards, report, copies, new_cards, already_owned, price_paid })
+    }
+
+    /// Saves the cards of a preview. The counts are worked out again, since the
+    /// collection may have changed since the preview.
+    pub fn commit_import(&self, preview: ImportPreview) -> Result<ImportResult> {
+        let ImportPreview { cards, report, copies, .. } = preview;
         let (new_cards, already_owned) = self.store.add_cards(cards)?;
         tracing::info!(
             game = self.game.id(),
@@ -223,6 +238,28 @@ impl GameService {
             "import complete"
         );
         Ok(ImportResult { report, cards: copies, new_cards, already_owned })
+    }
+}
+
+/// What importing a file would do, with the cards it would add.
+#[derive(Clone, Debug, Default)]
+pub struct ImportPreview {
+    pub cards: Vec<Card>,
+    pub report: ImportReport,
+    /// Copies to import.
+    pub copies: i64,
+    /// Cards (printings) not yet owned.
+    pub new_cards: usize,
+    /// Cards that would add copies to ones already owned.
+    pub already_owned: usize,
+    /// The price paid for every copy with a known price.
+    pub price_paid: f64,
+}
+
+impl ImportPreview {
+    /// The number of distinct printings to import.
+    pub fn printings(&self) -> usize {
+        self.cards.iter().map(|c| c.id.as_str()).collect::<std::collections::HashSet<_>>().len()
     }
 }
 
@@ -278,7 +315,7 @@ pub fn parse_import(game: &dyn Game, data: &[u8], progress: &mut dyn FnMut(usize
     if cards.is_empty() {
         bail!("no cards found in this collection file");
     }
-    let report = ImportReport { format: APP_FILE_FORMAT.into(), rows: cards.len(), notes: Vec::new() };
+    let report = ImportReport { format: APP_FILE_FORMAT.into(), rows: cards.len(), ..Default::default() };
     Ok((cards, report))
 }
 
@@ -438,7 +475,7 @@ mod tests {
         assert!(is_app_file(b"\xef\xbb\xbf  {\"cards\":{}}"));
         assert!(!is_app_file(b"Name,Qty"));
         let r = ImportResult {
-            report: ImportReport { format: APP_FILE_FORMAT.into(), rows: 2, notes: vec!["note".into()] },
+            report: ImportReport { format: APP_FILE_FORMAT.into(), rows: 2, notes: vec!["note".into()], ..Default::default() },
             cards: 3,
             new_cards: 1,
             already_owned: 1,

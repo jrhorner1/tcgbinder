@@ -92,6 +92,24 @@ impl Store {
         })
     }
 
+    /// What [`Store::add_cards`] would return for `cards`, without changing anything:
+    /// how many new cards it would create and how many it would add to.
+    pub fn count_new(&self, cards: &[Card]) -> (usize, usize) {
+        self.file.read(|data| {
+            let mut seen: HashSet<String> = HashSet::new();
+            let (mut created, mut merged) = (0, 0);
+            for card in cards.iter().filter(|c| !c.id.is_empty() && c.copy_count() > 0) {
+                let key = card_key(card);
+                if data.cards.contains_key(&key) || !seen.insert(key) {
+                    merged += 1;
+                } else {
+                    created += 1;
+                }
+            }
+            (created, merged)
+        })
+    }
+
     /// Saves an edited card that was stored under `old_key` (its copies replace the old
     /// ones). If it moved to another printing already in the collection, its copies
     /// merge into that card. No copies left deletes it. Returns the new key and whether
@@ -293,6 +311,17 @@ mod tests {
         let again = Store::open(&path, "mtg").unwrap();
         assert_eq!(again.len(), 2);
         assert!(Store::open(&path, "pokemon").is_err());
+    }
+
+    #[test]
+    fn count_new_matches_add_cards() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path().join("c.json"), "mtg").unwrap();
+        s.add_cards(vec![card("a", 1)]).unwrap();
+        let incoming = vec![card("a", 1), card("b", 1), card("b", 2), card("c", 0)];
+        let counted = s.count_new(&incoming);
+        assert_eq!(counted, (1, 2));
+        assert_eq!(s.add_cards(incoming).unwrap(), counted);
     }
 
     #[test]

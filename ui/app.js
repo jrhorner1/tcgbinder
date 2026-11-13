@@ -824,26 +824,67 @@ async function viewSearch(params) {
 
 // --- Tools and Settings ------------------------------------------------------
 
-// Import: a CSV export from another app, or a collection .json from this app.
+// Import: a CSV export from another app, or a collection .json from this app. The
+// file is previewed first (matched, nothing saved), then imported on request.
 function viewImport() {
   const file = h("input", { type: "file", accept: ".csv,.json,text/csv,application/json" });
   const out = h("div");
-  const importBtn = h("button.primary", { type: "button", onclick: async () => {
+  const previewBtn = h("button.primary", { type: "button", onclick: async () => {
     if (!file.files.length) { status("Choose a file first."); return; }
-    importBtn.disabled = true;
-    status(`Importing ${file.files[0].name}… matching cards can take a minute for large files.`);
+    previewBtn.disabled = true;
+    fill(out);
+    status(`Reading ${file.files[0].name}… matching cards can take a minute for large files.`);
     try {
-      const r = await api("POST", gameAPI("/import"), file.files[0]);
-      status(`Imported ${plural(r.cards, "card", "cards")} from ${r.format}`);
-      fill(out, h("h2", "Import Complete"), h("pre.summary", r.summary));
-      await loadFilters();
+      const p = await api("POST", gameAPI("/import?preview=1"), file.files[0]);
+      status("");
+      showImportPreview(out, p, file.files[0].name, () => { file.value = ""; fill(out); });
     } catch (e) { status(e.message, true); }
-    importBtn.disabled = false;
-  } }, "Import");
+    previewBtn.disabled = false;
+  } }, "Preview");
   fill($("#main"),
     h("h1", "Import"),
     h("p", "Import a CSV export from another collection app (EchoMTG, ManaBox, Moxfield, Deckbox, TCGplayer, Dragon Shield, Archidekt and others), or a collection .json file exported from this app. Cards you already own add to their quantities."),
-    h("div.card-box", h("div.search", file, importBtn)), out);
+    h("p.muted", "You'll see what the file holds before anything is saved."),
+    h("div.card-box", h("div.search", file, previewBtn)), out);
+}
+
+// unmatchedLink offers the rows that matched no card as a CSV with the file's header,
+// to fix and import again.
+function unmatchedLink(p, fileName) {
+  const text = [p.header, ...p.unmatched.map((u) => u.text)].join("\n") + "\n";
+  const url = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
+  const name = fileName.replace(/\.[^.]*$/, "") + "-unmatched.csv";
+  return h("a.button", { href: url, download: name }, "Download the unmatched rows");
+}
+
+// showImportPreview shows what importing would do, with Import and Cancel.
+function showImportPreview(out, p, fileName, cancel) {
+  const importBtn = h("button.primary", { type: "button", onclick: async () => {
+    importBtn.disabled = true;
+    status(`Importing ${plural(p.copies, "card", "cards")}…`);
+    try {
+      const r = await api("POST", gameAPI("/import/commit"), { token: p.token });
+      status(`Imported ${plural(r.cards, "card", "cards")} from ${r.format}`);
+      fill(out, h("h2", "Import Complete"), h("pre.summary", r.summary));
+      await loadFilters();
+    } catch (e) { status(e.message, true); importBtn.disabled = false; }
+  } }, `Import ${plural(p.copies, "card", "cards")}`);
+  const unmatched = p.unmatched.length;
+  fill(out,
+    h("h2", `Preview: ${fileName}`),
+    h("p.muted", `${p.format} · ${plural(p.rows, "row", "rows")} read. Nothing has been saved yet.`),
+    h("div.tiles",
+      tile("CARDS", p.copies.toLocaleString(), plural(p.cards, "printing", "printings")),
+      tile("NEW", p.newCards.toLocaleString(), "cards you don't own yet"),
+      tile("ALREADY OWNED", p.alreadyOwned.toLocaleString(), "add to cards you own"),
+      tile("PRICE PAID", usd(p.pricePaid), "for cards with a price")),
+    unmatched ? h("p", h("strong", `${plural(unmatched, "row", "rows")} matched no card and won't be imported.`),
+      " Download them, fix them, and import them again.") : null,
+    unmatched ? h("p", unmatchedLink(p, fileName)) : null,
+    unmatched ? h("details", h("summary", "Show the unmatched rows"),
+      h("pre.raw", p.unmatched.map((u) => `Line ${u.line}: ${u.text}`).join("\n"))) : null,
+    p.notes.length ? h("pre.summary", p.notes.join("\n")) : null,
+    h("div.buttons", h("div.right", p.copies ? importBtn : null, h("button", { type: "button", onclick: cancel }, "Cancel"))));
 }
 
 // toolRow is one action on the Tools page with what it does.

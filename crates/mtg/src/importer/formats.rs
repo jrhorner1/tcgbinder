@@ -32,6 +32,9 @@ pub struct Row {
     pub price_paid: f64,
     /// `YYYY-MM-DD`, or "".
     pub acquired_date: String,
+    pub note: String,
+    /// The row as it appears in the file, so unmatched rows can be handed back.
+    pub text: String,
 }
 
 impl Row {
@@ -62,11 +65,14 @@ enum Field {
     MtgoId,
     TcgplayerId,
     Quantity,
+    /// Foil copies, in files with separate regular and foil quantity columns.
+    QuantityFoil,
     Finish,
     Condition,
     Language,
     Price,
     Date,
+    Note,
 }
 
 /// Normalized header names (lowercase, '_' and '-' as spaces) for each field. Matching
@@ -82,7 +88,8 @@ const HEADER_ALIASES: &[(Field, &[&str])] = &[
     (Field::MultiverseId, &["multiverse id", "multiverseid", "mid", "multiverse"]),
     (Field::MtgoId, &["mtgo id", "mtgoid"]),
     (Field::TcgplayerId, &["tcgplayer id", "tcgplayer product id", "product id", "tcg id", "tcgplayer productid"]),
-    (Field::Quantity, &["quantity", "count", "qty", "amount", "total quantity"]),
+    (Field::Quantity, &["quantity", "count", "qty", "amount", "total quantity", "reg qty", "regular qty", "non foil qty"]),
+    (Field::QuantityFoil, &["foil qty", "foil quantity", "foil count"]),
     (Field::Finish, &["foil", "finish", "printing", "foil type", "is foil"]),
     (Field::Condition, &["condition", "cond"]),
     (Field::Language, &["language", "lang"]),
@@ -91,6 +98,7 @@ const HEADER_ALIASES: &[(Field, &[&str])] = &[
         &["purchase price", "price acquired", "price bought", "price paid", "acquired price", "purchase cost", "buy price", "cost"],
     ),
     (Field::Date, &["date acquired", "date bought", "date added", "acquired date", "acquired", "purchase date", "acquired on", "added"]),
+    (Field::Note, &["note", "notes", "comment", "comments"]),
 ];
 
 fn normalize_header(h: &str) -> String {
@@ -98,69 +106,132 @@ fn normalize_header(h: &str) -> String {
     h.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Names the exporting app from its headers, for the import report.
-fn detect_format(h: &HashSet<String>) -> &'static str {
-    let has = |s: &str| h.contains(s);
-    if has("emid") || has("inventory id") && has("price acquired") {
-        "EchoMTG"
-    } else if has("manabox id") {
-        "ManaBox"
-    } else if has("folder name") && has("price bought") {
-        "Dragon Shield"
-    } else if has("tradelist count") && has("edition code") {
-        "Deckbox"
-    } else if has("tradelist count") {
-        "Moxfield"
-    } else if has("simple name") || has("sku") && has("product id") {
-        "TCGplayer"
-    } else if has("scryfall id") && has("date added") {
-        "Archidekt"
-    } else if has("list name") && has("edition") {
-        "Delver Lens"
-    } else {
-        "Generic CSV"
+/// An app's export format: how to recognise it, and how its columns differ from
+/// [`HEADER_ALIASES`].
+struct Profile {
+    name: &'static str,
+    detect: fn(&HashSet<String>) -> bool,
+    /// Column meanings that differ from HEADER_ALIASES for this app.
+    overrides: &'static [(Field, &'static [&'static str])],
+    /// Each row is one copy, so a file without a quantity column is expected.
+    rows_are_copies: bool,
+}
+
+impl Profile {
+    const fn new(name: &'static str, detect: fn(&HashSet<String>) -> bool) -> Profile {
+        Profile { name, detect, overrides: &[], rows_are_copies: false }
+    }
+
+    /// The field a normalized header names: this profile's overrides first, then the
+    /// shared aliases.
+    fn field(&self, header: &str) -> Option<Field> {
+        self.overrides.iter().chain(HEADER_ALIASES).find(|(_, names)| names.contains(&header)).map(|(f, _)| *f)
     }
 }
 
-/// Reads a collection export from any supported app and returns its rows and the
-/// app it came from.
-pub fn parse_csv(data: &[u8]) -> Result<(Vec<Row>, String)> {
-    let data = data.strip_prefix("\u{feff}".as_bytes()).unwrap_or(data);
-    let mut r = csv::ReaderBuilder::new().has_headers(false).flexible(true).from_reader(data);
-    let mut records = r.records();
-    let mut next_record = || -> Option<csv::StringRecord> {
-        loop {
-            match records.next()? {
-                Ok(rec) => return Some(rec),
-                Err(_) => continue, // skip a malformed row rather than abandoning the import
-            }
+/// The known formats, checked in order; the last matches anything.
+const PROFILES: &[Profile] = &[
+    Profile {
+        rows_are_copies: true,
+        ..Profile::new("EchoMTG", |h| h.contains("emid") || h.contains("inventory id") && h.contains("price acquired"))
+    },
+    Profile::new("ManaBox", |h| h.contains("manabox id")),
+    Profile::new("Dragon Shield", |h| h.contains("folder name") && h.contains("price bought")),
+    Profile::new("Deckbox", |h| h.contains("tradelist count") && h.contains("edition code")),
+    Profile::new("Moxfield", |h| h.contains("tradelist count")),
+    Profile::new("TCGplayer", |h| h.contains("simple name") || h.contains("sku") && h.contains("product id")),
+    Profile::new("Archidekt", |h| h.contains("scryfall id") && h.contains("date added")),
+    Profile::new("Delver Lens", |h| h.contains("list name") && h.contains("edition")),
+    Profile::new("Generic CSV", |_| true),
+];
+
+/// The format of a file with these normalized headers.
+fn detect_profile(h: &HashSet<String>) -> &'static Profile {
+    PROFILES.iter().find(|p| (p.detect)(h)).expect("the generic profile matches anything")
+}
+
+/// A collection export, read.
+#[derive(Debug, Default)]
+pub struct ParsedCsv {
+    pub rows: Vec<Row>,
+    /// The app it came from, e.g. "EchoMTG".
+    pub format: String,
+    /// Columns that couldn't be used, for the top of the import report.
+    pub warnings: Vec<String>,
+    /// The header line as it appears in the file.
+    pub header: String,
+}
+
+/// Counts a column's non-empty values and the ones that couldn't be read.
+#[derive(Default)]
+struct Misses {
+    values: usize,
+    failed: usize,
+}
+
+impl Misses {
+    fn note(&mut self, raw: &str, ok: bool) {
+        if !raw.is_empty() {
+            self.values += 1;
+            self.failed += usize::from(!ok);
         }
-    };
-    let Some(mut headers) = next_record() else { bail!("could not read the header row: the file is empty") };
-    // Dragon Shield (and Excel) exports may start with a "sep=," hint line.
-    if headers.get(0).is_some_and(|h| h.trim().to_lowercase().starts_with("sep=")) {
-        let Some(h) = next_record() else { bail!("could not read the header row") };
-        headers = h;
     }
 
-    let mut cols: HashMap<Field, usize> = HashMap::new();
-    let mut seen = HashSet::new();
-    for (i, h) in headers.iter().enumerate() {
-        let n = normalize_header(h);
-        if let Some((field, _)) = HEADER_ALIASES.iter().find(|(_, names)| names.contains(&n.as_str())) {
-            cols.entry(*field).or_insert(i); // the first matching column wins
-        }
-        seen.insert(n);
+    /// A warning when more than half the non-empty values failed.
+    fn warning(&self, what: &str, column: &str) -> Option<String> {
+        (self.failed * 2 > self.values).then(|| {
+            format!("The {what} column \"{column}\" couldn't be read in {} of {} rows; those were left blank.", self.failed, self.values)
+        })
     }
-    let format = detect_format(&seen).to_string();
+}
+
+/// Reads a collection export from any supported app: its rows, the app it came from,
+/// and warnings about columns that couldn't be used.
+pub fn parse_csv(data: &[u8]) -> Result<ParsedCsv> {
+    let data = data.strip_prefix("\u{feff}".as_bytes()).unwrap_or(data);
+    let mut r = csv::ReaderBuilder::new().has_headers(false).flexible(true).from_reader(data);
+    // A malformed row is skipped rather than abandoning the import.
+    let records: Vec<csv::StringRecord> = r.records().filter_map(|rec| rec.ok()).collect();
+    // Each record's text in the file: from its start to the next record's.
+    let starts: Vec<usize> = records.iter().map(|rec| rec.position().map_or(0, |p| p.byte() as usize)).collect();
+    let text_of = |i: usize| {
+        let end = starts.get(i + 1).copied().unwrap_or(data.len()).min(data.len());
+        String::from_utf8_lossy(&data[starts[i].min(end)..end]).trim_end_matches(['\r', '\n']).to_string()
+    };
+    let mut first = 0;
+    // Dragon Shield (and Excel) exports may start with a "sep=," hint line.
+    if records.first().and_then(|h| h.get(0)).is_some_and(|h| h.trim().to_lowercase().starts_with("sep=")) {
+        first = 1;
+    }
+    if records.len() <= first {
+        bail!("could not read the header row: the file is empty");
+    }
+    let header_text = text_of(first);
+    let headers = records[first].clone();
+    let normalized: Vec<String> = headers.iter().map(normalize_header).collect();
+    let profile = detect_profile(&normalized.iter().cloned().collect());
+
+    let mut cols: HashMap<Field, usize> = HashMap::new();
+    for (i, n) in normalized.iter().enumerate() {
+        if let Some(field) = profile.field(n) {
+            cols.entry(field).or_insert(i); // the first matching column wins
+        }
+    }
     let has = |f: Field| cols.contains_key(&f);
     if !has(Field::Name) && !has(Field::ScryfallId) && !has(Field::MultiverseId) && !has(Field::TcgplayerId) {
         bail!("unrecognized file: no card name or card ID column found in the header");
     }
+    let column_name = |f: Field| cols.get(&f).and_then(|i| headers.get(*i)).unwrap_or("").trim().to_string();
+    let split = has(Field::QuantityFoil);
 
+    let (mut price_misses, mut date_misses) = (Misses::default(), Misses::default());
     let mut rows = Vec::new();
-    while let Some(rec) = next_record() {
+    for (i, rec) in records.iter().enumerate().skip(first + 1) {
         let get = |f: Field| cols.get(&f).and_then(|i| rec.get(*i)).map_or("", str::trim);
+        let price = try_price(get(Field::Price));
+        price_misses.note(get(Field::Price), price.is_some());
+        let date = parse_date(get(Field::Date));
+        date_misses.note(get(Field::Date), !date.is_empty());
         let mut row = Row {
             line: rec.position().map_or(0, |p| p.line()),
             name: get(Field::Name).to_string(),
@@ -175,16 +246,11 @@ pub fn parse_csv(data: &[u8]) -> Result<(Vec<Row>, String)> {
             finish: parse_finish(get(Field::Finish)).to_string(),
             condition: Condition::parse(get(Field::Condition)),
             language: parse_language(get(Field::Language)).to_string(),
-            price_paid: parse_price(get(Field::Price)),
-            acquired_date: parse_date(get(Field::Date)),
+            price_paid: price.unwrap_or(0.0),
+            acquired_date: date,
+            note: get(Field::Note).to_string(),
+            text: text_of(i),
         };
-        if has(Field::Quantity) {
-            let q = parse_int_loose(get(Field::Quantity));
-            if q <= 0 {
-                continue; // explicit zero-count rows (e.g. wishlist entries) aren't owned cards
-            }
-            row.quantity = q;
-        }
         let amb = get(Field::SetAmbiguous);
         if !amb.is_empty() {
             // With a dedicated set-code column, "Set"/"Edition" holds the set name
@@ -200,9 +266,34 @@ pub fn parse_csv(data: &[u8]) -> Result<(Vec<Row>, String)> {
         if row.name.is_empty() && row.scryfall_id.is_empty() && row.multiverse_id == 0 && row.tcgplayer_id == 0 {
             continue;
         }
+        if split {
+            // Separate regular and foil quantities: one row for each, skipping zeros.
+            let regular = parse_int_loose(get(Field::Quantity));
+            let foil = parse_int_loose(get(Field::QuantityFoil));
+            for (quantity, finish) in [(regular, "nonfoil"), (foil, "foil")] {
+                if quantity > 0 {
+                    rows.push(Row { quantity, finish: finish.into(), ..row.clone() });
+                }
+            }
+            continue;
+        }
+        if has(Field::Quantity) {
+            let q = parse_int_loose(get(Field::Quantity));
+            if q <= 0 {
+                continue; // explicit zero-count rows (e.g. wishlist entries) aren't owned cards
+            }
+            row.quantity = q;
+        }
         rows.push(row);
     }
-    Ok((rows, format))
+
+    let mut warnings = Vec::new();
+    if !has(Field::Quantity) && !split && !profile.rows_are_copies {
+        warnings.push("No quantity column was found, so every row was counted as 1 copy.".to_string());
+    }
+    warnings.extend(price_misses.warning("price", &column_name(Field::Price)));
+    warnings.extend(date_misses.warning("date", &column_name(Field::Date)));
+    Ok(ParsedCsv { rows, format: profile.name.to_string(), warnings, header: header_text })
 }
 
 fn looks_like_set_code(s: &str) -> bool {
@@ -215,14 +306,20 @@ fn parse_int_loose(s: &str) -> i64 {
     s.parse().unwrap_or_else(|_| s.parse::<f64>().map_or(0, |f| f as i64))
 }
 
+#[cfg(test)]
 fn parse_price(s: &str) -> f64 {
+    try_price(s).unwrap_or(0.0)
+}
+
+/// A price in any common notation; `None` if it can't be read (or is negative).
+fn try_price(s: &str) -> Option<f64> {
     let mut s = s.to_string();
     for sym in ["$", "€", "£", "USD", "EUR"] {
         s = s.replace(sym, "");
     }
     let s = s.trim();
     let s = if s.contains(',') && !s.contains('.') { s.replace(',', ".") } else { s.replace(',', "") }; // European decimal comma
-    s.trim().parse::<f64>().ok().filter(|f| *f >= 0.0 && f.is_finite()).unwrap_or(0.0)
+    s.trim().parse::<f64>().ok().filter(|f| *f >= 0.0 && f.is_finite())
 }
 
 const DATE_FORMATS: &[&str] = &["%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%m/%d/%y", "%b %d, %Y", "%d %b %Y"];
@@ -259,7 +356,7 @@ mod tests {
     use super::*;
 
     fn row(r: Row) -> Row {
-        Row { line: 0, ..r }
+        Row { line: 0, text: String::new(), ..r }
     }
 
     #[test]
@@ -371,16 +468,74 @@ mod tests {
             ),
         ];
         for (format, csv, want) in cases {
-            let (rows, got_format) = parse_csv(csv.as_bytes()).unwrap();
-            assert_eq!(&got_format, format);
-            assert_eq!(rows.len(), 1, "{format}");
-            assert_eq!(row(rows[0].clone()), *want, "{format}");
+            let parsed = parse_csv(csv.as_bytes()).unwrap();
+            assert_eq!(&parsed.format, format);
+            assert_eq!(parsed.rows.len(), 1, "{format}");
+            assert_eq!(row(parsed.rows[0].clone()), *want, "{format}");
+            assert!(parsed.warnings.is_empty(), "{format}: {:?}", parsed.warnings);
         }
+    }
+
+    /// An export with EchoMTG's real header and made-up rows.
+    const ECHOMTG: &[u8] = include_bytes!("../../tests/echomtg-export.txt");
+
+    #[test]
+    fn echomtg_export() {
+        let parsed = parse_csv(ECHOMTG).unwrap();
+        assert_eq!(parsed.format, "EchoMTG");
+        assert!(parsed.warnings.is_empty(), "one row per copy is expected: {:?}", parsed.warnings);
+        assert_eq!(parsed.header, std::str::from_utf8(ECHOMTG).unwrap().lines().next().unwrap());
+        assert_eq!(parsed.rows.len(), 6);
+        assert!(parsed.rows.iter().all(|r| r.quantity == 1 && r.language == "en"));
+        let foil = &parsed.rows[1];
+        assert_eq!(
+            (foil.name.as_str(), foil.set_code.as_str(), foil.number.as_str(), foil.finish.as_str()),
+            ("Shock", "m19", "156", "foil")
+        );
+        assert_eq!((foil.condition, foil.price_paid, foil.acquired_date.as_str()), (Condition::LightPlay, 1.1, "2018-08-16"));
+        assert_eq!((foil.tcgplayer_id, foil.line), (70001, 3));
+        assert_eq!(parsed.rows[2].condition, Condition::Moderate);
+        assert_eq!(parsed.rows[3].name, "Lightning Bolt (1)");
+        assert_eq!(parsed.rows.iter().filter(|r| r.finish == "foil").count(), 1);
+        assert_eq!(parsed.rows[0].text, std::str::from_utf8(ECHOMTG).unwrap().lines().nth(1).unwrap());
+        assert!(parsed.rows.iter().all(|r| r.scryfall_id.is_empty() && r.note.is_empty()));
+    }
+
+    #[test]
+    fn split_quantities_and_notes() {
+        let parsed = parse_csv(b"Name,Reg Qty,Foil Qty,Finish,Notes\nBolt,2,1,etched,binder A\nOpt,0,0,,\nShock,0,3,,\n").unwrap();
+        let got: Vec<_> = parsed.rows.iter().map(|r| (r.name.as_str(), r.quantity, r.finish.as_str(), r.note.as_str(), r.line)).collect();
+        assert_eq!(got, [("Bolt", 2, "nonfoil", "binder A", 2), ("Bolt", 1, "foil", "binder A", 2), ("Shock", 3, "foil", "", 4)]);
+        assert!(parsed.warnings.is_empty());
+    }
+
+    #[test]
+    fn warnings_name_the_columns() {
+        let parsed = parse_csv(b"Name,Price Paid,Acquired\nA,abc,someday\nB,xyz,2024-01-01\nC,,\n").unwrap();
+        assert_eq!(parsed.rows.len(), 3);
+        assert_eq!(
+            parsed.warnings,
+            [
+                "No quantity column was found, so every row was counted as 1 copy.",
+                "The price column \"Price Paid\" couldn't be read in 2 of 2 rows; those were left blank.",
+            ]
+        );
+        let ok = parse_csv(b"Name,Quantity,Price Paid\nA,1,0.50\n").unwrap();
+        assert!(ok.warnings.is_empty());
+    }
+
+    #[test]
+    fn profile_overrides_come_first() {
+        let p = Profile { overrides: &[(Field::Price, &["acquired"])], ..Profile::new("Test", |_| true) };
+        assert_eq!(p.field("acquired"), Some(Field::Price));
+        assert_eq!(p.field("date acquired"), Some(Field::Date));
+        assert_eq!(Profile::new("Plain", |_| true).field("acquired"), Some(Field::Date));
+        assert_eq!(p.field("note id"), None);
     }
 
     #[test]
     fn lines_zero_quantities_and_unknown_files() {
-        let (rows, _) = parse_csv(b"Name,Quantity\nOpt,2\nWish,0\n\"Shock\",1\n").unwrap();
+        let rows = parse_csv(b"Name,Quantity\nOpt,2\nWish,0\n\"Shock\",1\n").unwrap().rows;
         assert_eq!(rows.iter().map(|r| (r.name.as_str(), r.line)).collect::<Vec<_>>(), [("Opt", 2), ("Shock", 4)]);
         assert_eq!(rows[0].describe(), "Line 2: Opt");
         assert!(parse_csv(b"foo,bar\n1,2\n").is_err());
