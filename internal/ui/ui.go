@@ -29,6 +29,7 @@ type App struct {
 	window      fyne.Window
 	settings    *settings.Store
 	statusLabel *widget.Label
+	selection   *selectionBar // ticked cards and the Bulk edit button, above Add
 	tree        *widget.Tree
 	rightPane   *fyne.Container
 	view        collectionView
@@ -50,6 +51,7 @@ type App struct {
 func (ui *App) RefreshDataIndex() {
 	for _, gs := range ui.games {
 		gs.cards = gs.store.GetCollection()
+		gs.pruneTicks()
 	}
 	ui.refreshSetOptions()
 	ui.applyFilter()

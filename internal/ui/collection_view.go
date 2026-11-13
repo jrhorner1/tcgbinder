@@ -60,9 +60,13 @@ type gameState struct {
 	filtered    []collection.Card          // matching cards, in the Card order setting's order
 	cardIDs     []string                   // their node IDs, in the same order
 	cardNodes   map[string]collection.Card // card node ID -> card
-	cardCount   int                        // copies in the filtered view
-	uniqueCount int                        // distinct printings in the filtered view
+	cardCount   int                        // Cards (every copy) in the filtered view
+	uniqueCount int                        // unique cards in the filtered view
 	setCount    int                        // sets in the filtered view
+
+	// ticked are the cards ticked in the tree for bulk edit, by card key. They stay
+	// ticked while filters hide them.
+	ticked map[string]bool
 }
 
 // searchDelay is how long typing must pause before the collection is filtered.
@@ -255,6 +259,7 @@ func (ui *App) applyFilter() {
 		}
 		v.summaryLabel.SetText(counts)
 	}
+	ui.updateSelection() // "hidden by filters" depends on what's shown
 }
 
 func (ui *App) gameByID(id string) *gameState {
@@ -305,14 +310,21 @@ func (ui *App) buildTree() *widget.Tree {
 			name := widget.NewLabel("")
 			name.Truncation = fyne.TextTruncateEllipsis
 			detail := widget.NewLabel("")
-			return container.NewBorder(nil, nil, widget.NewIcon(nil), detail, name)
+			// Card rows show a checkbox (to tick cards for bulk edit) instead of an icon.
+			lead := container.NewStack(widget.NewIcon(nil), widget.NewCheck("", nil))
+			return container.NewBorder(nil, nil, lead, detail, name)
 		},
 		func(id widget.TreeNodeID, branch bool, obj fyne.CanvasObject) {
 			row := obj.(*fyne.Container)
 			// Border orders its objects: center, then leading, then trailing.
 			name := row.Objects[0].(*widget.Label)
-			icon := row.Objects[1].(*widget.Icon)
+			lead := row.Objects[1].(*fyne.Container)
+			icon := lead.Objects[0].(*widget.Icon)
+			check := lead.Objects[1].(*widget.Check)
 			detail := row.Objects[2].(*widget.Label)
+			check.OnChanged = nil
+			check.Hide()
+			icon.Show()
 
 			kind, gameID, _ := parseNode(id)
 			gs := ui.gameByID(gameID)
@@ -338,7 +350,11 @@ func (ui *App) buildTree() *widget.Tree {
 				detail.SetText(plural(gs.cardCount, "card", "cards")) // as Home's Cards tile
 			default:
 				c := gs.cardNodes[id]
-				icon.SetResource(nil)
+				key := collection.CardKey(c)
+				icon.Hide()
+				check.Show()
+				check.SetChecked(gs.ticked[key])
+				check.OnChanged = func(on bool) { ui.tick(gs, key, on) }
 				name.SetText(c.Name)
 				detail.SetText(setNumber(c.Set, c.CollectorNumber) + " · " + copiesSummary(c, gs.game))
 			}

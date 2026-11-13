@@ -57,7 +57,9 @@ func (ui *App) BuildLayout() fyne.CanvasObject {
 		scanButton.Importance = widget.HighImportance
 		bottom = container.NewGridWithColumns(2, addButton, scanButton)
 	}
-	leftPane := container.NewBorder(filterBar, container.NewPadded(bottom), nil, nil, ui.tree)
+	ui.selection = ui.newSelectionBar()
+	ui.updateSelection()
+	leftPane := container.NewBorder(filterBar, container.NewVBox(ui.selection.view, container.NewPadded(bottom)), nil, nil, ui.tree)
 
 	brand := container.NewHBox(widget.NewIcon(theme.StorageIcon()),
 		widget.NewLabelWithStyle("TCG Binder", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))

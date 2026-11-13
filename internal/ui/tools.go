@@ -68,15 +68,16 @@ func (ui *App) showSearchResults(q string) {
 	ui.setRightPane(container.NewVScroll(container.NewPadded(content)))
 }
 
-// showBulkEdit changes many cards at once: those the filters currently show, with
-// any of them unticked to leave out.
+// showBulkEdit changes the cards ticked in the tree, all at once. The search and
+// filters above the tree (set, color, rarity, finish) narrow which cards to tick.
 func (ui *App) showBulkEdit() {
 	gs := ui.g
-	cards := append([]collection.Card(nil), gs.filtered...)
+	cards := ui.tickedCards()
 	if len(cards) == 0 {
-		dialog.ShowInformation("Bulk edit", "No cards are shown. Change the filters to choose the cards to edit.", ui.window)
+		dialog.ShowInformation("Bulk edit", "Tick the cards to change in the collection list first. Use the search and filters (set, color, rarity, finish) to narrow the list, then Select all shown.", ui.window)
 		return
 	}
+	// The ticked cards, each of which can still be unticked here.
 	chosen := make([]bool, len(cards))
 	for i := range chosen {
 		chosen[i] = true
@@ -89,7 +90,7 @@ func (ui *App) showBulkEdit() {
 				n++
 			}
 		}
-		count.SetText(fmt.Sprintf("%d of %s selected (the cards the filters show)", n, plural(len(cards), "card", "cards")))
+		count.SetText(fmt.Sprintf("Changing %s", plural(n, "card", "cards")))
 	}
 	list := widget.NewList(
 		func() int { return len(cards) },
@@ -105,19 +106,17 @@ func (ui *App) showBulkEdit() {
 			check.OnChanged = nil
 			check.SetText(c.Name)
 			check.SetChecked(chosen[id])
-			check.OnChanged = func(v bool) { chosen[id] = v; updateCount() }
+			check.OnChanged = func(v bool) {
+				chosen[id] = v
+				ui.tick(gs, collection.CardKey(c), v) // the tree's tick follows
+				ui.tree.Refresh()
+				updateCount()
+			}
 			parts := []string{setNumber(c.Set, c.CollectorNumber), copiesSummary(c, gs.game)}
 			row.Objects[1].(*widget.Label).SetText(strings.Join(parts, " · "))
 			row.Refresh()
 		},
 	)
-	setAll := func(v bool) {
-		for i := range chosen {
-			chosen[i] = v
-		}
-		list.Refresh()
-		updateCount()
-	}
 	updateCount()
 
 	const unchanged = "(unchanged)"
@@ -139,7 +138,7 @@ func (ui *App) showBulkEdit() {
 	price.SetPlaceHolder(unchanged)
 	date := widget.NewDateEntry()
 	date.SetPlaceHolder(unchanged)
-	del := widget.NewCheck("Delete the selected cards", nil)
+	del := widget.NewCheck("Delete these cards", nil)
 
 	var d *dialog.CustomDialog
 	apply := widget.NewButtonWithIcon("Apply", theme.ConfirmIcon(), func() {
@@ -193,6 +192,7 @@ func (ui *App) showBulkEdit() {
 				return
 			}
 			d.Hide()
+			ui.tickAll(false) // done with these
 			msg := fmt.Sprintf("Updated %s", plural(res.Updated, "card", "cards"))
 			if res.Deleted > 0 {
 				msg = fmt.Sprintf("Deleted %s", plural(res.Deleted, "card", "cards"))
@@ -222,11 +222,9 @@ func (ui *App) showBulkEdit() {
 		widget.NewFormItem("Acquired", date),
 		widget.NewFormItem("", del),
 	)
-	top := container.NewVBox(count, container.NewHBox(
-		widget.NewButton("Select all", func() { setAll(true) }),
-		widget.NewButton("Select none", func() { setAll(false) })))
+	top := count
 	bottom := container.NewVBox(widget.NewSeparator(), changes,
-		caption("Changes apply to every copy of each selected card. Finish changes skip printings that don't come in that finish; copies that end up the same finish, condition, price and date join one purchase."))
+		caption("Changes apply to every copy of each card above. Finish changes skip printings that don't come in that finish; copies that end up the same finish, condition, price and date join one purchase."))
 	content := container.NewBorder(top, bottom, nil, nil, list)
 	d = dialog.NewCustomWithoutButtons("Bulk edit "+gs.game.Name(), content, ui.window)
 	d.SetButtons([]fyne.CanvasObject{widget.NewButton("Cancel", func() { d.Hide() }), apply})

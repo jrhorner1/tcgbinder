@@ -61,13 +61,21 @@ time stay exact.
 
 ### Bulk edit
 
-**Tools → Bulk edit…** changes many cards at once:
-- It applies to the cards the current filters show, all ticked to start. Untick
-  any to leave out.
-- You can set the condition, finish, price paid or acquired date of every copy, or
-  delete the cards.
-- Finish changes skip printings that don't come in that finish, and purchases that
-  become identical combine.
+Every card in the list on the left (desktop and phone) has a checkbox:
+1. Narrow the list with the search box and the **Set**, **Color**, **Rarity** and
+   **Finish** filters.
+2. Tick cards one by one, or **Select all shown** to tick everything the filters
+   show. Ticks stay while you change filters, so you can build up a selection from
+   several searches; the bar below the list says how many are ticked and how many
+   the filters hide. **Clear** unticks everything.
+3. **Bulk edit…** opens the changes for the ticked cards: condition, finish, price
+   paid or acquired date for every copy, or delete them. You can still untick cards
+   there. Finish changes skip printings that don't come in that finish, and copies
+   that end up identical join one purchase.
+
+The ticks clear once the changes are applied. **Tools → Bulk edit…** opens the same
+dialog. On the web, **Select for bulk edit** on the Collection page works the same
+way with the page's filters.
 
 ## Adding cards
 

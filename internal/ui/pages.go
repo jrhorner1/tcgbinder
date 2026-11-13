@@ -130,7 +130,7 @@ func (ui *App) showTools() {
 			ui.scanPhotoFile))
 	}
 	content.Add(toolAction("Bulk edit…", theme.DocumentCreateIcon(),
-		"Change the condition, finish, price paid or date of many cards at once, or delete them. Uses the cards the filters show.",
+		"Change the condition, finish, price paid or date of many cards at once, or delete them. Tick the cards in the collection list (filter it, then Select all shown); Bulk edit is also below the list.",
 		ui.showBulkEdit))
 
 	content.Add(sectionTitle("Prices"))
