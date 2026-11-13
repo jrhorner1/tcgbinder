@@ -1,6 +1,5 @@
-# Checks every pull request and every push to main: formatting, vet, go.mod tidiness,
-# the web UI's JavaScript, the shell scripts, and the tests (with the race detector)
-# on Linux, macOS and Windows.
+# Checks every pull request and every push to main: formatting, clippy, the UI's
+# JavaScript, the tests on Linux, macOS and Windows, and that the iPhone app compiles.
 name: CI
 
 on:
@@ -15,33 +14,27 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   checks:
-    name: Format, vet and lint
+    name: Format, lint and UI
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v5
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          go-version-file: go.mod
-      - name: Install Fyne's build dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc libgl1-mesa-dev xorg-dev
-      - name: gofmt
-        run: |
-          unformatted=$(gofmt -l .)
-          if [ -n "$unformatted" ]; then
-            echo "These files need gofmt:"; echo "$unformatted"; exit 1
-          fi
-      - name: go vet
-        run: go vet ./...
-      - name: go.mod and go.sum are tidy
-        run: |
-          go mod tidy
-          git diff --exit-code go.mod go.sum
-      - name: Web UI JavaScript parses
-        run: node --check internal/web/static/app.js
-      - name: Shell scripts parse
-        run: for f in scripts/*.sh; do sh -n "$f"; done
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Tauri's Linux dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
+      - name: rustfmt
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: UI JavaScript parses
+        run: node --check ui/app.js
 
   test:
     name: Test (${{ matrix.os }})
@@ -52,13 +45,26 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - name: Install Fyne's build dependencies
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Tauri's Linux dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc libgl1-mesa-dev xorg-dev
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
       - name: Test
-        run: go test -race -count=1 ./...
-      - name: Build
-        run: go build -o ${{ runner.temp }}/tcgbinder ./cmd/tcgbinder
+        run: cargo test --workspace --locked
+      - name: Build the app
+        run: cargo build -p tcgbinder --locked
+
+  ios:
+    name: iPhone app compiles
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the app library for iOS
+        run: |
+          cargo build -p tcgbinder --lib --locked --target aarch64-apple-ios-sim
+          cargo build -p tcgbinder --lib --locked --target aarch64-apple-ios

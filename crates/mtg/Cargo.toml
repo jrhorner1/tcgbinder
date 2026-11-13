@@ -1,0 +1,31 @@
+[package]
+name = "tcgbinder-mtg"
+description = "Magic: The Gathering for TCG Binder: Scryfall, MTGJSON price history, CSV import and card scanning"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tcgbinder-core.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+csv = "1"
+flate2 = "1"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+url = "2"
+xz2 = { version = "0.1", features = ["static"] }
+tiny_http = { version = "0.12", optional = true }
+
+[features]
+# The fake Scryfall servers in `testing`, for other crates' tests.
+testing = ["dep:tiny_http"]
+
+[dev-dependencies]
+tempfile.workspace = true
+tiny_http = "0.12"

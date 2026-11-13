@@ -1,0 +1,36 @@
+# TCG Binder: a trading card collection manager.
+#
+#   crates/core    the game-neutral collection model, files, settings and app services
+#   crates/mtg     Magic: The Gathering (Scryfall, MTGJSON, CSV import, card scanning)
+#   crates/vision  reading text off a photo of a card with Apple's Vision framework
+#   crates/api     the JSON API and the embedded browser UI, shared by every front end
+#   src-tauri      the app: the Tauri desktop and iPhone app, and the --web server
+#   ui             the user interface (plain HTML, CSS and JavaScript; no build step)
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/mtg", "crates/vision", "crates/api", "src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+repository = "https://github.com/jrhorner1/tcgbinder"
+
+[workspace.dependencies]
+tcgbinder-core = { path = "crates/core" }
+tcgbinder-mtg = { path = "crates/mtg" }
+tcgbinder-vision = { path = "crates/vision" }
+tcgbinder-api = { path = "crates/api" }
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+tracing = "0.1"
+http = "1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true

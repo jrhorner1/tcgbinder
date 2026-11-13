@@ -1,8 +1,0 @@
-Website = "https://github.com/jrhorner1/tcgbinder"
-
-[Details]
-  Icon = "Icon.png"
-  Name = "TCG Binder"
-  ID = "io.github.jrhorner1.tcgbinder"
-  Version = "0.1.0"
-  Build = 1

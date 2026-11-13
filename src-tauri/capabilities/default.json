@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The main window. The UI talks to the app through the tcgb:// URL scheme, not Tauri commands, so it needs no permissions beyond the defaults.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
