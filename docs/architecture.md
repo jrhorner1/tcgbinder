@@ -9,7 +9,8 @@ src-tauri/             the app (crate `tcgbinder`): command-line flags, data fol
                        (desktop and iPhone) or, with --web, the HTTP server (src/web.rs)
 crates/api             the JSON API and the embedded UI, as one request → response handler
 crates/core            game-neutral: cards and their copies, the JSON store, price history,
-                       stats, filters, bulk edit; settings; the Game trait; the service for
+                       stats, filters, bulk edit; settings; JSON files shared with other
+                       devices (jsonfile.rs); the Game trait; the service for
                        one game (import, prices, history, daily sync, value chart); logging,
                        data folder, single-instance lock
 crates/mtg             Magic: Scryfall catalog, CSV importer, MTGJSON price history, scan matching
@@ -67,17 +68,43 @@ Per game, in `<data>/<game>/`:
 - `collection.json`: one card per printing (keyed by its catalog ID), holding the
   copies owned as `copies`: finish → condition → list of purchases (`quantity`,
   `price_paid`, `acquired_date`), the card editor's "Your Copies". Also the game's
-  ID. Saves are atomic (a synced temporary file renamed over
-  the old one) and serialized.
+  ID. Kept in a `core::jsonfile::JsonFile` (see below).
 - `price-history.json`: daily prices per printing and finish, each as a start date
   and an array of prices in cents, one per day (`-1` for a day without one). That's
   much smaller and faster than a map by date. It is only ever added to: saves are
   serialized and synced, a save that would lose prices is refused, and an unreadable
-  file is set aside rather than overwritten.
+  file is set aside at startup rather than overwritten. Before each change and save,
+  prices another device saved to the file are taken in (days already recorded here
+  keep their price), so two devices recording prices never lose days.
 - Caches, for example Magic's `scryfall-sets.json`.
 
-In `<data>/`: `settings.json` (the user's settings, `core::settings`),
-`tcgbinder.lock` (single instance), and `tcgbinder.log`.
+In `<data>/`: `settings.json` (the user's settings, `core::settings`, also a
+`JsonFile`), `tcgbinder.lock` (single instance), and `tcgbinder.log`.
+
+### Files another device may change
+
+The data folder can sit in a folder a sync service shares between devices, so another
+device may change these files while the app runs. `core::jsonfile::JsonFile<T>` holds
+a JSON document and saves every change before returning, so memory never holds
+anything the file doesn't. Each change (`mutate`) therefore needs no merging: if the
+file changed on disk, it is reloaded first, then the change is applied to a copy and
+saved atomically (a synced temporary file `<name>_*.tmp` renamed over the old one).
+Saves are serialized, and a change that fails leaves the data as it was.
+
+- **A change on disk** is noticed by the file's modified time and length, confirmed
+  by a hash of its contents, so a file a sync service only touched isn't reloaded.
+  Files modified in the last two seconds are always hashed, since some file systems
+  keep times only to the second.
+- **A file that doesn't parse or has gone** is most likely half-synced: nothing is
+  replaced or saved over it, and the change fails with "… is being updated by another
+  device; try again in a moment" (`jsonfile::FileBusy`). At startup a malformed
+  collection is still an error.
+- **While idle,** `GET /api/status` (the UI asks every 15 seconds) checks every game's
+  files first (`GameService::refresh_files`), so the revision changes and the open page
+  redraws. There is no file watcher.
+
+Two devices saving within the same moment, before the sync service has delivered
+either change, is not covered here: the service keeps both files as a conflict copy.
 
 ## Threads
 

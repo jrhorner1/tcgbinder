@@ -1,28 +1,22 @@
 use std::collections::{BTreeMap, HashSet};
-use std::fs;
-use std::io::{BufWriter, Write};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, RwLock};
+use std::path::Path;
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
 use super::{BulkChange, BulkResult, Card, CatalogUpdate};
 use crate::dates;
+use crate::jsonfile::JsonFile;
 
-/// One game's collection, persisted as a JSON file. Each game has its own.
+/// One game's collection, persisted as a JSON file. Each game has its own. The file
+/// may also be changed by another device through a synced folder: every change first
+/// takes in what is on disk (see [`JsonFile`]).
 pub struct Store {
-    path: PathBuf,
-    data: RwLock<StoreData>,
-    /// Serializes saves so an older state never lands last.
-    save_lock: Mutex<()>,
-    /// Counts changes, so front ends can tell when to show fresh data.
-    revision: AtomicU64,
+    file: JsonFile<StoreData>,
 }
 
 /// The collection file's contents.
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 struct StoreData {
     /// The ID of the game this file belongs to.
@@ -41,62 +35,41 @@ impl Store {
     /// Opens (or creates) the collection file for `game` at `path`. A file that belongs
     /// to a different game is refused; a new file is claimed for this one.
     pub fn open(path: impl AsRef<Path>, game: &str) -> Result<Store> {
-        let path = std::path::absolute(path.as_ref()).context("resolving the collection path")?;
-        let data = match fs::read(&path) {
-            Ok(b) if b.iter().all(u8::is_ascii_whitespace) => StoreData::default(),
-            Ok(b) => serde_json::from_slice(&b).with_context(|| format!("malformed collection file {}", path.display()))?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => StoreData::default(),
-            Err(e) => return Err(e).context("failed to load existing collection"),
-        };
-        let owner = data.game.clone();
-        let store = Store { path, data: RwLock::new(data), save_lock: Mutex::new(()), revision: AtomicU64::new(0) };
+        let file = JsonFile::open(path, true).context("failed to load existing collection")?;
+        let store = Store { file };
+        let owner = store.file.read(|d| d.game.clone());
         if owner.is_empty() {
-            store.data.write().unwrap().game = game.to_string();
-            store.save()?;
+            store.file.mutate(|d| {
+                d.game = game.to_string();
+                Ok(())
+            })?;
         } else if owner != game {
-            bail!("{} holds a {owner:?} collection, not {game:?}", store.path.display());
+            bail!("{} holds a {owner:?} collection, not {game:?}", store.file_path().display());
         }
         Ok(store)
     }
 
     /// The absolute path of the collection file.
     pub fn file_path(&self) -> &Path {
-        &self.path
+        self.file.path()
     }
 
     /// A number that changes whenever the collection does.
     pub fn revision(&self) -> u64 {
-        self.revision.load(Ordering::Relaxed)
+        self.file.revision()
     }
 
-    /// Writes the collection to disk atomically: a temporary file is written, synced and
-    /// renamed over the old one, so a crash mid-save never corrupts it.
-    pub fn save(&self) -> Result<()> {
-        let _serial = self.save_lock.lock().unwrap();
-        let dir = self.path.parent().ok_or_else(|| anyhow!("no folder for {}", self.path.display()))?;
-        fs::create_dir_all(dir).context("failed to create storage directories")?;
-        let tmp = tempfile::Builder::new().prefix("collection_").suffix(".tmp").tempfile_in(dir)?;
-        {
-            // Indented for human-readable diffs; buffered, as the encoder makes many small writes.
-            let mut w = BufWriter::with_capacity(1 << 16, tmp.as_file());
-            let data = self.data.read().unwrap();
-            serde_json::to_writer_pretty(&mut w, &*data).context("failed to encode collection JSON")?;
-            w.write_all(b"\n")?;
-            w.flush()?;
-        }
-        tmp.as_file().sync_all().context("failed to sync the collection file")?;
-        tmp.persist(&self.path).context("failed to replace the collection file")?;
-        self.revision.fetch_add(1, Ordering::Relaxed);
-        Ok(())
+    /// Takes in changes another device made to the file. True if there were any.
+    pub fn refresh(&self) -> Result<bool> {
+        self.file.refresh()
     }
 
     /// Adds copies to the collection, merging into the card for the same printing when
     /// there is one, and saves once. It returns how many new cards were created and how
     /// many cards were added to existing ones.
     pub fn add_cards(&self, cards: Vec<Card>) -> Result<(usize, usize)> {
-        let (mut created, mut merged) = (0, 0);
-        {
-            let mut data = self.data.write().unwrap();
+        self.file.mutate(|data| {
+            let (mut created, mut merged) = (0, 0);
             for mut card in cards {
                 if card.id.is_empty() || card.copy_count() <= 0 {
                     continue;
@@ -115,9 +88,8 @@ impl Store {
                 };
                 data.cards.insert(key, next);
             }
-        }
-        self.save()?;
-        Ok((created, merged))
+            Ok((created, merged))
+        })
     }
 
     /// Saves an edited card that was stored under `old_key` (its copies replace the old
@@ -133,9 +105,8 @@ impl Store {
         }
         normalize_card(&mut card);
         let new_key = card_key(&card);
-        let mut merged = false;
-        {
-            let mut data = self.data.write().unwrap();
+        self.file.mutate(|data| {
+            let mut merged = false;
             data.cards.remove(old_key);
             if card.copy_count() > 0 {
                 let next = match data.cards.remove(&new_key) {
@@ -147,27 +118,25 @@ impl Store {
                 };
                 data.cards.insert(new_key.clone(), next);
             }
-        }
-        self.save()?;
-        Ok((new_key, merged))
+            Ok((new_key, merged))
+        })
     }
 
     /// Drops the card with the given key (doing nothing if there is none).
     pub fn remove_card(&self, key: &str) -> Result<()> {
-        {
-            let mut data = self.data.write().unwrap();
-            if data.cards.remove(key).is_none() {
-                return Ok(());
-            }
+        if self.file.read(|d| !d.cards.contains_key(key)) {
+            return Ok(());
         }
-        self.save()
+        self.file.mutate(|data| {
+            data.cards.remove(key);
+            Ok(())
+        })
     }
 
     /// Applies `change` to the cards with the given keys and saves.
     pub fn bulk_edit(&self, keys: &[String], change: &BulkChange) -> Result<BulkResult> {
-        let mut res = BulkResult::default();
-        {
-            let mut data = self.data.write().unwrap();
+        self.file.mutate(|data| {
+            let mut res = BulkResult::default();
             for key in keys {
                 let Some(c) = data.cards.get(key) else { continue };
                 if change.delete {
@@ -180,9 +149,8 @@ impl Store {
                 data.cards.insert(key.clone(), edited);
                 res.updated += 1;
             }
-        }
-        self.save()?;
-        Ok(res)
+            Ok(res)
+        })
     }
 
     /// Whether any card's market prices were last refreshed before today.
@@ -194,21 +162,21 @@ impl Store {
     /// 7: from a week ago or earlier).
     pub fn prices_older_than(&self, days: i64) -> bool {
         let cutoff = dates::format(dates::today() + chrono::Duration::days(1 - days));
-        self.data.read().unwrap().cards.values().any(|c| !c.id.is_empty() && c.prices_updated < cutoff)
+        self.file.read(|d| d.cards.values().any(|c| !c.id.is_empty() && c.prices_updated < cutoff))
     }
 
     /// The distinct printing IDs in the collection.
     pub fn ids(&self) -> Vec<String> {
-        let data = self.data.read().unwrap();
-        let mut seen = HashSet::new();
-        data.cards.values().filter(|c| !c.id.is_empty() && seen.insert(c.id.as_str())).map(|c| c.id.clone()).collect()
+        self.file.read(|data| {
+            let mut seen = HashSet::new();
+            data.cards.values().filter(|c| !c.id.is_empty() && seen.insert(c.id.as_str())).map(|c| c.id.clone()).collect()
+        })
     }
 
     /// Applies fresh prices (and missing rules text) from the game's catalog and saves. Returns the number of cards updated.
     pub fn update_catalog(&self, updates: &std::collections::HashMap<String, CatalogUpdate>, date: &str) -> Result<usize> {
-        let mut updated = 0;
-        {
-            let mut data = self.data.write().unwrap();
+        self.file.mutate(|data| {
+            let mut updated = 0;
             for c in data.cards.values_mut() {
                 let Some(u) = updates.get(&c.id) else { continue };
                 c.market = u.market.clone();
@@ -220,14 +188,13 @@ impl Store {
                 }
                 updated += 1;
             }
-        }
-        self.save()?;
-        Ok(updated)
+            Ok(updated)
+        })
     }
 
     /// The card with the given key.
     pub fn get(&self, key: &str) -> Option<Card> {
-        self.data.read().unwrap().cards.get(key).cloned()
+        self.file.read(|d| d.cards.get(key).cloned())
     }
 
     /// A copy of every card.
@@ -237,12 +204,12 @@ impl Store {
 
     /// A copy of the cards `keep` accepts, without copying the rest.
     pub fn cards_where(&self, keep: impl Fn(&Card) -> bool) -> Vec<Card> {
-        self.data.read().unwrap().cards.values().filter(|c| keep(c)).cloned().collect()
+        self.file.read(|d| d.cards.values().filter(|c| keep(c)).cloned().collect())
     }
 
     /// The number of cards (printings).
     pub fn len(&self) -> usize {
-        self.data.read().unwrap().cards.len()
+        self.file.read(|d| d.cards.len())
     }
 
     /// Whether the collection has no cards.
@@ -301,6 +268,8 @@ fn merge_cards(mut existing: Card, mut incoming: Card) -> Card {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use crate::collection::{Condition, Purchase};
 
@@ -372,6 +341,50 @@ mod tests {
         let res = s.bulk_edit(&["a".into()], &BulkChange { delete: true, ..Default::default() }).unwrap();
         assert_eq!(res.deleted, 1);
         assert_eq!(s.ids(), ["b"]);
+    }
+
+    #[test]
+    fn two_stores_on_one_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("collection.json");
+        let here = Store::open(&path, "mtg").unwrap();
+        let there = Store::open(&path, "mtg").unwrap();
+        here.add_cards(vec![card("a", 1)]).unwrap();
+        there.add_cards(vec![card("b", 2)]).unwrap();
+        here.add_cards(vec![card("c", 3)]).unwrap();
+        there.refresh().unwrap();
+        for s in [&here, &there] {
+            assert_eq!(s.ids(), ["a", "b", "c"]);
+        }
+    }
+
+    #[test]
+    fn half_synced_file_is_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("collection.json");
+        let s = Store::open(&path, "mtg").unwrap();
+        s.add_cards(vec![card("a", 1), card("b", 1)]).unwrap();
+        let whole = fs::read(&path).unwrap();
+        fs::write(&path, &whole[..whole.len() / 2]).unwrap();
+        let err = s.add_cards(vec![card("c", 1)]).unwrap_err();
+        assert!(err.to_string().contains("being updated by another device"), "{err}");
+        assert_eq!(fs::read(&path).unwrap(), &whole[..whole.len() / 2]);
+        assert_eq!(s.len(), 2);
+    }
+
+    #[test]
+    fn touched_file_is_not_reloaded() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("collection.json");
+        let s = Store::open(&path, "mtg").unwrap();
+        s.add_cards(vec![card("a", 1)]).unwrap();
+        let rev = s.revision();
+        let touch = |t| fs::File::options().write(true).open(&path).unwrap().set_modified(t).unwrap();
+        touch(std::time::SystemTime::now() - std::time::Duration::from_secs(60));
+        assert!(!s.refresh().unwrap());
+        touch(std::time::SystemTime::now());
+        assert!(!s.refresh().unwrap());
+        assert_eq!(s.revision(), rev);
     }
 
     #[test]

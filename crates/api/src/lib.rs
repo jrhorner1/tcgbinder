@@ -278,8 +278,12 @@ impl Api {
     }
 
     /// A number that changes whenever any collection does, so open pages can refresh
-    /// after background work (such as the daily price refresh).
+    /// after background work (such as the daily price refresh) or after another device
+    /// changed the files: each game's files are checked for changes first.
     fn status(&self) -> Reply {
+        for g in &self.games {
+            g.refresh_files();
+        }
         let revision: u64 = self.games.iter().map(|g| g.store.revision()).sum();
         Reply::Json(json!({ "revision": revision }))
     }

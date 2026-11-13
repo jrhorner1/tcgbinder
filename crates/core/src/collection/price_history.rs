@@ -1,25 +1,37 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
-use std::io::{BufWriter, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, RwLock};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
 use super::{Card, TimePoint};
 use crate::dates;
+use crate::jsonfile::{FileBusy, Stamp, write_atomic};
 
 /// Daily market prices per printing and finish, so the collection's real value can be
 /// charted over time. It is filled by downloading price history (up to 90 days back,
 /// for Magic) and by recording the catalog's prices each day the app is used.
+///
+/// Another device sharing the data folder may record prices too. Before each change
+/// and save, prices it saved are taken in (days recorded here keep their price), so
+/// neither device loses days.
 pub struct PriceHistory {
     path: PathBuf,
     data: RwLock<HistoryData>,
-    /// Serializes saves so writes land in order. Holds the prices on disk: a save never
-    /// writes fewer.
-    saved_points: Mutex<usize>,
+    /// What is on disk. Locked before `data` and held through saves, so writes land
+    /// in order.
+    disk: Mutex<Disk>,
+}
+
+/// The history file as last read or written.
+#[derive(Default)]
+struct Disk {
+    /// The prices it holds: a save never writes fewer.
+    points: usize,
+    stamp: Stamp,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -104,6 +116,42 @@ impl HistoryData {
         self.cards.entry(id.to_string()).or_default().entry(finish.to_string()).or_default()
     }
 
+    /// Sets each day's start from its date, after reading a file.
+    fn fix_starts(&mut self, path: &Path) -> Result<()> {
+        for (id, by_finish) in &mut self.cards {
+            for (finish, dp) in by_finish {
+                match dates::day_number(&dp.from) {
+                    Some(start) => dp.start = start,
+                    None if dp.cents.is_empty() => {}
+                    None => bail!("price history {}: {id} {finish} starts on {:?}, not a date", path.display(), dp.from),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Adds the prices in `other` for days this history has none for, and keeps the
+    /// later history-loaded date.
+    fn absorb(&mut self, other: HistoryData) {
+        for (id, by_finish) in other.cards {
+            for (finish, theirs) in by_finish {
+                let Some((first, last)) = theirs.recorded() else { continue };
+                let ours = self.series(&id, &finish);
+                ours.grow(theirs.start + first as i64, theirs.start + last as i64);
+                for i in first..=last {
+                    let c = theirs.cents[i];
+                    let slot = &mut ours.cents[(theirs.start + i as i64 - ours.start) as usize];
+                    if c >= 0 && *slot < 0 {
+                        *slot = c;
+                    }
+                }
+            }
+        }
+        if other.history_loaded > self.history_loaded {
+            self.history_loaded = other.history_loaded;
+        }
+    }
+
     fn set(&mut self, id: &str, finish: &str, date: &str, price: f64) {
         let Some(d) = dates::day_number(date) else { return };
         if price < 0.0 {
@@ -121,8 +169,8 @@ impl PriceHistory {
     /// `<path>.unreadable-<timestamp>` so it can be recovered, and a fresh history is
     /// returned with a warning saying so.
     pub fn open(path: impl Into<PathBuf>) -> Result<(PriceHistory, Option<String>)> {
-        let path = path.into();
-        let fresh = |path: PathBuf| PriceHistory { path, data: RwLock::default(), saved_points: Mutex::new(0) };
+        let path = std::path::absolute(path.into())?;
+        let fresh = |path: PathBuf| PriceHistory { path, data: RwLock::default(), disk: Mutex::default() };
         let bytes = match fs::read(&path) {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((fresh(path), None)),
@@ -138,22 +186,47 @@ impl PriceHistory {
                 return Ok((fresh(path), Some(warning)));
             }
         };
-        for (id, by_finish) in &mut data.cards {
-            for (finish, dp) in by_finish {
-                match dates::day_number(&dp.from) {
-                    Some(start) => dp.start = start,
-                    None if dp.cents.is_empty() => {}
-                    None => bail!("price history {}: {id} {finish} starts on {:?}, not a date", path.display(), dp.from),
-                }
-            }
-        }
-        let points = data.points();
-        Ok((PriceHistory { path, data: RwLock::new(data), saved_points: Mutex::new(points) }, None))
+        data.fix_starts(&path)?;
+        let disk = Disk { points: data.points(), stamp: Stamp::of(&path, &bytes) };
+        Ok((PriceHistory { path, data: RwLock::new(data), disk: Mutex::new(disk) }, None))
     }
 
     /// An empty history kept in memory only (for tests, or when the file can't be used).
     pub fn in_memory() -> PriceHistory {
-        PriceHistory { path: PathBuf::new(), data: RwLock::default(), saved_points: Mutex::new(0) }
+        PriceHistory { path: PathBuf::new(), data: RwLock::default(), disk: Mutex::default() }
+    }
+
+    /// Takes in prices another device saved to the file since it was last read or
+    /// written here. A file that has gone or doesn't parse is most likely half-synced:
+    /// it is a [`FileBusy`] error and nothing changes.
+    fn take_in_disk(&self, disk: &mut Disk) -> Result<()> {
+        if self.path.as_os_str().is_empty() {
+            return Ok(());
+        }
+        let Some((bytes, stamp)) = disk.stamp.read_if_changed(&self.path)? else { return Ok(()) };
+        let busy = || FileBusy { path: self.path.clone() };
+        let mut theirs: HistoryData = serde_json::from_slice(&bytes).map_err(|_| busy())?;
+        theirs.fix_starts(&self.path).map_err(|_| busy())?;
+        let points = theirs.points();
+        self.data.write().unwrap().absorb(theirs);
+        *disk = Disk { points, stamp };
+        tracing::info!(path = %self.path.display(), "took in price history saved by another device");
+        Ok(())
+    }
+
+    /// Like [`PriceHistory::take_in_disk`] before an in-memory change: a failure is
+    /// logged, and the next save reports it.
+    fn take_in_before_change(&self) -> std::sync::MutexGuard<'_, Disk> {
+        let mut disk = self.disk.lock().unwrap();
+        if let Err(e) = self.take_in_disk(&mut disk) {
+            tracing::debug!(error = %e, "price history not taken in");
+        }
+        disk
+    }
+
+    /// Takes in prices another device saved. Nothing is saved here.
+    pub fn refresh(&self) -> Result<()> {
+        self.take_in_disk(&mut self.disk.lock().unwrap())
     }
 
     /// The number of recorded daily prices.
@@ -161,33 +234,26 @@ impl PriceHistory {
         self.data.read().unwrap().points()
     }
 
-    /// Writes the history atomically (temp file, synced, renamed over the old one).
-    /// Saves are serialized so a slower save can never replace a newer one, and a save
-    /// that would hold fewer prices than are on disk is refused: history is only ever
-    /// added to.
+    /// Writes the history atomically (temp file, synced, renamed over the old one),
+    /// after taking in prices another device saved. Saves are serialized so a slower
+    /// save can never replace a newer one, and a save that would hold fewer prices than
+    /// are on disk is refused: history is only ever added to.
     pub fn save(&self) -> Result<()> {
         if self.path.as_os_str().is_empty() {
             return Ok(());
         }
-        let mut saved = self.saved_points.lock().unwrap();
-        let dir = self.path.parent().ok_or_else(|| anyhow!("no folder for {}", self.path.display()))?;
-        let tmp = tempfile::Builder::new().prefix("price-history_").suffix(".tmp").tempfile_in(dir)?;
-        let points;
-        {
-            // Streamed to the file (buffered) rather than built in memory.
-            let mut w = BufWriter::with_capacity(1 << 16, tmp.as_file());
+        let mut disk = self.disk.lock().unwrap();
+        self.take_in_disk(&mut disk)?;
+        let (points, mut bytes) = {
             let data = self.data.read().unwrap();
-            points = data.points();
-            if points < *saved {
-                bail!("refusing to save price history with {points} prices over {} saved: history is never truncated", *saved);
-            }
-            serde_json::to_writer(&mut w, &*data)?;
-            w.write_all(b"\n")?;
-            w.flush()?;
+            (data.points(), serde_json::to_vec(&*data)?)
+        };
+        if points < disk.points {
+            bail!("refusing to save price history with {points} prices over {} saved: history is never truncated", disk.points);
         }
-        tmp.as_file().sync_all()?;
-        tmp.persist(&self.path)?;
-        *saved = points;
+        bytes.push(b'\n');
+        let stamp = write_atomic(&self.path, "price-history_", &bytes)?;
+        *disk = Disk { points, stamp };
         Ok(())
     }
 
@@ -199,6 +265,7 @@ impl PriceHistory {
 
     /// Records one price.
     pub fn set(&self, id: &str, finish: &str, date: &str, price: f64) {
+        let _disk = self.take_in_before_change();
         self.data.write().unwrap().set(id, finish, date, price);
     }
 
@@ -206,6 +273,7 @@ impl PriceHistory {
     /// recorded keep their value (prices the app recorded itself are not replaced), and
     /// nothing is removed, so days older than the download's window stay.
     pub fn merge(&self, id: &str, by_finish: &HashMap<String, HashMap<String, f64>>) {
+        let _disk = self.take_in_before_change();
         let mut data = self.data.write().unwrap();
         for (finish, by_date) in by_finish {
             let days: Vec<(i64, f64)> =
@@ -234,6 +302,7 @@ impl PriceHistory {
 
     /// Stores each card's current market prices (every finish) for `date`.
     pub fn record_current(&self, cards: &[Card], date: &str) {
+        let _disk = self.take_in_before_change();
         let mut data = self.data.write().unwrap();
         for c in cards.iter().filter(|c| !c.id.is_empty()) {
             for (finish, p) in &c.market {
@@ -413,6 +482,42 @@ mod tests {
         let (h, _) = PriceHistory::open(&path).unwrap();
         h.data.write().unwrap().cards.clear();
         assert!(h.save().unwrap_err().to_string().contains("never truncated"));
+    }
+
+    #[test]
+    fn two_devices_keep_every_day() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("price-history.json");
+        let (here, _) = PriceHistory::open(&path).unwrap();
+        let (there, _) = PriceHistory::open(&path).unwrap();
+        here.set("a", "nonfoil", "2024-01-01", 1.0);
+        here.save().unwrap();
+        there.set("a", "nonfoil", "2024-01-02", 2.0);
+        there.set("a", "nonfoil", "2024-01-01", 9.0); // a day the other device recorded too
+        there.set("b", "foil", "2023-12-30", 3.0);
+        there.mark_history_loaded("2024-01-02");
+        there.save().unwrap();
+        here.set("a", "nonfoil", "2024-01-03", 3.0);
+        here.save().unwrap();
+        let (now, _) = PriceHistory::open(&path).unwrap();
+        assert_eq!(now.points(), 4);
+        assert_eq!(now.price("a", "nonfoil", "2024-01-01"), Some(1.0), "each device keeps the days it recorded");
+        assert_eq!(now.price("a", "nonfoil", "2024-01-02"), Some(2.0));
+        assert_eq!(now.price("b", "foil", "2023-12-30"), Some(3.0));
+        assert_eq!(now.history_loaded_on(), "2024-01-02");
+    }
+
+    #[test]
+    fn half_synced_history_is_not_saved_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("price-history.json");
+        let (h, _) = PriceHistory::open(&path).unwrap();
+        h.set("a", "nonfoil", "2024-01-01", 1.0);
+        h.save().unwrap();
+        fs::write(&path, b"{\"cards\":{\"a\"").unwrap();
+        h.set("a", "nonfoil", "2024-01-02", 2.0);
+        assert!(h.save().unwrap_err().to_string().contains("being updated by another device"));
+        assert_eq!(fs::read(&path).unwrap(), b"{\"cards\":{\"a\"");
     }
 
     #[test]

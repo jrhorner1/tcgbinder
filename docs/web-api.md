@@ -23,7 +23,7 @@ Errors are `{"error": "..."}` with a 4xx/5xx status.
 | Method & path | Purpose |
 |---|---|
 | `GET /api/info` | app name, version, games (`ID`, `Name`, and `Scan`: whether card scanning works here), chart ranges, `client` (`desktop`, `phone` or `web`), `saveExports` |
-| `GET /api/status` | `{"revision"}`: changes whenever a collection is saved, so open pages can refresh after background work |
+| `GET /api/status` | `{"revision"}`: changes whenever a collection is saved or reloaded, so open pages can refresh after background work. Each call first checks every game's files for changes another device made |
 | `GET /api/search?q=` | search every game's collection |
 | `GET /api/settings` | `{"settings", "choices", "defaults", "dataDir"}` |
 | `PUT /api/settings` | change settings: send only the ones to change, e.g. `{"theme":"dark"}`; invalid values are rejected |

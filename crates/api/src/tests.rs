@@ -398,3 +398,15 @@ fn scanning() {
     assert!(res["candidates"].as_array().unwrap().is_empty()); // the fake has no /cards/named
     assert!(res["note"].as_str().unwrap().contains("Lightning Bolt"));
 }
+
+#[test]
+fn status_notices_another_devices_change() {
+    let f = fixture();
+    let before = get(&f.api, "/api/status")["revision"].as_u64().unwrap();
+    assert_eq!(get(&f.api, "/api/status")["revision"].as_u64().unwrap(), before, "nothing changed");
+    // Another device, sharing the folder, removes a card.
+    let other = Store::open(f.svc.store.file_path(), ID).unwrap();
+    other.remove_card(OPT).unwrap();
+    assert!(get(&f.api, "/api/status")["revision"].as_u64().unwrap() > before);
+    assert!(f.svc.store.get(OPT).is_none());
+}

@@ -84,6 +84,17 @@ impl GameService {
         self.sets.lock().unwrap().clone().unwrap_or_default()
     }
 
+    /// Takes in changes another device made to the collection and price history files
+    /// (through a synced folder). A file that is mid-sync is left for the next call.
+    pub fn refresh_files(&self) {
+        if let Err(e) = self.store.refresh() {
+            tracing::debug!(game = self.game.id(), error = %e, "collection not refreshed");
+        }
+        if let Err(e) = self.prices.refresh() {
+            tracing::debug!(game = self.game.id(), error = %e, "price history not refreshed");
+        }
+    }
+
     /// Saves today's prices to the price history.
     pub fn record_today(&self) -> Result<()> {
         self.prices.record_current(&self.store.cards(), &dates::today_string());

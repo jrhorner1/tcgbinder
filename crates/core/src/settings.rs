@@ -2,12 +2,14 @@
 //! shared by the desktop, phone and web apps. They are stored as settings.json in the
 //! data folder, so they move with the collection.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use crate::jsonfile::JsonFile;
 
 /// The settings file in the data folder.
 pub const FILE_NAME: &str = "settings.json";
@@ -145,10 +147,15 @@ impl Settings {
 
 type Listener = Arc<dyn Fn(&Settings, &Settings) + Send + Sync>;
 
+/// Where the settings live: a file, or memory only (tests).
+enum Backing {
+    File(JsonFile<Settings>),
+    Memory(Mutex<Settings>),
+}
+
 /// Keeps the settings and saves every change.
 pub struct SettingsStore {
-    path: Option<PathBuf>,
-    current: Mutex<Settings>,
+    backing: Backing,
     listeners: Mutex<Vec<Listener>>,
 }
 
@@ -157,57 +164,59 @@ impl SettingsStore {
     /// can't be read is set aside and the defaults are used, so the app always starts.
     pub fn open(dir: &Path) -> SettingsStore {
         let path = dir.join(FILE_NAME);
-        let mut s = Settings::default();
-        match std::fs::read(&path) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => tracing::warn!(path = %path.display(), error = %e, "cannot read settings; using defaults"),
-            Ok(b) => match serde_json::from_slice::<Settings>(&b) {
-                Ok(mut read) => {
-                    read.normalize();
-                    s = read;
-                }
-                Err(e) => {
-                    let bad = path.with_extension("json.unreadable");
-                    tracing::warn!(path = %path.display(), moved_to = %bad.display(), error = %e, "settings file is damaged; using defaults");
-                    let _ = std::fs::rename(&path, &bad);
-                }
-            },
-        }
-        SettingsStore { path: Some(path), current: Mutex::new(s), listeners: Mutex::default() }
+        let file = JsonFile::open(&path, true).or_else(|e| {
+            let bad = path.with_extension("json.unreadable");
+            tracing::warn!(path = %path.display(), moved_to = %bad.display(), error = %e, "settings file is damaged; using defaults");
+            let _ = std::fs::rename(&path, &bad);
+            JsonFile::open(&path, true)
+        });
+        let backing = match file {
+            Ok(f) => Backing::File(f),
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "cannot read settings; using defaults");
+                Backing::Memory(Mutex::default())
+            }
+        };
+        SettingsStore { backing, listeners: Mutex::default() }
     }
 
     /// A store that isn't saved anywhere (tests).
     pub fn memory() -> SettingsStore {
-        SettingsStore { path: None, current: Mutex::new(Settings::default()), listeners: Mutex::default() }
+        SettingsStore { backing: Backing::Memory(Mutex::default()), listeners: Mutex::default() }
     }
 
-    /// The current settings.
+    /// The current settings. Values that aren't valid choices read as the defaults.
     pub fn get(&self) -> Settings {
-        self.current.lock().unwrap().clone()
+        let mut s = match &self.backing {
+            Backing::File(f) => f.read(Settings::clone),
+            Backing::Memory(m) => m.lock().unwrap().clone(),
+        };
+        s.normalize();
+        s
     }
 
     /// The settings file (`None` for a memory store).
     pub fn path(&self) -> Option<&Path> {
-        self.path.as_deref()
+        match &self.backing {
+            Backing::File(f) => Some(f.path()),
+            Backing::Memory(_) => None,
+        }
     }
 
     /// Validates and saves new settings, then tells the listeners.
     pub fn set(&self, s: Settings) -> Result<()> {
         s.validate()?;
-        let old = {
-            let mut cur = self.current.lock().unwrap();
-            if *cur == s {
-                return Ok(());
-            }
-            if let Some(path) = &self.path {
-                let mut b = serde_json::to_vec_pretty(&s)?;
-                b.push(b'\n');
-                let tmp = path.with_extension("json.tmp");
-                std::fs::write(&tmp, b)?;
-                std::fs::rename(&tmp, path)?;
-            }
-            std::mem::replace(&mut *cur, s.clone())
-        };
+        let old = self.get();
+        if old == s {
+            return Ok(());
+        }
+        match &self.backing {
+            Backing::File(f) => f.mutate(|cur| {
+                *cur = s.clone();
+                Ok(())
+            })?,
+            Backing::Memory(m) => *m.lock().unwrap() = s.clone(),
+        }
         tracing::info!(settings = ?s, "settings changed");
         let listeners = self.listeners.lock().unwrap().clone();
         for f in listeners {
