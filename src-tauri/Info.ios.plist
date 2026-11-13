@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged into the iPhone app's Info.plist by `cargo tauri ios`. -->
+<plist version="1.0">
+<dict>
+  <key>NSCameraUsageDescription</key>
+  <string>TCG Binder uses the camera to scan your cards.</string>
+  <key>NSPhotoLibraryUsageDescription</key>
+  <string>TCG Binder can scan cards from your photos.</string>
+  <!-- Exports are saved to the app's Documents folder, shown in the Files app. -->
+  <key>UIFileSharingEnabled</key>
+  <true/>
+  <key>LSSupportsOpeningDocumentsInPlace</key>
+  <true/>
+</dict>
+</plist>

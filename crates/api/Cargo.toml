@@ -1,0 +1,28 @@
+[package]
+name = "tcgbinder-api"
+description = "TCG Binder's JSON API and embedded browser UI, shared by the desktop, phone and web apps"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tcgbinder-core.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+mime_guess = "2"
+rust-embed = "8"
+url = "2"
+
+# Phones can't read the UI from the computer's disk, as debug builds otherwise do.
+[target.'cfg(target_os = "ios")'.dependencies]
+rust-embed = { version = "8", features = ["debug-embed"] }
+
+[dev-dependencies]
+tcgbinder-mtg = { workspace = true, features = ["testing"] }
+tempfile.workspace = true

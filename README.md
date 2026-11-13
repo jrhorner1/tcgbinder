@@ -1,132 +1,126 @@
 # TCG Binder
 
-A trading card game collection manager, starting with Magic: The Gathering. Cards are looked up on
-[Scryfall](https://scryfall.com), the collection is stored locally as JSON, and
-the app tracks what you paid, current market value, value over time, and set
-completion. Collections can be imported from EchoMTG, ManaBox, Moxfield,
-Deckbox, TCGplayer, Dragon Shield, Archidekt, or any CSV with recognizable
-column names.
+A trading card game collection manager, starting with Magic: The Gathering. Cards are
+looked up on [Scryfall](https://scryfall.com), the collection is stored locally as
+JSON, and the app tracks what you paid, current market value, value over time, and
+set completion. Collections can be imported from EchoMTG, ManaBox, Moxfield, Deckbox,
+TCGplayer, Dragon Shield, Archidekt, or any CSV with recognizable column names, and
+cards can be scanned with the iPhone's camera.
 
-Built with Go and [Fyne](https://fyne.io), targeting macOS, Windows, Linux,
-iOS, Android and the browser.
+Written in Rust with [Tauri](https://tauri.app): one HTML/CSS/JavaScript interface for
+macOS, Windows, Linux, iPhone and iPad, and the browser (`--web`).
 
 ## Documentation
 
-See [docs/](docs/README.md): user guide, web API, architecture, data sources and a
-generated package reference.
+See [docs/](docs/README.md): user guide, web API, architecture and data sources.
 
 ## Usage
 
 ```
-tcgbinder [flags]           open the desktop app
-tcgbinder --web [flags]     serve the app in a web browser
+tcgbinder [OPTIONS]           open the desktop app
+tcgbinder --web [OPTIONS]     serve the app in a web browser
 
-  --data-dir folder    data folder (default: the app's data folder; env TCGBINDER_DATA_DIR)
-  --log-file path      log file (default: tcgbinder.log in the data folder; "-" for stderr only)
-  --log-level level    debug, info, warn or error (default info)
-  --web                serve the web app instead of opening the desktop window
-  --listen address     address for --web (default 127.0.0.1:8080)
-  --open               with --web, open the app in the default browser
-  --version            print the version and exit
-  -h, --help           show help
+      --data-dir <FOLDER>    data folder (default: the app's data folder) [env: TCGBINDER_DATA_DIR]
+      --log-file <PATH>      log file (default: tcgbinder.log in the data folder; "-" for stderr only)
+      --log-level <LEVEL>    debug, info, warn or error (default: the Log detail setting)
+      --web                  serve the web app instead of opening the desktop window
+      --listen <ADDRESS>     address for --web [default: 127.0.0.1:8080]
+      --open                 with --web, open the app in the default browser
+  -h, --help                 show help
+  -V, --version              print the version
 ```
 
 Prices refresh automatically (at startup, then hourly checks refresh them once a day).
 
-The web app offers the same collection as the desktop app (Home dashboard,
-collection browser and editor, Add, Import, Export) and works on phone-sized
-screens. It listens on this computer only by default. `--listen 0.0.0.0:8080`
-makes it reachable from other devices on your network, but **it has no login**,
-so anyone who can reach it can view and change your collection. Only one copy of
-the app (desktop or web) can use a data folder at a time.
+The web app is the same app as the desktop window and works on phone-sized screens.
+It listens on this computer only by default. `--listen 0.0.0.0:8080` makes it
+reachable from other devices on your network, but **it has no login**, so anyone who
+can reach it can view and change your collection. Only one copy of the app (desktop or
+web) can use a data folder at a time.
 
-Logs are structured (`log/slog` text format); the log file is rotated to
-`.1` at startup once it passes 10 MB.
+Logs are written with `tracing`; the log file is rotated to `.1` at startup once it
+passes 10 MB.
 
 ## Layout
 
 ```
-cmd/tcgbinder/                            app entry point; registers the games
-internal/game/                             the Game interface every game implements
-internal/games/mtg/                        Magic: The Gathering (package mtg)
-internal/games/mtg/scryfall/               rate-limited Scryfall API client
-internal/games/mtg/scryfall/scryfalltest/  fake Scryfall servers for tests
-internal/games/mtg/importer/               CSV export parsing and matching rows to printings
-internal/games/mtg/mtgjson/                MTGJSON price history download
-internal/collection/                       game-neutral cards and their copies, JSON store, price history, stats
-internal/datadir/                          data folder layout (one subfolder per game)
-internal/imagecache/                       card image downloads with an in-memory cache
-internal/instance/                         single-instance lock for the desktop app
-internal/service/                          shared logic for one game: import, prices, history, daily sync
-internal/ui/                               Fyne desktop/mobile UI; uses only the game interface
-internal/web/                              --web: JSON API and embedded browser UI (static/)
-internal/logging/                          log/slog setup, log file and level
-internal/scan/                             card scanning: text read from a photo (game-neutral)
-internal/scan/apple/                       Vision text reading (macOS/iOS) and the iOS camera scanner
-internal/settings/                         user settings (theme, price updates, defaults), settings.json
-internal/version/                          version string for --version
+ui/                 the user interface (index.html, app.css, app.js, no build step)
+src-tauri/          the app: flags, data folder, logging, games; Tauri window or --web server
+src-tauri/gen/apple the iPhone app's Xcode project (generated by `cargo tauri ios init`)
+crates/api/         the JSON API and the embedded UI, one request → response handler
+crates/core/        game-neutral cards and copies, JSON store, price history, stats, filters,
+                    settings, the Game trait, and the service for one game
+crates/mtg/         Magic: Scryfall client, CSV importer, MTGJSON price history, scan matching
+crates/vision/      Apple Vision text reading (macOS and iOS; Objective-C built with cc)
 ```
 
-`collection` depends on nothing else in the app; each game builds on `collection`
-and `game`; `ui` works only through `game.Game` and never imports a game.
+`core` depends on nothing else in the app; each game builds on `core`; `api` and the
+UI work only through `core::game::Game` and never name a game. See
+[docs/architecture.md](docs/architecture.md).
 
 ### Adding a game
 
-1. Create `internal/games/<id>/` with a type implementing `game.Game` (catalog
+1. Create `crates/<game>/` with a type implementing `core::game::Game` (catalog
    search, price refresh, set sizes, CSV import, filters, editor details) and,
-   optionally, `game.PriceHistorySource`.
-2. Keep game-specific card fields in `collection.Card.Attrs` (`SetAttr`,
-   `AttrString`); they are saved alongside the common fields.
-3. Register it in `games()` in `cmd/tcgbinder/main.go`.
+   optionally, `PriceHistorySource` and `Scanner`.
+2. Keep game-specific card fields in `Card::attrs` (`set_attr`, `attr_str`); they are
+   saved alongside the common fields.
+3. Register it in `games()` in `src-tauri/src/lib.rs`.
 
 The game gets its own folder (`<data>/<id>/`) with its own `collection.json` and
-`price-history.json`, and its own node in the collection tree.
+`price-history.json`.
 
 ## Develop
 
-```bash
-go run ./cmd/tcgbinder      # run the app
-go test ./...                # unit and UI tests (offline)
-go vet ./...
-```
-
-Benchmarks cover the hot paths (loading and saving, an edit, stats, filtering, the
-value chart, price history, the web API and a search keystroke) at 500 and 20,000
-cards:
+Needs Rust (stable) and, on Linux, Tauri's [system
+libraries](https://tauri.app/start/prerequisites/) (WebKitGTK).
 
 ```bash
-go test -run '^$' -bench . -benchmem ./internal/collection ./internal/web ./internal/ui
+cargo run -p tcgbinder                         # the desktop app
+cargo run -p tcgbinder -- --web --open         # the web app
+cargo test --workspace                         # unit and API tests (offline)
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all
 ```
 
-Tests that call the live Scryfall API are skipped unless enabled:
+Debug builds read `ui/` from disk: edit the UI and reload the page (the browser tab,
+or **Reload** from the right-click menu in the app) without rebuilding.
+
+Tests that use live services are skipped unless enabled:
 
 ```bash
-MTG_LIVE=1 go test -run TestLiveSearch -v ./internal/games/mtg/scryfall
-MTG_IMPORT_FILE=$PWD/export.csv go test -run TestLiveImport -v ./internal/games/mtg
-MTG_IMPORT_FILE=$PWD/export.csv TCGBINDER_SNAPSHOT_DIR=/tmp go test -run TestDashboardSnapshots ./internal/ui
+MTG_IMPORT_FILE=$PWD/export.csv cargo test -p tcgbinder-mtg live_import -- --nocapture
+MTG_SCAN_DIR=<folder of card photos> cargo test -p tcgbinder-vision live -- --nocapture
 ```
 
-`TCGBINDER_SNAPSHOT_DIR` also makes the UI tests save PNG screenshots of each step.
+Name scan photos `<set>-<number>-<anything>.jpg` (e.g. `m19-156-shock.jpg`) to check
+they're identified as that printing; `MTG_SCAN_TEXT=1` prints the text read.
+
+Installers for this computer: `cargo install tauri-cli --version '^2'`, then
+`cargo tauri build` (writes `target/release/bundle/`). On macOS, Apple's
+`/usr/bin/codesign` must come first on your `PATH` (Anaconda ships a `codesign` that
+can't sign apps).
 
 ## CI and releases
 
 GitHub Actions run two workflows:
 
 - **CI** (`.github/workflows/ci.yml`), on every pull request and push to `main`:
-  gofmt, `go vet`, a tidy `go.mod`, the web UI's JavaScript and the shell scripts,
-  then `go test -race ./...` and a build on Linux, macOS and Windows.
-- **Release** (`.github/workflows/release.yml`), on a version tag: builds TCG Binder
-  on each platform's own runner (Fyne needs cgo, so there's no cross-compiling) and
-  publishes a GitHub release with `SHA256SUMS.txt`:
+  rustfmt, clippy (warnings are errors), the UI's JavaScript, the tests on Linux,
+  macOS and Windows, and a build of the iPhone app's Rust library.
+- **Release** (`.github/workflows/release.yml`), on a version tag: builds the
+  installers with Tauri on each platform's own runner and publishes a GitHub release
+  with `SHA256SUMS.txt`. The installers are named like:
 
-  | Download | Contents |
+  | Download | Platform |
   |---|---|
-  | `tcgbinder-<version>-linux-amd64.tar.gz`, `-linux-arm64.tar.gz` | `tcgbinder` binary, icon |
-  | `tcgbinder-<version>-windows-amd64.zip` | `tcgbinder.exe` (no console window) |
-  | `tcgbinder-<version>-macos-universal.zip` | `TCG Binder.app` and the `tcgbinder` binary, Apple silicon and Intel |
+  | `TCG Binder_<version>_universal.dmg` | macOS 11+, Apple silicon and Intel |
+  | `TCG Binder_<version>_x64-setup.exe`, `_x64_en-US.msi` | Windows 10+ |
+  | `tcg-binder_<version>_amd64.deb`, `.AppImage`, `.rpm` (and `arm64`/`aarch64`) | Linux, x86-64 and ARM64 |
 
-To release, tag a commit on `main` and push the tag. A tag with a hyphen
-(`v0.2.0-beta.1`) is published as a pre-release.
+To release, tag a commit on `main` and push the tag. The tag sets the version. A tag
+with a hyphen (`v0.2.0-beta.1`) is published as a pre-release (Windows gets only the
+`.exe` installer then: MSI versions must be plain numbers).
 
 ```bash
 git tag -s v0.2.0 -m "TCG Binder 0.2.0"
@@ -134,80 +128,76 @@ git push origin v0.2.0
 ```
 
 To try the builds without releasing: **Actions → Release → Run workflow**. The
-archives are attached to the run as artifacts.
-
-The macOS build can also be made locally with `scripts/build-macos.sh [version]`
-(writes `dist/macos/`).
+installers are attached to the run as artifacts.
 
 Notes for people downloading a release:
-- **macOS:** the app is ad-hoc signed, not notarized, so the first launch is
-  blocked. Right-click the app → **Open**, or run
-  `xattr -d com.apple.quarantine "TCG Binder.app"`.
+- **macOS:** the app is ad-hoc signed, not notarized, so the first launch is blocked.
+  Right-click the app → **Open**, or run `xattr -d com.apple.quarantine "/Applications/TCG Binder.app"`.
 - **Windows:** SmartScreen may warn about an unrecognized app. Choose **More info →
-  Run anyway**. Because the `.exe` has no console window, `--version` and `--help`
-  print nothing there; use them on macOS or Linux.
-- **Linux:** needs OpenGL and X11 libraries (on Debian/Ubuntu: `libgl1` and
-  `libx11-6`, which desktop installs already have).
+  Run anyway**. The app has no console window, so `--help` and `--version` print
+  nothing there; use them on macOS or Linux. The app uses Microsoft Edge WebView2, which Windows 10 and 11 include
+  (the installer fetches it if missing).
+- **Linux:** the `.deb` and `.rpm` pull in WebKitGTK; the `.AppImage` runs anywhere
+  with it installed.
 
 ## iPhone / iPad
 
-iOS builds need the full Xcode app (the Command Line Tools alone are not enough)
-and the [fyne CLI](https://docs.fyne.io/started/packaging):
+iOS builds need the full Xcode app, the iOS Rust targets, and the Tauri CLI:
 
 ```bash
-go install fyne.io/tools/cmd/fyne@latest
-sudo xcode-select -s /Applications/Xcode.app
-xcodebuild -downloadPlatform iOS        # iOS SDK + simulator runtime
-cd cmd/tcgbinder
-../../scripts/build-ios-simulator.sh    # build for the iOS Simulator (no certificate needed)
-../../scripts/build-ios-device.sh       # build for a device (needs signing)
+rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+cargo install tauri-cli --version '^2'
+brew install xcodegen cocoapods
+cargo tauri ios build --debug --target aarch64-sim   # for the iOS Simulator (no signing)
+cargo tauri ios dev                                  # run on a connected device or simulator
+cargo tauri ios build                                # an .ipa for a device (needs signing)
 ```
 
-Use `scripts/build-ios-device.sh` rather than a bare `fyne package -os ios`: it adds
-the camera permission text card scanning needs (`fyne package` has no way to set
-it, and iOS closes an app that opens the camera without it) and re-signs the app.
+If Homebrew's Rust comes first on your `PATH`, put rustup's first
+(`export PATH="$HOME/.cargo/bin:$PATH"`): Homebrew's has no iOS targets.
 
-App metadata and the icon live in `cmd/tcgbinder/FyneApp.toml` and `Icon.png`.
-`fyne package -os iossimulator` also needs a signing certificate, so the script
-builds the Simulator app without one. If Anaconda is installed, make sure Apple's
-`/usr/bin/codesign` comes first on your PATH (Anaconda ships a `codesign` that can't
-sign apps).
+The Xcode project lives in `src-tauri/gen/apple`; `src-tauri/Info.ios.plist` adds the
+camera and photo library permission text card scanning needs, and makes exports show
+in the Files app. The app ID (`io.github.jrhorner1.tcgbinder`) is the bundle
+identifier; a device build must be signed by an Apple ID set up in Xcode (a free
+account can install on your own phone for 7 days at a time; the App Store needs the
+paid Apple Developer Program). Set your team with `APPLE_DEVELOPMENT_TEAM` or in
+Xcode (`cargo tauri ios open`).
 
-The app ID (`io.github.jrhorner1.tcgbinder`) is the iOS bundle identifier; a
-device build must be signed by an Apple ID set up in Xcode (a free account can
-install on your own phone for 7 days at a time; the App Store needs the paid
-Apple Developer Program).
-
-On phones the app shows one screen at a time: the collection list, then the
-dashboard, set or card page with a Back button.
+On phones the app shows one screen at a time, with a tab bar: the collection list,
+then a card or set page with a Back button.
 
 ## Price history
 
 The Value Over Time chart uses real daily prices. MTGJSON's free
-[AllPrices](https://mtgjson.com/downloads/all-files/) file supplies the last 90
-days of TCGplayer prices (about a 50 MB download, matched to your cards through
-MTGJSON's per-set files); after that, the app records Scryfall's prices each day
-it is opened. Desktop loads the history automatically on first run; on phones it
-waits for **Load 90-day price history** on the Home page. Before recorded prices
+[AllPrices](https://mtgjson.com/downloads/all-files/) file supplies the last 90 days
+of TCGplayer prices (about a 50 MB download, streamed and matched to your cards
+through MTGJSON's per-set files); after that, the app records Scryfall's prices each
+day it is opened. Desktop and web load the history automatically on first run; on
+phones it waits for **Load price history** on the Home page. Before recorded prices
 begin, a grey line estimates value at today's prices.
 
 ## Data
 
-Each game keeps its own files in its own folder inside the app's private data
-folder (`~/Library/Preferences/fyne/io.github.jrhorner1.tcgbinder/` on macOS,
-the app sandbox on iOS/Android; set `TCGBINDER_DATA_DIR` to use another folder):
+Each game keeps its own files in its own folder inside the app's data folder
+(`~/Library/Application Support/io.github.jrhorner1.tcgbinder/` on macOS,
+`%APPDATA%\io.github.jrhorner1.tcgbinder\` on Windows,
+`~/.local/share/io.github.jrhorner1.tcgbinder/` on Linux, the app's private storage
+on iPhone; `--data-dir` or `TCGBINDER_DATA_DIR` chooses another folder):
 
 ```
+<data>/settings.json            settings, shared by every game
 <data>/mtg/collection.json      Magic collection and daily value history
 <data>/mtg/price-history.json   daily prices per printing, for the value chart
 <data>/mtg/scryfall-sets.json   cached set sizes (refreshed weekly)
 ```
 
 **Import** accepts CSV exports from other collection apps and collection `.json`
-files written by this app (a backup or another device's collection). A JSON file
-is checked against the game it belongs to; cards you already own gain the imported
+files written by this app (a backup or another device's collection). A JSON file is
+checked against the game it belongs to; cards you already own gain the imported
 purchases.
 
-Only one copy of the desktop app can use a data folder at a time: a second launch
-shows "already running" and quits. The lock (`tcgbinder.lock` in the data folder)
-is an OS file lock, so it is released automatically even if the app crashes.
+Only one copy of the app can use a data folder at a time: opening the desktop app
+again brings its window forward, and starting `--web` while it runs (or the other way
+round) stops with "already running". The lock (`tcgbinder.lock` in the data folder) is
+an OS file lock, so it is released automatically even if the app crashes.

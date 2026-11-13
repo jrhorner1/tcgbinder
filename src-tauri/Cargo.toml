@@ -1,0 +1,39 @@
+[package]
+name = "tcgbinder"
+description = "TCG Binder: a trading card collection manager"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+default-run = "tcgbinder"
+
+[lib]
+# The iPhone app links the library; the desktop binary is src/main.rs.
+name = "tcgbinder_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tcgbinder-core.workspace = true
+tcgbinder-mtg.workspace = true
+tcgbinder-vision.workspace = true
+tcgbinder-api.workspace = true
+anyhow.workspace = true
+http.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tauri = { version = "2", features = [] }
+
+[target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+clap = { version = "4", features = ["derive", "env"] }
+tauri-plugin-single-instance = "2"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+
+[features]
+# Tauri's dev server isn't used (the UI needs no build step); this is what `cargo tauri
+# build` turns on for release bundles.
+custom-protocol = ["tauri/custom-protocol"]

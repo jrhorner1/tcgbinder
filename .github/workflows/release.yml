@@ -1,10 +1,12 @@
-# Builds TCG Binder for Linux (x86-64, ARM64), Windows (x86-64) and macOS (universal)
-# and publishes a GitHub release with the archives and their SHA-256 checksums.
+# Builds TCG Binder for macOS (universal), Windows (x86-64) and Linux (x86-64, ARM64)
+# with Tauri and publishes a GitHub release with the installers and their SHA-256
+# checksums.
 #
 # Release: push a version tag, e.g.  git tag -s v0.2.0 -m "TCG Binder 0.2.0" && git push origin v0.2.0
 # Try the builds without releasing: Actions → Release → Run workflow (artifacts only).
 #
-# Fyne needs cgo, so each platform builds on its own runner rather than cross-compiling.
+# The iPhone app isn't built here: it needs your Apple signing certificate (see the
+# README's iPhone section).
 name: Release
 
 on:
@@ -20,73 +22,66 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   build:
-    name: Build ${{ matrix.target }}
+    name: Build ${{ matrix.name }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { target: linux-amd64, os: ubuntu-latest }
-          - { target: linux-arm64, os: ubuntu-24.04-arm }
-          - { target: windows-amd64, os: windows-latest }
-          - { target: macos-universal, os: macos-latest }
+          - { name: macos-universal, os: macos-latest, args: "--target universal-apple-darwin", rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin" }
+          - { name: windows-x64, os: windows-latest, args: "", rust-targets: "" }
+          # The oldest Ubuntu runners, so the Linux builds run on older distributions too.
+          - { name: linux-x64, os: ubuntu-22.04, args: "", rust-targets: "" }
+          - { name: linux-arm64, os: ubuntu-22.04-arm, args: "", rust-targets: "" }
     runs-on: ${{ matrix.os }}
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v5
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          go-version-file: go.mod
+          targets: ${{ matrix.rust-targets }}
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
 
       - name: Version
         id: version
         run: |
           if [ "${{ github.event_name }}" = push ]; then v="${GITHUB_REF_NAME#v}"; else v="${{ inputs.version }}"; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          echo "name=tcgbinder-$v-${{ matrix.target }}" >> "$GITHUB_OUTPUT"
+          # The bundles take their version from Cargo.toml; --version shows TCGBINDER_VERSION.
+          sed -i.bak "s/^version = \".*\"/version = \"$v\"/" Cargo.toml && rm Cargo.toml.bak
+          echo "TCGBINDER_VERSION=$v" >> "$GITHUB_ENV"
 
-      - name: Install Fyne's build dependencies
+      - name: Install Tauri's Linux dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc libgl1-mesa-dev xorg-dev
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf file
 
-      - name: Build (Linux)
-        if: runner.os == 'Linux'
+      - name: Build
         run: |
-          name=${{ steps.version.outputs.name }}
-          mkdir -p "out/$name"
-          go build -trimpath -ldflags "-s -w -X github.com/jrhorner1/tcgbinder/internal/version.Version=${{ steps.version.outputs.version }}" \
-            -o "out/$name/tcgbinder" ./cmd/tcgbinder
-          cp README.md LICENSE cmd/tcgbinder/Icon.png "out/$name/"
-          tar -C out -czf "out/$name.tar.gz" "$name"
+          bundles=""
+          # Windows Installer (MSI) versions must be plain numbers: pre-releases get the
+          # NSIS installer only.
+          if [ "${{ runner.os }}" = Windows ] && [[ "${{ steps.version.outputs.version }}" == *-* ]]; then bundles="--bundles nsis"; fi
+          npx --yes @tauri-apps/cli@2 build ${{ matrix.args }} $bundles
 
-      - name: Build (Windows)
-        if: runner.os == 'Windows'
+      - name: Collect the installers
         run: |
-          name=${{ steps.version.outputs.name }}
-          mkdir -p "out/$name"
-          # windowsgui: no console window behind the desktop app.
-          go build -trimpath -ldflags "-s -w -H=windowsgui -X github.com/jrhorner1/tcgbinder/internal/version.Version=${{ steps.version.outputs.version }}" \
-            -o "out/$name/tcgbinder.exe" ./cmd/tcgbinder
-          cp README.md LICENSE "out/$name/"
-          (cd out && 7z a -tzip "$name.zip" "$name" >/dev/null)
-
-      - name: Build (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          name=${{ steps.version.outputs.name }}
-          scripts/build-macos.sh "${{ steps.version.outputs.version }}" "out/$name"
-          cp README.md LICENSE "out/$name/"
-          (cd out && ditto -c -k --norsrc --noextattr --noacl --keepParent "$name" "$name.zip")
+          mkdir -p out
+          find target -path '*/release/bundle/*' -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*-setup.exe' -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) -exec cp {} out/ \;
+          ls -l out
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.version.outputs.name }}
-          path: |
-            out/*.tar.gz
-            out/*.zip
+          name: tcgbinder-${{ steps.version.outputs.version }}-${{ matrix.name }}
+          path: out/*
           if-no-files-found: error
 
   release:
