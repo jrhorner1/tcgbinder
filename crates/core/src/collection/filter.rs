@@ -3,20 +3,6 @@ use std::collections::BTreeMap;
 
 use super::Card;
 
-/// A column the collection list can be ordered by.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SortField {
-    #[default]
-    Name,
-    Set,
-    Number,
-    Rarity,
-    Quantity,
-    Price,
-    Acquired,
-    Released,
-}
-
 /// The "no filter" choice in filter menus.
 pub const FILTER_ANY: &str = "Any";
 
@@ -28,8 +14,7 @@ pub fn is_any(s: &str) -> bool {
 /// An extra, game-specific match on a card.
 pub type CardMatch<'a> = Box<dyn Fn(&Card) -> bool + 'a>;
 
-/// How to narrow and order the collection view. The default matches everything,
-/// sorted by name.
+/// How to narrow the collection view. The default matches everything.
 #[derive(Default)]
 pub struct Query<'a> {
     /// Whitespace-separated terms; every term must match the name, set code, set name
@@ -42,40 +27,21 @@ pub struct Query<'a> {
     pub finish: String,
     /// An extra, game-specific condition (e.g. Magic's color filter).
     pub matches: Option<CardMatch<'a>>,
-    /// Ranks rarities for [`SortField::Rarity`], lowest first; others sort after them.
-    pub rarity_order: Vec<String>,
-    pub sort_by: SortField,
-    pub descending: bool,
 }
 
-/// The cards that match `q`, ordered per `q`.
-pub fn apply_query(cards: &[Card], q: &Query) -> Vec<Card> {
-    let terms: Vec<String> = q.text.to_lowercase().split_whitespace().map(str::to_string).collect();
-    let mut matched: Vec<&Card> = cards.iter().filter(|c| matches_query(c, q, &terms)).collect();
-    matched.sort_by(|a, b| {
-        let cmp = compare_by(a, b, q.sort_by, &q.rarity_order).then_with(|| default_order(a, b));
-        if q.descending { cmp.reverse() } else { cmp }
-    });
-    matched.into_iter().cloned().collect()
-}
-
-fn matches_query(c: &Card, q: &Query, terms: &[String]) -> bool {
-    if !is_any(&q.set) && !c.set.eq_ignore_ascii_case(&q.set) {
-        return false;
+impl Query<'_> {
+    /// Tells whether a card matches the query.
+    pub fn matcher(&self) -> impl Fn(&Card) -> bool + '_ {
+        let terms: Vec<String> = self.text.to_lowercase().split_whitespace().map(str::to_string).collect();
+        move |c| {
+            (is_any(&self.set) || c.set.eq_ignore_ascii_case(&self.set))
+                && (is_any(&self.rarity) || c.rarity.eq_ignore_ascii_case(&self.rarity))
+                && (is_any(&self.finish) || c.has_finish(&self.finish))
+                && self.matches.as_ref().is_none_or(|m| m(c))
+                // Each term in the name, set code, set name or number.
+                && terms.iter().all(|t| [&c.name, &c.set, &c.set_name, &c.collector_number].iter().any(|field| contains_fold(field, t)))
+        }
     }
-    if !is_any(&q.rarity) && !c.rarity.eq_ignore_ascii_case(&q.rarity) {
-        return false;
-    }
-    if !is_any(&q.finish) && !c.has_finish(&q.finish) {
-        return false;
-    }
-    if let Some(m) = &q.matches
-        && !m(c)
-    {
-        return false;
-    }
-    // Each term in the name, set code, set name or number.
-    terms.iter().all(|t| [&c.name, &c.set, &c.set_name, &c.collector_number].iter().any(|field| contains_fold(field, t)))
 }
 
 /// Whether `s` contains `sub` (already lowercase), ignoring case, without allocating
@@ -94,19 +60,6 @@ fn compare_fold(a: &str, b: &str) -> Ordering {
         a.bytes().map(|c| c.to_ascii_lowercase()).cmp(b.bytes().map(|c| c.to_ascii_lowercase()))
     } else {
         a.to_lowercase().cmp(&b.to_lowercase())
-    }
-}
-
-fn compare_by(a: &Card, b: &Card, field: SortField, rarity_order: &[String]) -> Ordering {
-    match field {
-        SortField::Set => compare_fold(&a.set_name, &b.set_name),
-        SortField::Number => compare_collector_number(&a.collector_number, &b.collector_number),
-        SortField::Rarity => rank(rarity_order, &a.rarity).cmp(&rank(rarity_order, &b.rarity)),
-        SortField::Quantity => a.copy_count().cmp(&b.copy_count()),
-        SortField::Price => a.price_paid().0.total_cmp(&b.price_paid().0),
-        SortField::Acquired => a.earliest_acquired().cmp(b.earliest_acquired()),
-        SortField::Released => a.released_at.cmp(&b.released_at),
-        SortField::Name => compare_fold(&a.name, &b.name),
     }
 }
 
@@ -138,11 +91,6 @@ fn split_number(s: &str) -> (Option<u64>, &str) {
     }
 }
 
-/// `v`'s position in `order` (case-insensitive), or `order.len()` if absent.
-fn rank(order: &[String], v: &str) -> usize {
-    order.iter().position(|o| o.eq_ignore_ascii_case(v)).unwrap_or(order.len())
-}
-
 /// A set filter choice: the code, and a label like "M19 — Core Set 2019".
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SetOption {
@@ -168,19 +116,9 @@ pub fn set_options(cards: &[Card]) -> Vec<SetOption> {
     out
 }
 
-/// The card orders for the collection list (the Card order setting).
-pub mod order {
-    /// By name.
-    pub const NAME: &str = "name";
-    /// By set, newest release first, then collector number.
-    pub const NEWEST: &str = "newest";
-    /// By set, oldest release first, then collector number.
-    pub const OLDEST: &str = "oldest";
-    /// Most valuable first (every copy), then by name.
-    pub const VALUE: &str = "value";
-}
-
-/// The cards in one of the Card orders.
+/// The cards in one of the Card orders (the Card order setting): "newest" or "oldest" by
+/// set release, then collector number; "value" for the most valuable first (every copy);
+/// anything else by name.
 pub fn sort_cards(mut cards: Vec<Card>, card_order: &str) -> Vec<Card> {
     let by_set = |a: &Card, b: &Card, newest_first: bool| {
         let released = a.released_at.cmp(&b.released_at);
@@ -190,9 +128,9 @@ pub fn sort_cards(mut cards: Vec<Card>, card_order: &str) -> Vec<Card> {
             .then_with(|| default_order(a, b))
     };
     cards.sort_by(|a, b| match card_order {
-        order::NEWEST => by_set(a, b, true),
-        order::OLDEST => by_set(a, b, false),
-        order::VALUE => b.market_value().0.total_cmp(&a.market_value().0).then_with(|| default_order(a, b)),
+        "newest" => by_set(a, b, true),
+        "oldest" => by_set(a, b, false),
+        "value" => b.market_value().0.total_cmp(&a.market_value().0).then_with(|| default_order(a, b)),
         _ => default_order(a, b),
     });
     cards
@@ -223,7 +161,7 @@ mod tests {
 
     #[test]
     fn filters_and_terms() {
-        let cards = vec![
+        let cards = [
             card("Lightning Bolt", "M11", "149", "common", "nonfoil"),
             card("Shock", "M19", "156", "common", "foil"),
             card("Scapeshift", "M19", "201", "rare", "nonfoil"),
@@ -232,7 +170,8 @@ mod tests {
         let q = |f: &dyn Fn(&mut Query)| {
             let mut q = Query::default();
             f(&mut q);
-            names(&apply_query(&cards, &q)).join(",")
+            let matched = cards.iter().filter(|c| q.matcher()(c)).cloned().collect();
+            names(&sort_cards(matched, "name")).join(",")
         };
         assert_eq!(q(&|_| {}), "Lightning Bolt,Scapeshift,Shock,Éclair");
         assert_eq!(q(&|q| q.set = "m19".into()), "Scapeshift,Shock");
@@ -243,20 +182,6 @@ mod tests {
         assert_eq!(q(&|q| q.text = "149".into()), "Lightning Bolt");
         assert_eq!(q(&|q| q.set = FILTER_ANY.into()), "Lightning Bolt,Scapeshift,Shock,Éclair");
         assert_eq!(q(&|q| q.matches = Some(Box::new(|c: &Card| c.name.len() == 5))), "Shock");
-        assert_eq!(
-            q(&|q| {
-                q.sort_by = SortField::Number;
-                q.descending = true;
-            }),
-            "Scapeshift,Shock,Lightning Bolt,Éclair"
-        );
-        assert_eq!(
-            q(&|q| {
-                q.sort_by = SortField::Rarity;
-                q.rarity_order = vec!["common".into(), "rare".into()];
-            }),
-            "Lightning Bolt,Shock,Scapeshift,Éclair"
-        );
     }
 
     #[test]
@@ -279,9 +204,9 @@ mod tests {
         assert_eq!(opts[0].label, "M19 — Core Set 2019");
         assert_eq!(opts[1].code, "M11");
         let cards = vec![a, b];
-        assert_eq!(names(&sort_cards(cards.clone(), order::NEWEST)), ["Shock", "Bolt"]);
-        assert_eq!(names(&sort_cards(cards.clone(), order::OLDEST)), ["Bolt", "Shock"]);
-        assert_eq!(names(&sort_cards(cards.clone(), order::VALUE)), ["Bolt", "Shock"]);
-        assert_eq!(names(&sort_cards(cards, order::NAME)), ["Bolt", "Shock"]);
+        assert_eq!(names(&sort_cards(cards.clone(), "newest")), ["Shock", "Bolt"]);
+        assert_eq!(names(&sort_cards(cards.clone(), "oldest")), ["Bolt", "Shock"]);
+        assert_eq!(names(&sort_cards(cards.clone(), "value")), ["Bolt", "Shock"]);
+        assert_eq!(names(&sort_cards(cards, "name")), ["Bolt", "Shock"]);
     }
 }

@@ -187,7 +187,7 @@ on iPhone; `--data-dir` or `TCGBINDER_DATA_DIR` chooses another folder):
 
 ```
 <data>/settings.json            settings, shared by every game
-<data>/mtg/collection.json      Magic collection and daily value history
+<data>/mtg/collection.json      Magic collection
 <data>/mtg/price-history.json   daily prices per printing, for the value chart
 <data>/mtg/scryfall-sets.json   cached set sizes (refreshed weekly)
 ```

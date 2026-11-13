@@ -2,7 +2,7 @@
 //! import from other collection apps, MTGJSON for daily price history, and card
 //! scanning from the text on a card.
 
-pub mod importer;
+mod importer;
 pub mod mtgjson;
 mod scan;
 pub mod scryfall;
@@ -11,7 +11,7 @@ pub mod testing;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
@@ -29,7 +29,7 @@ pub struct Magic {
     pub mtgjson: mtgjson::Client,
     dir: Mutex<PathBuf>,
     /// The cache for [`Game::set_cards`].
-    set_cards: Mutex<HashMap<String, Arc<Vec<Card>>>>,
+    set_cards: Mutex<HashMap<String, Vec<Card>>>,
 }
 
 impl Default for Magic {
@@ -153,11 +153,7 @@ impl Game for Magic {
     /// Scryfall's set list, cached for a week in the game's data folder.
     fn sets(&self) -> Result<HashMap<String, SetInfo>> {
         let path = self.dir.lock().unwrap().join("scryfall-sets.json");
-        let sets = scryfall::load_sets(&self.scryfall, &path)?;
-        Ok(sets
-            .into_iter()
-            .map(|(code, s)| (code, SetInfo { code: s.code, name: s.name, card_count: s.card_count, released_at: s.released_at }))
-            .collect())
+        scryfall::load_sets(&self.scryfall, &path)
     }
 
     /// Reads a CSV export, matches every row to its exact Scryfall printing and returns
@@ -207,10 +203,10 @@ impl Game for Magic {
     fn set_cards(&self, code: &str) -> Result<Vec<Card>> {
         let code = code.to_uppercase();
         if let Some(cached) = self.set_cards.lock().unwrap().get(&code) {
-            return Ok(cached.to_vec());
+            return Ok(cached.clone());
         }
         let found: Vec<Card> = self.scryfall.search_all(&format!("e:{}", code.to_lowercase()), 20)?.iter().map(from_scryfall).collect();
-        self.set_cards.lock().unwrap().insert(code, Arc::new(found.clone()));
+        self.set_cards.lock().unwrap().insert(code, found.clone());
         Ok(found)
     }
 
@@ -244,7 +240,7 @@ impl Game for Magic {
     }
 
     fn card_link(&self, c: &Card) -> Option<(String, String)> {
-        let seg = |s: &str| url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>().replace('+', "%20");
+        let seg = scryfall::escape;
         Some(("View on Scryfall".into(), format!("https://scryfall.com/card/{}/{}", seg(&c.set.to_lowercase()), seg(&c.collector_number))))
     }
 

@@ -5,17 +5,8 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use super::Client;
+use tcgbinder_core::collection::SetInfo;
 use tcgbinder_core::dates;
-
-/// The part of a Scryfall set object used for completion stats.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct SetInfo {
-    pub code: String,
-    pub name: String,
-    pub card_count: usize,
-    pub released_at: String,
-}
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default)]

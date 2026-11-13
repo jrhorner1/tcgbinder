@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io::{BufWriter, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Mutex, RwLock};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -156,11 +156,6 @@ impl PriceHistory {
         PriceHistory { path: PathBuf::new(), data: RwLock::default(), saved_points: Mutex::new(0) }
     }
 
-    /// The history file.
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
     /// The number of recorded daily prices.
     pub fn points(&self) -> usize {
         self.data.read().unwrap().points()
@@ -200,11 +195,6 @@ impl PriceHistory {
     pub fn price(&self, id: &str, finish: &str, date: &str) -> Option<f64> {
         let d = dates::day_number(date)?;
         self.data.read().unwrap().cards.get(id)?.get(finish)?.at(d)
-    }
-
-    /// The number of days with a price for a printing and finish.
-    pub fn days(&self, id: &str, finish: &str) -> usize {
-        self.data.read().unwrap().cards.get(id).and_then(|m| m.get(finish)).map_or(0, DailyPrices::points)
     }
 
     /// Records one price.
@@ -377,7 +367,7 @@ mod tests {
         h.set("a", "nonfoil", "not a date", 9.0); // ignored
         assert_eq!(h.price("a", "nonfoil", "2024-01-05"), Some(1.25));
         assert_eq!(h.price("a", "nonfoil", "2024-01-03"), None);
-        assert_eq!(h.days("a", "nonfoil"), 2);
+        assert_eq!(h.points(), 2);
         h.mark_history_loaded("2024-01-06");
         h.save().unwrap();
 

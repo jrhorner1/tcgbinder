@@ -14,25 +14,20 @@ pub const FILE_NAME: &str = "settings.json";
 
 /// The choices for each setting with a fixed set of values.
 pub mod choices {
-    pub const THEMES: &[&str] = &["system", "light", "dark"];
-    pub const TEXT_SIZES: &[&str] = &["small", "normal", "large", "larger"];
-    pub const CARD_ORDERS: &[&str] = &["name", "newest", "oldest", "value"];
-    pub const PRICE_REFRESHES: &[&str] = &["daily", "weekly", "manual"];
+    /// The Value Over Time ranges the front ends offer.
     pub const CHART_RANGES: &[&str] = &["30D", "90D", "1Y", "All"];
     pub const CONDITIONS: &[&str] = &["NM", "LP", "MP", "HP", "DMG"];
-    pub const DEFAULT_DATES: &[&str] = &["today", "none"];
-    pub const LOG_LEVELS: &[&str] = &["debug", "info", "warn", "error"];
 
     /// Every setting with fixed choices, by its JSON name.
     pub const ALL: &[(&str, &[&str])] = &[
-        ("theme", THEMES),
-        ("text_size", TEXT_SIZES),
-        ("card_order", CARD_ORDERS),
+        ("theme", &["system", "light", "dark"]),
+        ("text_size", &["small", "normal", "large", "larger"]),
+        ("card_order", &["name", "newest", "oldest", "value"]),
         ("chart_range", CHART_RANGES),
-        ("price_refresh", PRICE_REFRESHES),
+        ("price_refresh", &["daily", "weekly", "manual"]),
         ("default_condition", CONDITIONS),
-        ("default_date", DEFAULT_DATES),
-        ("log_level", LOG_LEVELS),
+        ("default_date", &["today", "none"]),
+        ("log_level", &["debug", "info", "warn", "error"]),
     ];
 }
 
@@ -113,10 +108,9 @@ impl Settings {
     /// Replaces values that aren't valid choices with the defaults.
     fn normalize(&mut self) {
         let mut defaults = Settings::default();
-        let fixes: Vec<(&str, String)> = defaults.fields_mut().into_iter().map(|(n, v)| (n, v.clone())).collect();
-        for ((name, value), (_, default)) in self.fields_mut().into_iter().zip(fixes) {
+        for ((name, value), (_, default)) in self.fields_mut().into_iter().zip(defaults.fields_mut()) {
             if !Self::choices_for(name).contains(&value.as_str()) {
-                *value = default;
+                std::mem::swap(value, default);
             }
         }
     }
@@ -131,16 +125,6 @@ impl Settings {
             }
         }
         Ok(())
-    }
-
-    /// The factor applied to text and spacing for the text size.
-    pub fn text_scale(&self) -> f32 {
-        match self.text_size.as_str() {
-            "small" => 0.9,
-            "large" => 1.15,
-            "larger" => 1.3,
-            _ => 1.0,
-        }
     }
 
     /// These settings with the fields in `change` (a JSON object) replaced. Fields left
@@ -159,13 +143,13 @@ impl Settings {
     }
 }
 
-type Listener = Box<dyn Fn(&Settings, &Settings) + Send + Sync>;
+type Listener = Arc<dyn Fn(&Settings, &Settings) + Send + Sync>;
 
 /// Keeps the settings and saves every change.
 pub struct SettingsStore {
     path: Option<PathBuf>,
     current: Mutex<Settings>,
-    listeners: Mutex<Vec<Arc<Listener>>>,
+    listeners: Mutex<Vec<Listener>>,
 }
 
 impl SettingsStore {
@@ -232,16 +216,9 @@ impl SettingsStore {
         Ok(())
     }
 
-    /// Changes some settings: `set(f(current))`.
-    pub fn update(&self, f: impl FnOnce(&mut Settings)) -> Result<()> {
-        let mut s = self.get();
-        f(&mut s);
-        self.set(s)
-    }
-
     /// Calls `f` after every change, with the settings before and after.
     pub fn on_change(&self, f: impl Fn(&Settings, &Settings) + Send + Sync + 'static) {
-        self.listeners.lock().unwrap().push(Arc::new(Box::new(f)));
+        self.listeners.lock().unwrap().push(Arc::new(f));
     }
 }
 
@@ -263,10 +240,11 @@ mod tests {
             assert_eq!(new.theme, "dark");
             seen.fetch_add(1, Ordering::SeqCst);
         });
-        st.update(|s| s.theme = "dark".into()).unwrap();
-        st.update(|s| s.theme = "dark".into()).unwrap(); // unchanged: no call
+        let themed = |theme: &str| Settings { theme: theme.into(), ..Settings::default() };
+        st.set(themed("dark")).unwrap();
+        st.set(themed("dark")).unwrap(); // unchanged: no call
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert!(st.update(|s| s.theme = "purple".into()).is_err());
+        assert!(st.set(themed("purple")).is_err());
         assert_eq!(SettingsStore::open(dir.path()).get().theme, "dark");
     }
 
@@ -290,6 +268,5 @@ mod tests {
         assert_eq!(next.theme, "system");
         assert!(s.with_changes(&serde_json::json!({"show_images": "yes"})).is_err());
         assert!(s.with_changes(&serde_json::json!([1])).is_err());
-        assert_eq!(Settings { text_size: "larger".into(), ..s }.text_scale(), 1.3);
     }
 }

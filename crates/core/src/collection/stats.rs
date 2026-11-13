@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chrono::NaiveDate;
-use serde::{Deserialize, Serialize};
 
 use super::{Card, SetInfo};
 use crate::dates;
@@ -200,28 +199,6 @@ fn cumulative(by_date: &BTreeMap<NaiveDate, f64>, undated: f64, today: NaiveDate
     out
 }
 
-/// The collection's totals on one day, for the value-over-time chart.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ValueSnapshot {
-    /// `YYYY-MM-DD`.
-    pub date: String,
-    pub market_value: f64,
-    pub price_paid: f64,
-    pub cards: i64,
-}
-
-/// Replaces the snapshot for `snap.date` or adds it, keeping date order.
-pub(crate) fn upsert_snapshot(history: &mut Vec<ValueSnapshot>, snap: ValueSnapshot) {
-    match history.iter_mut().find(|h| h.date == snap.date) {
-        Some(h) => *h = snap,
-        None => {
-            history.push(snap);
-            history.sort_by(|a, b| a.date.cmp(&b.date));
-        }
-    }
-}
-
 /// Rounds dollars to whole cents.
 pub fn round_cents(v: f64) -> f64 {
     (v * 100.0).round() / 100.0
@@ -297,15 +274,6 @@ mod tests {
         assert_eq!(st.top_cards.len(), TOP_CARDS);
         assert_eq!(st.top_cards[0].card.id, "c14");
         assert_eq!(st.top_cards[9].card.id, "c05");
-    }
-
-    #[test]
-    fn snapshots_upsert() {
-        let mut h = Vec::new();
-        upsert_snapshot(&mut h, ValueSnapshot { date: "2024-01-02".into(), cards: 1, ..Default::default() });
-        upsert_snapshot(&mut h, ValueSnapshot { date: "2024-01-01".into(), cards: 2, ..Default::default() });
-        upsert_snapshot(&mut h, ValueSnapshot { date: "2024-01-02".into(), cards: 3, ..Default::default() });
-        assert_eq!(h.iter().map(|s| s.cards).collect::<Vec<_>>(), [2, 3]);
         assert_eq!(round_cents(2.346), 2.35);
     }
 }

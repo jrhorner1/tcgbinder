@@ -168,7 +168,7 @@ fn edit_and_delete_card() {
     let c = f.svc.store.get(SHOCK).unwrap();
     assert_eq!(c.copy_count(), 5);
     assert_eq!(c.purchases("nonfoil", Condition::NearMint).len(), 2);
-    assert_eq!(c.condition_copy_count("foil", Condition::LightPlay), 3);
+    assert_eq!(c.purchases("foil", Condition::LightPlay).iter().map(|p| p.quantity).sum::<i64>(), 3);
 
     for bad in [json!({"quantity": 1, "acquired_date": "March"}), json!({"quantity": 1, "finish": "etched"}), json!({"quantity": -1})] {
         let (status, _) = call(&f.api, "PUT", &format!("/api/games/mtg/card?key={SHOCK}"), Some(json!({ "purchases": [bad] })));
@@ -318,7 +318,7 @@ fn change_printing() {
     assert_eq!(status, 200, "{res}");
     let moved = f.svc.store.get(&target).unwrap();
     assert_eq!(moved.copy_count(), 2);
-    assert_eq!(moved.purchase_rows(&[])[0].purchase.price_paid, 0.25);
+    assert_eq!(moved.purchase_rows()[0].purchase.price_paid, 0.25);
     let (status, _) = call(
         &f.api,
         "PUT",
@@ -335,7 +335,7 @@ fn bulk_edit_and_search_all() {
     let (status, res) = call(&f.api, "POST", "/api/games/mtg/bulk", Some(json!({"keys": keys, "condition": "HP", "price_paid": 0.5})));
     assert_eq!((status, res["Updated"].as_i64()), (200, Some(2)));
     for c in f.svc.store.cards() {
-        for r in c.purchase_rows(&[]) {
+        for r in c.purchase_rows() {
             assert_eq!((r.condition, r.purchase.price_paid), (Condition::HeavyPlay, 0.5));
         }
     }

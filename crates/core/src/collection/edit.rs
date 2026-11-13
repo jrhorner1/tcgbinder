@@ -17,7 +17,7 @@ pub fn unique_cards<'a>(cards: impl IntoIterator<Item = &'a Card>) -> usize {
 pub fn with_printing(owned: &Card, printing: &Card) -> Card {
     let mut c = printing.clone();
     c.copies = Default::default();
-    for r in owned.purchase_rows(&[]) {
+    for r in owned.purchase_rows() {
         let finish = match c.finishes.first() {
             Some(first) if !c.finishes.contains(&r.finish) => first.clone(),
             _ => r.finish,
@@ -89,7 +89,7 @@ impl BulkChange {
         }
         let mut out = c.clone();
         out.copies = Default::default();
-        for mut r in c.purchase_rows(&[]) {
+        for mut r in c.purchase_rows() {
             if let Some(f) = &finish {
                 r.finish = f.clone();
             }

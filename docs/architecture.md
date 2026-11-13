@@ -66,8 +66,8 @@ To add a game: create a crate like `crates/mtg`, implement the trait, and add it
 Per game, in `<data>/<game>/`:
 - `collection.json`: one card per printing (keyed by its catalog ID), holding the
   copies owned as `copies`: finish → condition → list of purchases (`quantity`,
-  `price_paid`, `acquired_date`), the card editor's "Your Copies". Also the game's ID
-  and the daily value history. Saves are atomic (a synced temporary file renamed over
+  `price_paid`, `acquired_date`), the card editor's "Your Copies". Also the game's
+  ID. Saves are atomic (a synced temporary file renamed over
   the old one) and serialized.
 - `price-history.json`: daily prices per printing and finish, each as a start date
   and an array of prices in cents, one per day (`-1` for a day without one). That's

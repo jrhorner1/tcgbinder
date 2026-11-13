@@ -164,6 +164,6 @@ Each game has its own folder in the app's data folder:
 | Linux | `~/.local/share/io.github.jrhorner1.tcgbinder` |
 | iPhone, iPad | the app's private storage |
 
-Inside it, `mtg/` holds `collection.json` (your cards and daily value history),
+Inside it, `mtg/` holds `collection.json` (your cards),
 `price-history.json` and caches; the log file `tcgbinder.log` and `settings.json`
 sit in the data folder itself. See the README for command-line options.

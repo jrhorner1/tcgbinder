@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
@@ -24,10 +23,6 @@ pub enum Condition {
 }
 
 impl Condition {
-    /// Every condition, best first.
-    pub const ALL: [Condition; 5] =
-        [Condition::NearMint, Condition::LightPlay, Condition::Moderate, Condition::HeavyPlay, Condition::Damaged];
-
     /// The short code stored and shown, e.g. "NM".
     pub fn code(self) -> &'static str {
         match self {
@@ -58,12 +53,6 @@ impl Condition {
         } else {
             Condition::NearMint
         }
-    }
-}
-
-impl fmt::Display for Condition {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.code())
     }
 }
 
@@ -115,11 +104,6 @@ pub struct Card {
 }
 
 impl Card {
-    /// A game-specific field, if set.
-    pub fn attr(&self, key: &str) -> Option<&Value> {
-        self.attrs.get(key)
-    }
-
     /// A string attribute ("" if missing or not a string).
     pub fn attr_str(&self, key: &str) -> &str {
         self.attrs.get(key).and_then(Value::as_str).unwrap_or("")
@@ -204,7 +188,7 @@ mod tests {
         assert_eq!(c.attr_str("mana_cost"), "{R}");
         assert_eq!(c.attr_str("missing"), "");
         c.set_attr("mana_cost", Value::Null);
-        assert!(c.attr("mana_cost").is_none());
+        assert!(!c.attrs.contains_key("mana_cost"));
     }
 
     #[test]

@@ -8,7 +8,6 @@ use std::sync::{Mutex, RwLock};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
-use super::stats::{ValueSnapshot, round_cents, upsert_snapshot};
 use super::{BulkChange, BulkResult, Card, CatalogUpdate};
 use crate::dates;
 
@@ -30,9 +29,6 @@ struct StoreData {
     #[serde(skip_serializing_if = "String::is_empty")]
     game: String,
     cards: BTreeMap<String, Card>,
-    /// Daily totals for the value-over-time chart.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    history: Vec<ValueSnapshot>,
 }
 
 /// The key of a collection card: one per printing, with its copies grouped by finish
@@ -119,16 +115,9 @@ impl Store {
                 };
                 data.cards.insert(key, next);
             }
-            snapshot(&mut data);
         }
         self.save()?;
         Ok((created, merged))
-    }
-
-    /// Saves `card` in place of the one for its printing. No copies removes it.
-    pub fn upsert_card(&self, card: Card) -> Result<()> {
-        let key = card_key(&card);
-        self.save_card(&key, card).map(|_| ())
     }
 
     /// Saves an edited card that was stored under `old_key` (its copies replace the old
@@ -158,7 +147,6 @@ impl Store {
                 };
                 data.cards.insert(new_key.clone(), next);
             }
-            snapshot(&mut data);
         }
         self.save()?;
         Ok((new_key, merged))
@@ -171,7 +159,6 @@ impl Store {
             if data.cards.remove(key).is_none() {
                 return Ok(());
             }
-            snapshot(&mut data);
         }
         self.save()
     }
@@ -193,22 +180,9 @@ impl Store {
                 data.cards.insert(key.clone(), edited);
                 res.updated += 1;
             }
-            snapshot(&mut data);
         }
         self.save()?;
         Ok(res)
-    }
-
-    /// Saves today's totals to the value history (replacing any earlier snapshot from
-    /// today), using the stored market prices.
-    pub fn record_snapshot(&self) -> Result<()> {
-        snapshot(&mut self.data.write().unwrap());
-        self.save()
-    }
-
-    /// The recorded daily snapshots, oldest first.
-    pub fn value_history(&self) -> Vec<ValueSnapshot> {
-        self.data.read().unwrap().history.clone()
     }
 
     /// Whether any card's market prices were last refreshed before today.
@@ -230,8 +204,7 @@ impl Store {
         data.cards.values().filter(|c| !c.id.is_empty() && seen.insert(c.id.as_str())).map(|c| c.id.clone()).collect()
     }
 
-    /// Applies fresh prices (and missing rules text) from the game's catalog, records
-    /// today's value snapshot and saves. Returns the number of cards updated.
+    /// Applies fresh prices (and missing rules text) from the game's catalog and saves. Returns the number of cards updated.
     pub fn update_catalog(&self, updates: &std::collections::HashMap<String, CatalogUpdate>, date: &str) -> Result<usize> {
         let mut updated = 0;
         {
@@ -247,7 +220,6 @@ impl Store {
                 }
                 updated += 1;
             }
-            snapshot(&mut data);
         }
         self.save()?;
         Ok(updated)
@@ -260,7 +232,12 @@ impl Store {
 
     /// A copy of every card.
     pub fn cards(&self) -> Vec<Card> {
-        self.data.read().unwrap().cards.values().cloned().collect()
+        self.cards_where(|_| true)
+    }
+
+    /// A copy of the cards `keep` accepts, without copying the rest.
+    pub fn cards_where(&self, keep: impl Fn(&Card) -> bool) -> Vec<Card> {
+        self.data.read().unwrap().cards.values().filter(|c| keep(c)).cloned().collect()
     }
 
     /// The number of cards (printings).
@@ -305,9 +282,11 @@ fn normalize_card(c: &mut Card) {
 /// Adds `incoming`'s purchases to an existing card for the same printing (identical
 /// purchases combine). Catalog data (image, prices) comes from whichever side is newer;
 /// fields only one side has, such as game attributes or rules text, are kept either way.
-fn merge_cards(existing: Card, incoming: Card) -> Card {
-    let incoming_copies = incoming.copies.clone();
-    let existing_copies = existing.copies.clone();
+fn merge_cards(mut existing: Card, mut incoming: Card) -> Card {
+    let mut copies = std::mem::take(&mut existing.copies);
+    for (f, c, p) in std::mem::take(&mut incoming.copies).each() {
+        copies.add(f, c, p.clone());
+    }
     let (older, mut merged) = if incoming.prices_updated > existing.prices_updated { (existing, incoming) } else { (incoming, existing) };
     for (k, v) in older.attrs {
         merged.attrs.entry(k).or_insert(v);
@@ -316,24 +295,8 @@ fn merge_cards(existing: Card, incoming: Card) -> Card {
         merged.type_line = older.type_line;
         merged.rules_text = older.rules_text;
     }
-    merged.copies = existing_copies;
-    for (f, c, p) in incoming_copies.each() {
-        merged.copies.add(f, c, p.clone());
-    }
+    merged.copies = copies;
     merged
-}
-
-/// Records today's totals in the history.
-fn snapshot(data: &mut StoreData) {
-    let mut snap = ValueSnapshot { date: dates::today_string(), ..Default::default() };
-    for c in data.cards.values() {
-        snap.cards += c.copy_count();
-        snap.price_paid += c.price_paid().0;
-        snap.market_value += c.market_value().0;
-    }
-    snap.market_value = round_cents(snap.market_value);
-    snap.price_paid = round_cents(snap.price_paid);
-    upsert_snapshot(&mut data.history, snap);
 }
 
 #[cfg(test)]
@@ -360,8 +323,6 @@ mod tests {
 
         let again = Store::open(&path, "mtg").unwrap();
         assert_eq!(again.len(), 2);
-        let snap = again.value_history().pop().unwrap();
-        assert_eq!((snap.cards, snap.price_paid, snap.market_value), (6, 6.0, 12.0));
         assert!(Store::open(&path, "pokemon").is_err());
     }
 
@@ -395,8 +356,8 @@ mod tests {
         let change = BulkChange { condition: Some(Condition::HeavyPlay), ..Default::default() };
         let res = s.bulk_edit(&["a".into(), "missing".into()], &change).unwrap();
         assert_eq!((res.updated, res.deleted), (1, 0));
-        assert!(s.get("a").unwrap().has_condition(Condition::HeavyPlay));
-        assert!(s.get("b").unwrap().has_condition(Condition::NearMint));
+        assert_eq!(s.get("a").unwrap().purchases("nonfoil", Condition::HeavyPlay).len(), 1);
+        assert_eq!(s.get("b").unwrap().purchases("nonfoil", Condition::NearMint).len(), 1);
 
         let mut updates = std::collections::HashMap::new();
         updates.insert(

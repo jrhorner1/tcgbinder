@@ -40,7 +40,7 @@ pub struct PurchaseView {
 
 pub fn view(c: &Card) -> CardView<'_> {
     let purchases = c
-        .purchase_rows(&[])
+        .purchase_rows()
         .into_iter()
         .map(|r| PurchaseView {
             market: c.market_price(&r.finish).unwrap_or(0.0),
