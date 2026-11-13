@@ -17,7 +17,7 @@ use serde_json::{Map, Value, json};
 
 pub use card::{Card, Face, ImageUris, Prices};
 pub use search::{SearchPage, SearchResponse, build_search_query};
-pub use sets::{SetInfo, load_sets};
+pub use sets::load_sets;
 
 /// The User-Agent sent to every service, as Scryfall asks.
 pub const USER_AGENT: &str = concat!("TCGBinder/", env!("CARGO_PKG_VERSION"), " (+https://github.com/jrhorner1/tcgbinder)");
@@ -228,7 +228,7 @@ pub fn is_uuid(s: &str) -> bool {
 }
 
 /// Escapes a path segment.
-fn escape(s: &str) -> String {
+pub(crate) fn escape(s: &str) -> String {
     url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>().replace('+', "%20")
 }
 

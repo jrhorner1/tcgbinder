@@ -17,8 +17,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use tcgbinder_core::collection::{
-    self, BulkChange, Card, Condition, Query, SortField, apply_query, card_key, compute_stats, is_any, round_cents, set_options,
-    sort_cards, top_by_each, unique_cards, with_printing,
+    self, BulkChange, Card, Condition, Query, card_key, compute_stats, is_any, round_cents, set_options, sort_cards, top_by_each,
+    unique_cards, with_printing,
 };
 use tcgbinder_core::game::finish_names;
 use tcgbinder_core::scan::Reading;
@@ -63,6 +63,20 @@ impl Client {
             Client::Web => "web",
         }
     }
+}
+
+/// The copies owned of each catalog card.
+fn owned(g: &GameService, cards: &[Card]) -> Vec<i64> {
+    cards.iter().map(|c| g.store.get(&card_key(c)).map_or(0, |o| o.copy_count())).collect()
+}
+
+/// The owned cards of a set.
+fn set_cards(g: &GameService, code: &str) -> Vec<Card> {
+    g.store.cards_where(|c| c.set.eq_ignore_ascii_case(code))
+}
+
+fn check_date(date: &str) -> Result<()> {
+    if date.is_empty() || dates::parse(date).is_some() { Ok(()) } else { Err(bad("acquired date must look like 2024-03-15")) }
 }
 
 /// The API for a set of games.
@@ -258,7 +272,7 @@ impl Api {
         let games: Vec<Value> =
             self.games.iter().map(|g| json!({ "ID": g.game.id(), "Name": g.game.name(), "Scan": self.scanning(g) })).collect();
         Reply::Json(json!({
-            "name": self.name, "version": self.version, "games": games, "ranges": service::CHART_RANGES,
+            "name": self.name, "version": self.version, "games": games, "ranges": choices::CHART_RANGES,
             "client": self.client.as_str(), "saveExports": self.export_dir.is_some(),
         }))
     }
@@ -287,7 +301,7 @@ impl Api {
             })
             .collect();
         let top: Vec<_> = st.top_cards.iter().map(|cv| view(&cv.card)).collect();
-        let src = g.price_history_source();
+        let src = g.game.price_history();
         Reply::Json(json!({
             "game": g.game.id(), "name": g.game.name(),
             "cards": st.cards, "uniqueCards": st.unique_cards, "sets": st.sets,
@@ -317,7 +331,6 @@ impl Api {
     /// The filtered cards in the Card order setting's order, with counts. Parameters: q,
     /// set, rarity, finish, and one per game filter, named f.<filter name>.
     fn cards(&self, g: &GameService, params: &HashMap<String, String>) -> Reply {
-        let all = g.store.cards();
         let filters = g.game.filters();
         let get = |k: &str| params.get(k).cloned().unwrap_or_default();
         let q = Query {
@@ -325,18 +338,15 @@ impl Api {
             set: get("set"),
             rarity: get("rarity"),
             finish: get("finish"),
-            rarity_order: g.game.rarities().iter().map(|r| r.to_string()).collect(),
-            sort_by: SortField::Number,
             matches: Some(Box::new(|c: &Card| {
                 filters.iter().all(|f| params.get(&format!("f.{}", f.name)).is_none_or(|opt| is_any(opt) || (f.matches)(c, opt)))
             })),
-            ..Default::default()
         };
-        let filtered = sort_cards(apply_query(&all, &q), &self.settings.get().card_order);
+        let filtered = sort_cards(g.store.cards_where(q.matcher()), &self.settings.get().card_order);
         let card_count: i64 = filtered.iter().map(Card::copy_count).sum();
         let sets: HashSet<String> = filtered.iter().map(|c| c.set.to_uppercase()).collect();
         Reply::Json(json!({
-            "total": all.len(), "matched": filtered.len(), "cardCount": card_count,
+            "total": g.store.len(), "matched": filtered.len(), "cardCount": card_count,
             "uniqueCards": unique_cards(&filtered), "sets": sets.len(), "cards": views(&filtered),
         }))
     }
@@ -347,7 +357,7 @@ impl Api {
 
     fn card(&self, g: &GameService, key: &str) -> Result {
         let c = self.find(g, key)?;
-        let mut others: Vec<Card> = g.store.cards().into_iter().filter(|o| o.name == c.name && card_key(o) != card_key(&c)).collect();
+        let mut others = g.store.cards_where(|o| o.name == c.name && o.id != c.id);
         others.sort_by(|a, b| b.released_at.cmp(&a.released_at));
         let (label, url) = g.game.card_link(&c).unwrap_or_default();
         Ok(Reply::Json(json!({
@@ -359,13 +369,12 @@ impl Api {
         let get = |k: &str| params.get(k).map_or("", String::as_str);
         let page = g.game.search(get("text"), get("set"), get("next")).map_err(upstream)?;
         // Cards already owned say so.
-        let owned: Vec<i64> = page.cards.iter().map(|c| g.store.get(&card_key(c)).map_or(0, |o| o.copy_count())).collect();
-        Ok(Reply::Json(json!({ "cards": views(&page.cards), "owned": owned, "total": page.total, "next": page.next_page })))
+        Ok(Reply::Json(json!({ "cards": views(&page.cards), "owned": owned(g, &page.cards), "total": page.total, "next": page.next_page })))
     }
 
     fn set_page(&self, g: &GameService, code: &str) -> Result {
         let code = code.to_uppercase();
-        let cards: Vec<Card> = g.store.cards().into_iter().filter(|c| c.set.eq_ignore_ascii_case(&code)).collect();
+        let cards = set_cards(g, &code);
         let st = compute_stats(&cards, &g.cached_sets());
         let set = st.by_set.first().ok_or_else(|| not_found(format!("no cards from set {code:?}")))?;
         let top = top_by_each(&cards, 10); // ranked by one copy
@@ -381,8 +390,7 @@ impl Api {
     fn missing(&self, g: &GameService, code: &str) -> Result {
         let code = code.to_uppercase();
         let set_cards = g.game.set_cards(&code).map_err(upstream)?;
-        let owned: Vec<Card> = g.store.cards().into_iter().filter(|c| c.set.eq_ignore_ascii_case(&code)).collect();
-        let missing = collection::missing(&set_cards, &owned);
+        let missing = collection::missing(&set_cards, &self::set_cards(g, &code));
         Ok(Reply::Json(json!({ "set": code, "total": set_cards.len(), "missing": views(&missing) })))
     }
 
@@ -399,7 +407,7 @@ impl Api {
             .games
             .iter()
             .map(|g| {
-                let matches = apply_query(&g.store.cards(), &Query { text: q.into(), ..Default::default() });
+                let matches = sort_cards(g.store.cards_where(Query { text: q.into(), ..Default::default() }.matcher()), "name");
                 let shown = &matches[..matches.len().min(200)];
                 json!({ "Game": g.game.id(), "Name": g.game.name(), "Total": matches.len(), "Cards": views(shown) })
             })
@@ -506,9 +514,7 @@ impl Api {
         if req.price_paid.is_some_and(|p| p < 0.0) {
             return Err(bad("price paid can't be negative"));
         }
-        if !req.acquired_date.is_empty() && dates::parse(&req.acquired_date).is_none() {
-            return Err(bad("acquired date must look like 2024-03-15"));
-        }
+        check_date(&req.acquired_date)?;
         let change = BulkChange {
             condition: (!req.condition.is_empty()).then(|| Condition::parse(&req.condition)),
             finish: (!req.finish.is_empty()).then_some(req.finish),
@@ -574,10 +580,9 @@ impl Api {
         let scanner = g.game.scanner().expect("checked by read_photo");
         let res = scanner.identify(&reading).map_err(upstream)?;
         tracing::info!(game = g.game.id(), read = res.read, exact = res.exact, candidates = res.candidates.len(), "card scanned");
-        let owned: Vec<i64> = res.candidates.iter().map(|c| g.store.get(&card_key(c)).map_or(0, |o| o.copy_count())).collect();
         Ok(Reply::Json(json!({
             "read": res.read, "name": res.name, "exact": res.exact, "note": res.note,
-            "candidates": views(&res.candidates), "owned": owned, "text": reading.text(),
+            "candidates": views(&res.candidates), "owned": owned(g, &res.candidates), "text": reading.text(),
         })))
     }
 
@@ -629,10 +634,7 @@ impl PurchaseForm {
         if self.price_paid < 0.0 || !self.price_paid.is_finite() {
             return Err(bad("price paid can't be negative"));
         }
-        if !self.acquired_date.is_empty() && dates::parse(&self.acquired_date).is_none() {
-            return Err(bad("acquired date must look like 2024-03-15"));
-        }
-        Ok(())
+        check_date(&self.acquired_date)
     }
 
     /// Adds the purchase to `c` (in the printing's first finish if none is given).

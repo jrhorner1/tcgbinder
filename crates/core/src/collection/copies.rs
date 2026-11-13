@@ -87,21 +87,6 @@ impl Card {
         self.copies.add(finish, cond, p);
     }
 
-    /// Replaces the purchases in one finish and condition; purchases with no copies are
-    /// dropped, and an empty list removes the condition.
-    pub fn set_purchases(&mut self, finish: &str, cond: Condition, purchases: Vec<Purchase>) {
-        let finish = norm_finish(finish);
-        if let Some(by_cond) = self.copies.0.get_mut(&finish) {
-            by_cond.remove(&cond);
-        }
-        for p in purchases {
-            self.copies.add(&finish, cond, p);
-        }
-        if self.copies.0.get(&finish).is_some_and(BTreeMap::is_empty) {
-            self.copies.0.remove(&finish);
-        }
-    }
-
     /// The purchases in one finish and condition, oldest first.
     pub fn purchases(&self, finish: &str, cond: Condition) -> Vec<Purchase> {
         let mut out = self.copies.0.get(&norm_finish(finish)).and_then(|m| m.get(&cond)).cloned().unwrap_or_default();
@@ -109,23 +94,14 @@ impl Card {
         out
     }
 
-    /// The number of copies owned in one finish and condition.
-    pub fn condition_copy_count(&self, finish: &str, cond: Condition) -> i64 {
-        self.copies.0.get(&norm_finish(finish)).and_then(|m| m.get(&cond)).map_or(0, |l| l.iter().map(|p| p.quantity).sum())
-    }
-
-    /// The card's copies: finishes in `finish_order` (others after, by name), then
-    /// conditions best first, then purchases oldest first.
-    pub fn purchase_rows(&self, finish_order: &[&str]) -> Vec<PurchaseRow> {
+    /// The card's copies: by finish name, then conditions best first, then purchases
+    /// oldest first.
+    pub fn purchase_rows(&self) -> Vec<PurchaseRow> {
         let mut out: Vec<PurchaseRow> =
             self.copies.each().map(|(f, c, p)| PurchaseRow { finish: f.to_string(), condition: c, purchase: p.clone() }).collect();
-        let rank = |f: &str| finish_order.iter().position(|o| *o == f).unwrap_or(finish_order.len());
+        // Stable: the copies already come by finish, then condition.
         out.sort_by(|a, b| {
-            rank(&a.finish)
-                .cmp(&rank(&b.finish))
-                .then_with(|| a.finish.cmp(&b.finish))
-                .then_with(|| a.condition.cmp(&b.condition))
-                .then_with(|| purchase_order(&a.purchase, &b.purchase))
+            a.finish.cmp(&b.finish).then_with(|| a.condition.cmp(&b.condition)).then_with(|| purchase_order(&a.purchase, &b.purchase))
         });
         out
     }
@@ -140,14 +116,10 @@ impl Card {
         self.copies.0.get(&norm_finish(finish)).map_or(0, |m| m.values().flatten().map(|p| p.quantity).sum())
     }
 
-    /// The finishes with copies, in `finish_order`.
+    /// The finishes with copies, in `finish_order` (others after, by name).
     pub fn owned_finishes(&self, finish_order: &[&str]) -> Vec<String> {
-        let mut out: Vec<String> = Vec::new();
-        for r in self.purchase_rows(finish_order) {
-            if !out.contains(&r.finish) {
-                out.push(r.finish);
-            }
-        }
+        let mut out: Vec<String> = self.copies.0.keys().filter(|f| self.has_finish(f)).cloned().collect();
+        out.sort_by_key(|f| finish_order.iter().position(|o| o == f).unwrap_or(finish_order.len()));
         out
     }
 
@@ -183,19 +155,9 @@ impl Card {
         self.copies.0.keys().filter_map(|f| self.market.get(f).copied()).reduce(f64::max)
     }
 
-    /// The earliest acquired date among the copies, or "".
-    pub fn earliest_acquired(&self) -> &str {
-        self.copies.each().map(|(_, _, p)| p.acquired_date.as_str()).filter(|d| !d.is_empty()).min().unwrap_or("")
-    }
-
     /// Whether any copies are owned in `finish` (case-insensitive).
     pub fn has_finish(&self, finish: &str) -> bool {
         self.finish_copy_count(finish) > 0
-    }
-
-    /// Whether any copies are in `cond`.
-    pub fn has_condition(&self, cond: Condition) -> bool {
-        self.copies.0.values().any(|m| m.get(&cond).is_some_and(|l| l.iter().any(|p| p.quantity > 0)))
     }
 }
 
@@ -220,23 +182,11 @@ mod tests {
         assert_eq!(c.finish_copy_count("FOIL"), 5);
         let got = c.purchases("foil", Condition::NearMint);
         assert_eq!(got, [p(1, 3.0, "2023-01-01"), p(3, 2.0, "2024-02-01"), p(1, 1.0, "")]);
-        let rows = c.purchase_rows(&["nonfoil", "foil"]);
-        assert_eq!(rows[0].finish, "nonfoil");
+        let rows = c.purchase_rows();
+        assert_eq!((rows[0].finish.as_str(), rows[0].purchase.quantity), ("foil", 1));
+        assert_eq!(rows.last().unwrap().finish, "nonfoil");
         assert_eq!(c.owned_finishes(&["nonfoil", "foil"]), ["nonfoil", "foil"]);
-        assert_eq!(c.earliest_acquired(), "2023-01-01");
-        assert!(c.has_condition(Condition::LightPlay));
-        assert!(!c.has_condition(Condition::Damaged));
-    }
-
-    #[test]
-    fn set_purchases_removes_empty() {
-        let mut c = Card::default();
-        c.add_purchase("nonfoil", Condition::NearMint, p(2, 0.0, ""));
-        c.set_purchases("nonfoil", Condition::NearMint, vec![p(0, 0.0, "")]);
-        assert!(c.copies.is_empty());
-        c.set_purchases("foil", Condition::Moderate, vec![p(1, 1.0, ""), p(1, 1.0, "")]);
-        assert_eq!(c.condition_copy_count("foil", Condition::Moderate), 2);
-        assert_eq!(c.purchases("foil", Condition::Moderate).len(), 1);
+        assert_eq!(c.owned_finishes(&[]), ["foil", "nonfoil"]);
     }
 
     #[test]

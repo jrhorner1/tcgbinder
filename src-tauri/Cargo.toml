@@ -23,7 +23,6 @@ tcgbinder-vision.workspace = true
 tcgbinder-api.workspace = true
 anyhow.workspace = true
 http.workspace = true
-serde_json.workspace = true
 tracing.workspace = true
 tauri = { version = "2", features = [] }
 

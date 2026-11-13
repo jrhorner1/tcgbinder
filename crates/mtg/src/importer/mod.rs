@@ -6,7 +6,7 @@ mod formats;
 mod resolve;
 
 pub use formats::{Row, parse_csv};
-pub use resolve::{Method, Resolved, clean_card_name, front_face, names_match, normalize_name, resolve};
+pub use resolve::{front_face, resolve};
 
 /// The finish to record for a row: the one asked for when the printing comes in it (or
 /// nothing is known), else the printing's only finish.

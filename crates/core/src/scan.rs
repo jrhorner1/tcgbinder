@@ -19,13 +19,6 @@ pub struct Line {
     pub confidence: f64,
 }
 
-impl Line {
-    /// The line's lower edge.
-    pub fn bottom(&self) -> f64 {
-        self.y + self.h
-    }
-}
-
 /// The text read from one photo or camera frame.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]

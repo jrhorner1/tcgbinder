@@ -12,7 +12,7 @@ use anyhow::{Result, anyhow, bail};
 use chrono::{Months, NaiveDate};
 
 use crate::collection::{Card, PriceHistory, SetInfo, Stats, Store, TimePoint, read_export};
-use crate::game::{Game, ImportReport, PriceHistorySource};
+use crate::game::{Game, ImportReport};
 use crate::settings::{Settings, SettingsStore};
 use crate::{datadir, dates};
 
@@ -84,9 +84,8 @@ impl GameService {
         self.sets.lock().unwrap().clone().unwrap_or_default()
     }
 
-    /// Saves today's value snapshot and current prices to the histories.
+    /// Saves today's prices to the price history.
     pub fn record_today(&self) -> Result<()> {
-        self.store.record_snapshot()?;
         self.prices.record_current(&self.store.cards(), &dates::today_string());
         self.prices.save()
     }
@@ -102,15 +101,10 @@ impl GameService {
         Ok(n)
     }
 
-    /// The game's price history source, if it has one.
-    pub fn price_history_source(&self) -> Option<&dyn PriceHistorySource> {
-        self.game.price_history()
-    }
-
     /// Merges the game's daily price history (keeping prices already recorded) and
     /// returns how many printings had history.
     pub fn load_price_history(&self, status: &mut dyn FnMut(&str)) -> Result<usize> {
-        let src = self.price_history_source().ok_or_else(|| anyhow!("this game has no price history source"))?;
+        let src = self.game.price_history().ok_or_else(|| anyhow!("this game has no price history source"))?;
         let cards = self.store.cards();
         if cards.is_empty() {
             return Ok(0);
@@ -141,15 +135,27 @@ impl GameService {
     /// Whether to load price history without being asked: the game offers it, it was
     /// never loaded, there are cards, and the setting allows it.
     pub fn auto_load_history_due(&self) -> bool {
-        self.price_history_source().is_some()
+        self.game.price_history().is_some()
             && self.auto_history
             && self.current_settings().auto_price_history
             && self.prices.history_loaded_on().is_empty()
             && !self.store.is_empty()
     }
 
+    /// Refreshes prices if they are due, and says whether they were.
+    fn refresh_if_due(&self) -> bool {
+        let due = self.prices_due();
+        if due {
+            match self.refresh_prices(&mut |_, _| {}) {
+                Ok(n) => tracing::info!(game = self.game.id(), cards = n, "prices refreshed"),
+                Err(e) => tracing::warn!(game = self.game.id(), error = %e, "price refresh failed"),
+            }
+        }
+        due
+    }
+
     /// The startup routine: load price history the first time (when allowed), refresh
-    /// prices when due, and record today's value.
+    /// prices when due, and record today's prices.
     pub fn daily_sync(&self) {
         let id = self.game.id();
         if self.auto_load_history_due() {
@@ -158,15 +164,10 @@ impl GameService {
                 Err(e) => tracing::warn!(game = id, error = %e, "loading price history failed"),
             }
         }
-        if self.prices_due() {
-            match self.refresh_prices(&mut |_, _| {}) {
-                Ok(n) => tracing::info!(game = id, cards = n, "prices refreshed"),
-                Err(e) => tracing::warn!(game = id, error = %e, "price refresh failed"),
-            }
-            return;
-        }
-        if let Err(e) = self.record_today() {
-            tracing::warn!(game = id, error = %e, "could not record today's value");
+        if !self.refresh_if_due()
+            && let Err(e) = self.record_today()
+        {
+            tracing::warn!(game = id, error = %e, "could not record today's prices");
         }
     }
 
@@ -190,12 +191,7 @@ impl GameService {
                 svc.daily_sync();
                 loop {
                     std::thread::sleep(PRICE_CHECK_INTERVAL);
-                    if svc.prices_due() {
-                        match svc.refresh_prices(&mut |_, _| {}) {
-                            Ok(n) => tracing::info!(game = svc.game.id(), cards = n, "prices refreshed"),
-                            Err(e) => tracing::warn!(game = svc.game.id(), error = %e, "scheduled price refresh failed"),
-                        }
-                    }
+                    svc.refresh_if_due();
                 }
             })
             .ok();
@@ -277,10 +273,7 @@ pub fn parse_import(game: &dyn Game, data: &[u8], progress: &mut dyn FnMut(usize
 
 // --- The value chart --------------------------------------------------------------
 
-/// The Value Over Time ranges the front ends offer.
-pub const CHART_RANGES: &[&str] = &["30D", "90D", "1Y", "All"];
-
-/// The range shown first, matching the 90 days of history MTGJSON provides.
+/// The Value Over Time range shown first (see [`crate::settings::choices::CHART_RANGES`]), matching the 90 days of history MTGJSON provides.
 pub const DEFAULT_CHART_RANGE: &str = "90D";
 
 /// The first day shown for a range; `None` means everything.
