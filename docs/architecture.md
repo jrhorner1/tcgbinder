@@ -88,6 +88,16 @@ uses `spawn_blocking`. Each game's daily sync and hourly price check run on a
 background thread (`GameService::start_background_sync`). Shared state is behind
 `RwLock`/`Mutex` in the store, price history and settings.
 
+## Scryfall's rate limits
+
+`scryfall::Client` keeps every request inside Scryfall's published limits: 2 requests
+a second for `/cards/search`, `/cards/named`, `/cards/random` and `/cards/collection`,
+and about 10 a second for everything else. The gap is chosen from the path. An HTTP
+429 means Scryfall has limited the app for 30 seconds, so the client waits that long
+(or the `Retry-After` header's time, if longer) and retries once; a second 429 fails
+with "Scryfall is limiting requests". Server and network errors are retried after
+short waits.
+
 ## Names
 
 Code uses the UI's words, so a label on screen leads straight to the code behind it:

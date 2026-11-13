@@ -84,7 +84,7 @@ impl Client {
                 _ => bail!("unexpected next page URL {next_page:?}"),
             }
         };
-        match self.request::<SearchResponse>(Method::GET, &path, None, true) {
+        match self.request::<SearchResponse>(Method::GET, &path, None) {
             Ok(resp) => Ok(SearchPage {
                 cards: resp.data,
                 total: resp.total_cards,
