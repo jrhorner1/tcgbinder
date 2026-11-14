@@ -22,7 +22,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use tcgbinder_core::collection::{
-    self, BulkChange, Card, Condition, Query, card_key, compute_stats, is_any, round_cents, set_options, sort_cards, top_by_each,
+    self, BulkChange, Card, Condition, Query, SortKey, card_key, compute_stats, is_any, round_cents, set_options, sort_cards, top_by_each,
     unique_cards, with_printing,
 };
 use tcgbinder_core::game::finish_names;
@@ -299,7 +299,7 @@ impl Api {
                 match (m.as_str(), rest) {
                     ("GET", ["home"]) => Ok(self.home(g, q.get("range").map_or("", String::as_str))),
                     ("GET", ["filters"]) => Ok(self.filters(g)),
-                    ("GET", ["cards"]) => Ok(self.cards(g, &q)),
+                    ("GET", ["cards"]) => self.cards(g, &q),
                     ("POST", ["cards"]) => self.add_card(g, body),
                     ("GET", ["card"]) => self.card(g, key),
                     ("PUT", ["card"]) => self.update_card(g, key, body),
@@ -451,27 +451,78 @@ impl Api {
         }))
     }
 
-    /// The filtered cards in the Card order setting's order, with counts. Parameters: q,
-    /// set, rarity, finish, and one per game filter, named f.<filter name>.
-    fn cards(&self, g: &GameService, params: &HashMap<String, String>) -> Reply {
+    /// The filtered cards, sorted, with counts and money totals. Filters: q, set,
+    /// rarity, finish, condition, language, card_type, lot, has_note, price_min,
+    /// price_max, acquired_from, acquired_to, min_copies, no_price_paid, unpriced, and
+    /// one per game filter, named f.<filter name>. Sorting: sort (a [`SortKey`] name)
+    /// and dir (asc or desc); without sort, the Card order setting.
+    fn cards(&self, g: &GameService, params: &HashMap<String, String>) -> Result {
         let filters = g.game.filters();
-        let get = |k: &str| params.get(k).cloned().unwrap_or_default();
+        let get = |k: &str| params.get(k).map(|v| v.trim().to_string()).unwrap_or_default();
+        let flag = |k: &str| matches!(get(k).as_str(), "1" | "true" | "yes");
+        let number = |k: &str| -> Result<Option<f64>> {
+            let v = get(k);
+            if v.is_empty() {
+                return Ok(None);
+            }
+            v.parse::<f64>()
+                .ok()
+                .filter(|n| n.is_finite() && *n >= 0.0)
+                .map(Some)
+                .ok_or_else(|| bad(format!("{k} must be a number, such as 2.50")))
+        };
+        let date = |k: &str| -> Result<String> {
+            let v = get(k);
+            if v.is_empty() || dates::parse(&v).is_some() { Ok(v) } else { Err(bad(format!("{k} must be a date like 2024-03-15"))) }
+        };
         let q = Query {
             text: get("q"),
             set: get("set"),
             rarity: get("rarity"),
             finish: get("finish"),
+            condition: get("condition"),
+            language: get("language"),
+            card_type: get("card_type"),
+            lot: get("lot"),
+            has_note: flag("has_note"),
+            price_min: number("price_min")?,
+            price_max: number("price_max")?,
+            acquired_from: date("acquired_from")?,
+            acquired_to: date("acquired_to")?,
+            min_copies: number("min_copies")?.map(|n| n as i64),
+            no_price_paid: flag("no_price_paid"),
+            unpriced: flag("unpriced"),
             matches: Some(Box::new(|c: &Card| {
                 filters.iter().all(|f| params.get(&format!("f.{}", f.name)).is_none_or(|opt| is_any(opt) || (f.matches)(c, opt)))
             })),
         };
-        let filtered = sort_cards(g.store.cards_where(q.matcher()), &self.settings.get().card_order);
+        let (key, descending) = match get("sort").as_str() {
+            "" => SortKey::from_card_order(&self.settings.get().card_order),
+            k => {
+                let key = SortKey::parse(k).ok_or_else(|| {
+                    bad(format!("sort must be one of {}", SortKey::ALL.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", ")))
+                })?;
+                let descending = match get("dir").as_str() {
+                    "" | "asc" => false,
+                    "desc" => true,
+                    _ => return Err(bad("dir must be asc or desc")),
+                };
+                (key, descending)
+            }
+        };
+        let filtered = sort_cards(g.store.cards_where(q.matcher()), key, descending, g.game.rarities());
         let card_count: i64 = filtered.iter().map(Card::copy_count).sum();
         let sets: HashSet<String> = filtered.iter().map(|c| c.set.to_uppercase()).collect();
-        Reply::Json(json!({
+        let market: f64 = filtered.iter().map(|c| c.market_value().0).sum();
+        let paid: f64 = filtered.iter().map(|c| c.price_paid().0).sum();
+        let sort_name = SortKey::ALL.iter().find(|(_, k)| *k == key).map_or("name", |(n, _)| *n);
+        Ok(Reply::Json(json!({
             "total": g.store.len(), "matched": filtered.len(), "cardCount": card_count,
-            "uniqueCards": unique_cards(&filtered), "sets": sets.len(), "cards": views(&filtered),
-        }))
+            "uniqueCards": unique_cards(&filtered), "sets": sets.len(),
+            "marketValue": round_cents(market), "pricePaid": round_cents(paid),
+            "sort": sort_name, "dir": if descending { "desc" } else { "asc" },
+            "cards": views(&filtered),
+        })))
     }
 
     fn find(&self, g: &GameService, key: &str) -> Result<Card> {
@@ -532,7 +583,8 @@ impl Api {
             .games
             .iter()
             .map(|g| {
-                let matches = sort_cards(g.store.cards_where(Query { text: q.into(), ..Default::default() }.matcher()), "name");
+                let matches =
+                    sort_cards(g.store.cards_where(Query { text: q.into(), ..Default::default() }.matcher()), SortKey::Name, false, &[]);
                 let shown = &matches[..matches.len().min(200)];
                 json!({ "Game": g.game.id(), "Name": g.game.name(), "Total": matches.len(), "Cards": views(shown) })
             })

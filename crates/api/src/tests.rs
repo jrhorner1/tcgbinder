@@ -145,6 +145,43 @@ fn home_and_cards() {
 }
 
 #[test]
+fn sorting_filters_and_totals() {
+    let f = fixture();
+    let names = |path: &str| -> Vec<String> {
+        get(&f.api, path)["cards"].as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap().to_string()).collect()
+    };
+    let all = get(&f.api, "/api/games/mtg/cards");
+    assert_eq!((all["marketValue"].as_f64(), all["pricePaid"].as_f64()), (Some(0.40), Some(0.50)));
+    assert_eq!((all["sort"].as_str(), all["dir"].as_str()), (Some("name"), Some("asc")), "the Card order setting");
+    assert_eq!(names("/api/games/mtg/cards?sort=value&dir=desc"), ["Shock", "Opt"]);
+    assert_eq!(names("/api/games/mtg/cards?sort=value"), ["Opt", "Shock"], "asc without dir");
+    assert_eq!(names("/api/games/mtg/cards?sort=acquired&dir=desc"), ["Shock", "Opt"], "Opt is undated: last");
+    assert_eq!(names("/api/games/mtg/cards?sort=released&dir=desc"), ["Shock", "Opt"]);
+
+    call(&f.api, "PUT", "/api/settings", Some(json!({"card_order": "newest"})));
+    let newest = get(&f.api, "/api/games/mtg/cards");
+    assert_eq!((newest["sort"].as_str(), newest["dir"].as_str()), (Some("set"), Some("desc")));
+    assert_eq!(names("/api/games/mtg/cards?sort=name"), ["Opt", "Shock"], "sort overrides the setting");
+
+    assert_eq!(names("/api/games/mtg/cards?condition=LP"), ["Opt"]);
+    assert_eq!(names("/api/games/mtg/cards?language=en&card_type=instant&sort=name"), ["Opt", "Shock"]);
+    assert_eq!(names("/api/games/mtg/cards?price_min=0.1"), ["Shock"]);
+    assert_eq!(names("/api/games/mtg/cards?acquired_from=2018-01-01&acquired_to=2018-12-31"), ["Shock"]);
+    assert_eq!(names("/api/games/mtg/cards?min_copies=2"), ["Shock"]);
+    assert_eq!(names("/api/games/mtg/cards?no_price_paid=1"), ["Opt"]);
+    assert_eq!(names("/api/games/mtg/cards?unpriced=true"), ["Opt"]);
+    assert_eq!(names("/api/games/mtg/cards?has_note=1").len(), 0);
+    assert_eq!(names(&format!("/api/games/mtg/cards?{}=R", enc("f.Color identity"))).len(), 0, "no identity stored");
+    let matched = get(&f.api, "/api/games/mtg/cards?min_copies=2");
+    assert_eq!((matched["marketValue"].as_f64(), matched["pricePaid"].as_f64()), (Some(0.40), Some(0.50)));
+
+    for bad in ["sort=nope", "sort=name&dir=up", "price_min=cheap", "price_max=-1", "acquired_from=last%20year"] {
+        let (status, v) = call(&f.api, "GET", &format!("/api/games/mtg/cards?{bad}"), None);
+        assert_eq!(status, 400, "{bad}: {v}");
+    }
+}
+
+#[test]
 fn edit_and_delete_card() {
     let f = fixture();
     let detail = get(&f.api, &format!("/api/games/mtg/card?key={SHOCK}"));

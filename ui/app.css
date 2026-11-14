@@ -129,14 +129,14 @@ a.card { color: inherit; text-decoration: none; }
 
 /* Collection: the list (with tick boxes) beside the selected card or set. */
 .split { display: grid; grid-template-columns: minmax(320px, 40%) minmax(0, 1fr); gap: 18px; align-items: start; }
-.pane-list { position: sticky; top: 64px; display: flex; flex-direction: column; gap: 8px; max-height: calc(100vh - 110px); }
+.pane-list { min-width: 0; position: sticky; top: 64px; display: flex; flex-direction: column; gap: 8px; max-height: calc(100vh - 110px); }
 .filters { display: grid; gap: 8px; }
 .filters input[type=search] { width: 100%; }
 .filters .menus { display: grid; grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 6px; }
 .filters select.on { border-color: var(--blue); background: var(--blue-soft); }
 .filters .menus .set-menu { grid-column: 1 / -1; }
 /* Rows that are buttons or links, so the keyboard reaches them, look like rows. */
-.list button.card, .rows button.row, .list .card button.text, .list .card a.rowlink, .bars button.label {
+.list button.card, .rows button.row, .list .card button.text, .list .card button.entry, .list .card a.rowlink, .bars button.label {
   font: inherit; color: inherit; background: none; border: 0; border-radius: 0; text-align: left; white-space: normal; justify-content: flex-start;
 }
 .list button.card { width: 100%; border-bottom: 1px solid var(--line); }
@@ -159,6 +159,44 @@ a.card { color: inherit; text-decoration: none; }
 .list .card .num { color: var(--muted); min-width: 2.8em; text-align: right; font-variant-numeric: tabular-nums; }
 .list .card .owned { font-size: 12px; color: var(--green); white-space: nowrap; }
 .list .empty { padding: 10px 12px; margin: 0; }
+/* Sorting, More filters and chips. */
+.listbar { display: flex; gap: 6px; align-items: center; }
+.listbar select { flex: 1; min-width: 0; }
+.listbar .dir { padding: 5px 10px; min-width: 2.4em; }
+details.more { border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 10px; background: var(--panel); }
+details.more summary { cursor: pointer; font-size: 14px; color: var(--blue); }
+details.more[open] summary { margin-bottom: 8px; }
+details.more .menus { margin-bottom: 8px; }
+.more-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 6px 10px; }
+.more-fields label { display: grid; gap: 2px; font-size: 13px; color: var(--muted); }
+.more-fields input { width: 100%; min-width: 0; }
+.more-fields input.on { border-color: var(--blue); background: var(--blue-soft); }
+details.more .flags { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px; font-size: 14px; }
+details.more .flags label { display: flex; gap: 6px; align-items: center; }
+details.more .note { margin: 6px 0 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 13px; padding: 3px 10px; border-radius: 999px; border-color: var(--blue); background: var(--blue-soft); }
+.counts .money-line { white-space: nowrap; }
+/* A collection row: thumbnail, name and details, value. */
+.list .card button.entry { flex: 1; min-width: 0; display: flex; gap: 10px; align-items: center; padding: 0; cursor: pointer; }
+.list .card .thumb { width: 34px; aspect-ratio: 488 / 680; object-fit: cover; border-radius: 3px; flex: none; background: var(--panel-2); }
+.list .card .qty { display: none; }
+.list .card .money { margin-left: auto; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; display: flex; flex-direction: column; }
+.list .card .money small { font-weight: 400; font-size: 12px; color: var(--muted); }
+/* The grid: card images with quantity and value over them. */
+.list.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px; padding: 10px; align-content: start; }
+.list.grid .card { position: relative; flex-direction: column; padding: 0; border: 0; border-radius: 6px; }
+.list.grid .card.sel { outline: 2px solid var(--blue); outline-offset: 2px; }
+.list.grid .card input[type=checkbox] { position: absolute; top: 6px; left: 6px; z-index: 1; width: 18px; height: 18px; }
+.list.grid .card button.entry { flex-direction: column; align-items: stretch; gap: 4px; width: 100%; position: relative; }
+.list.grid .card .thumb { width: 100%; border-radius: 5%; }
+.list.grid .card .thumb.none { display: flex; align-items: center; justify-content: center; padding: 8px; text-align: center; font-size: 13px; color: var(--muted); border: 1px solid var(--line); }
+.list.grid .card .meta { display: none; }
+.list.grid .card .name { font-size: 13px; }
+.list.grid .card .qty, .list.grid .card .money { position: absolute; bottom: 26px; font-size: 12px; padding: 1px 6px; border-radius: 4px; background: rgb(0 0 0 / 72%); color: #fff; }
+.list.grid .card .qty { display: block; left: 6px; }
+.list.grid .card .money { right: 6px; margin: 0; }
+.list.grid .card .money small { display: none; }
 .selbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; }
 .selbar .count { flex: 1; min-width: 9em; font-size: 14px; }
 .selbar.ticked { border-color: var(--blue); }
@@ -266,7 +304,7 @@ dialog .form select, dialog .form input:not([type=checkbox]) { width: 100%; }
 /* Too narrow for the list beside the card: a card replaces the list (with a Back
    button); a set's page follows it. */
 @media (max-width: 1000px) {
-  .split { grid-template-columns: 1fr; }
+  .split { grid-template-columns: minmax(0, 1fr); }
   .pane-list { position: static; max-height: none; }
   .split.showing-detail .pane-list { display: none; }
   .split.no-detail .pane-detail { display: none; }

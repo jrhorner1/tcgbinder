@@ -427,6 +427,89 @@ function ticks() {
 }
 const tickInfo = (c) => ({ name: c.name, where: sn(c) });
 
+// The collection list's sort keys (as GET /cards takes them) and labels.
+const SORTS = [["name", "Name"], ["set", "Set"], ["number", "Number"], ["price", "Price each"], ["value", "Value"],
+  ["gain", "Gain / loss"], ["paid", "Price paid"], ["quantity", "Quantity"], ["acquired", "Acquired"], ["released", "Released"], ["rarity", "Rarity"]];
+// Keys that start ascending when chosen; the rest start with the most first.
+const ASCENDING_FIRST = ["name", "number"];
+// Collection URL parameters that aren't filters.
+const LIST_KEYS = ["key", "sort", "dir", "view"];
+// The filters in the More filters panel.
+const MORE_KEYS = ["condition", "language", "card_type", "lot", "price_min", "price_max", "acquired_from", "acquired_to", "min_copies", "has_note", "no_price_paid", "unpriced"];
+const FLAGS = [["has_note", "Has a note"], ["no_price_paid", "No price paid"], ["unpriced", "No market price"]];
+
+// smallImage is Scryfall's small image for a card's normal one.
+const smallImage = (uri) => uri.replace("/normal/", "/small/");
+
+// thumbnail is a card's picture in a list row (small) or the grid (normal), when images
+// are on. The grid keeps a placeholder without one.
+function thumbnail(c, grid) {
+  if (!state.settings.show_images || !c.image_uri) return grid ? h("span.thumb.none", c.name) : null;
+  const src = grid ? c.image_uri : smallImage(c.image_uri);
+  return h("img.thumb", { src, alt: "", loading: "lazy", decoding: "async",
+    onerror: (e) => { if (e.target.src !== c.image_uri) e.target.src = c.image_uri; } });
+}
+
+// moreFilters is the panel of filters beyond the four menus. It stays as the user left
+// it; the chips show what is set while it is closed.
+function moreFilters(q, nav, menu, gameFilters, lots) {
+  const f = state.filters;
+  const set = (name, value) => nav((p) => { value ? p.set(name, value) : p.delete(name); p.delete("key"); });
+  const field = (name, attrs) => h("input" + (q.get(name) ? ".on" : ""), { value: q.get(name) || "", ...attrs,
+    onchange: (e) => set(name, e.target.value.trim()) });
+  const active = MORE_KEYS.filter((k) => q.get(k)).length + gameFilters.filter((x) => q.get("f." + x.Name)).length;
+  const panel = h("details.more", { open: state.moreFilters, ontoggle: (e) => { state.moreFilters = e.target.open; } },
+    h("summary", active ? `More filters (${active})` : "More filters"),
+    h("div.menus",
+      // "Mana value: 3" rather than a bare "3" once chosen.
+      gameFilters.map((x) => menu("f." + x.Name, x.Name, x.Options, (o) => `${x.Name}: ${o}`)),
+      menu("condition", "Condition", f.conditions, (x) => choiceNames.default_condition[x] || x),
+      (f.languages || []).length ? menu("language", "Language", f.languages.map((l) => ({ value: l.code, label: l.name }))) : null,
+      lots.length ? menu("lot", "Lot", lots.map((l) => ({ value: l.id, label: l.name }))) : null),
+    h("div.more-fields",
+      h("label", "Type", field("card_type", { type: "text", placeholder: "e.g. creature" })),
+      h("label", "At least", field("min_copies", { type: "number", min: 1, step: 1, placeholder: "copies" })),
+      h("label", "Price from", field("price_min", { type: "number", min: 0, step: "0.01", placeholder: "$" })),
+      h("label", "Price to", field("price_max", { type: "number", min: 0, step: "0.01", placeholder: "$" })),
+      h("label", "Acquired from", field("acquired_from", { type: "date" })),
+      h("label", "Acquired to", field("acquired_to", { type: "date" }))),
+    h("div.flags", FLAGS.map(([name, label]) => h("label.check",
+      h("input", { type: "checkbox", checked: q.get(name) === "1", onchange: (e) => set(name, e.target.checked ? "1" : "") }), label))),
+    h("p.note", "Price is one copy's market price. Acquired matches any purchase in the range."));
+  return panel;
+}
+
+// filterChip names a filter in a removable chip.
+function filterChip(k, v, lots) {
+  const flag = FLAGS.find(([name]) => name === k);
+  if (flag) return flag[1];
+  switch (k) {
+    case "set": return `Set: ${v.toUpperCase()}`;
+    case "rarity": return `Rarity: ${title(v)}`;
+    case "finish": return `Finish: ${fname(v)}`;
+    case "condition": return `Condition: ${choiceNames.default_condition[v] || v}`;
+    case "language": return `Language: ${languageName(v)}`;
+    case "card_type": return `Type: ${v}`;
+    case "lot": return `Lot: ${lots.find((l) => l.id === v)?.name || v}`;
+    case "price_min": return `Price ≥ ${usd(Number(v))}`;
+    case "price_max": return `Price ≤ ${usd(Number(v))}`;
+    case "acquired_from": return `Acquired from ${v}`;
+    case "acquired_to": return `Acquired to ${v}`;
+    case "min_copies": return `${v}+ copies`;
+    default: return k.startsWith("f.") ? `${k.slice(2)}: ${v}` : `${k}: ${v}`;
+  }
+}
+
+// filterChips shows each filter in use (not the search) as a chip that removes it.
+function filterChips(q, nav, lots) {
+  const chips = [...q.entries()].filter(([k, v]) => v && k !== "q" && !LIST_KEYS.includes(k)).map(([k, v]) => {
+    const label = filterChip(k, v, lots);
+    return h("button.chip", { type: "button", "aria-label": `Remove the filter ${label}`,
+      onclick: () => nav((p) => { p.delete(k); p.delete("key"); }) }, label, h("span", { "aria-hidden": "true" }, " ×"));
+  });
+  return chips.length ? h("div.chips", chips) : null;
+}
+
 // The collection: filters and every matching card (each with a tick box for bulk
 // edit), and beside them the selected card's editor or, when a set is chosen, the
 // set's page.
@@ -447,21 +530,40 @@ async function viewCollection(params) {
   });
   const setMenu = menu("set", "Set", (f.sets || []).map((x) => ({ value: x.Code, label: x.Label })));
   setMenu.classList.add("set-menu"); // set names are long: the menu gets its own line
+  // The game's first filter (Magic's Color) stays in view; the rest go in More filters.
+  const [firstFilter, ...otherFilters] = f.filters || [];
   const filters = h("div.filters", search, h("div.menus",
     setMenu,
-    (f.filters || []).map((x) => menu("f." + x.Name, x.Name, x.Options)),
+    firstFilter ? menu("f." + firstFilter.Name, firstFilter.Name, firstFilter.Options) : null,
     menu("rarity", "Rarity", f.rarities, title),
     menu("finish", "Finish", f.finishes, fname)));
 
   const apiQ = new URLSearchParams(q);
-  apiQ.delete("key");
-  const data = await api("GET", gameAPI(`/cards?${apiQ}`));
-  const filtering = [...apiQ.keys()].length > 0;
+  for (const k of LIST_KEYS) if (k !== "sort" && k !== "dir") apiQ.delete(k);
+  const [data, lots] = await Promise.all([api("GET", gameAPI(`/cards?${apiQ}`)), loadLots()]);
+  const filtering = [...apiQ.keys()].some((k) => !LIST_KEYS.includes(k));
+  const grid = q.get("view") === "grid";
+  filters.append(...[moreFilters(q, nav, menu, otherFilters, lots), filterChips(q, nav, lots)].filter(Boolean));
   const ticked = ticks();
   if (!filtering) { // every card is listed: drop ticks for cards no longer owned
     const keys = new Set(data.cards.map((c) => c.key));
     for (const k of [...ticked.keys()]) if (!keys.has(k)) ticked.delete(k);
   }
+
+  // Sorting and the list or grid view, kept in the URL with the filters.
+  const sortMenu = h("select", { "aria-label": "Sort by", onchange: (e) => nav((p) => {
+    p.set("sort", e.target.value);
+    p.set("dir", ASCENDING_FIRST.includes(e.target.value) ? "asc" : "desc");
+  }, true) }, SORTS.map(([v, label]) => h("option", { value: v, selected: data.sort === v }, `Sort: ${label}`)));
+  const desc = data.dir === "desc";
+  const dirButton = h("button.dir", { type: "button", "aria-label": desc ? "Descending; switch to ascending" : "Ascending; switch to descending",
+    title: desc ? "Descending" : "Ascending",
+    onclick: () => nav((p) => { p.set("sort", data.sort); p.set("dir", desc ? "asc" : "desc"); }, true) }, desc ? "↓" : "↑");
+  const viewToggle = h("div.ranges", { role: "group", "aria-label": "Show as" },
+    [["list", "List"], ["grid", "Grid"]].map(([v, label]) => h("button" + ((v === "grid") === grid ? ".on" : ""), {
+      type: "button", "aria-pressed": String((v === "grid") === grid),
+      onclick: () => nav((p) => { v === "grid" ? p.set("view", "grid") : p.delete("view"); }, true) }, label)));
+  const listbar = h("div.listbar", sortMenu, dirButton, viewToggle);
 
   const boxes = new Map();
   const row = (c) => {
@@ -469,15 +571,25 @@ async function viewCollection(params) {
       onclick: (e) => e.stopPropagation(),
       onchange: (e) => { e.target.checked ? ticked.set(c.key, tickInfo(c)) : ticked.delete(c.key); updateBar(); } });
     boxes.set(c.key, box);
+    const priced = (c.purchases || []).some((p) => p.market > 0);
     // The tick box and the button that opens the card sit side by side.
     return h("div.card" + (c.key === q.get("key") ? ".sel" : ""),
-      box, h("button.text", { type: "button", onclick: () => openCard(c.key) },
-        h("span.name", c.name), h("span.meta", [sn(c), copiesSummary(c), englishPrice(c), noted(c)].filter(Boolean).join(" · "))));
+      box, h("button.entry", { type: "button", onclick: () => openCard(c.key) },
+        thumbnail(c, grid),
+        h("span.text", h("span.name", c.name), h("span.meta", [sn(c), copiesSummary(c), englishPrice(c), noted(c)].filter(Boolean).join(" · "))),
+        h("span.qty", `×${c.copy_count}`),
+        // "each" only when every copy is one finish: with two, one price doesn't fit them all.
+        h("span.money", priced ? usd(c.market_value) : "—",
+          c.copy_count > 1 && priced && new Set(c.purchases.map((p) => p.finish)).size === 1 ? h("small", `${usd(c.each)} each`) : null)));
   };
-  const list = h("div.list", data.cards.length ? data.cards.map(row) : h("p.muted.empty", "No cards match."));
+  const list = h("div.list" + (grid ? ".grid" : ""), data.cards.length ? data.cards.map(row) : h("p.muted.empty", "No cards match."));
 
   const counts = `${plural(data.uniqueCards, "unique card", "unique cards")} · ${plural(data.cardCount, "card", "cards")} · ${plural(data.sets, "set", "sets")}`;
-  const clear = filtering ? h("button.link", { type: "button", onclick: () => go("collection") }, "Clear filters") : null;
+  const money = `${usd(data.marketValue)} value · ${usd(data.pricePaid)} paid`;
+  const clear = filtering ? h("button.link", { type: "button", onclick: () => {
+    const keep = new URLSearchParams([...q.entries()].filter(([k]) => LIST_KEYS.includes(k) && k !== "key"));
+    go("collection", keep);
+  } }, "Clear filters") : null;
 
   // The selection bar: how many are ticked, and the bulk edit actions.
   const count = h("span.count");
@@ -496,7 +608,9 @@ async function viewCollection(params) {
   updateBar();
 
   const detail = h("div.pane-detail");
-  const split = h("div.split", h("div.pane-list", filters, h("p.counts.muted", h("span", filtering ? `Matching: ${counts}` : counts), clear), list, bar), detail);
+  const split = h("div.split", h("div.pane-list", filters,
+    h("p.counts.muted", h("span", filtering ? `Matching: ${counts}` : counts, h("span.money-line", ` · ${money}`)), clear),
+    listbar, list, bar), detail);
   fill($("#main"), split);
   if (q.get("key")) {
     split.classList.add("showing-detail");

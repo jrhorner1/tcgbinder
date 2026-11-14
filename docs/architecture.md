@@ -179,7 +179,9 @@ Code uses the UI's words, so a label on screen leads straight to the code behind
 | Collector number, rules text | `Card::collector_number`, `Card::rules_text` |
 | Bulk edit | `collection::BulkChange`, `Store::bulk_edit` |
 | Load / Update price history | `GameService::load_price_history`, `PriceHistory::history_loaded_on` |
-| Card order (Settings) | `Settings::card_order`, `collection::sort_cards` |
+| Card order (Settings) | `Settings::card_order`, `SortKey::from_card_order` |
+| Collection list: Sort menu | `collection::SortKey`, `collection::sort_cards` (key, direction, the game's rarity order) |
+| Collection list: filters and More filters | `collection::Query` (core filters), `Game::filters` (Magic's Color, Color identity, Mana value) |
 
 ## Card scanning
 

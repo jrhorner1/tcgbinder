@@ -40,11 +40,28 @@ as soon as the import finishes.
 
 ## Collection
 
-- **Browse:** every card is listed with its set, number and copies, in name order, by
-  set, or most valuable first, as **Settings → Card order** says.
-- **Filter:** search by name, set, collector number or a purchase's note, and filter by set, color,
-  rarity and finish. The line under the filters counts unique cards, cards and sets;
-  **Clear filters** shows everything again.
+- **Browse:** every card is listed with its set, number and copies, and on the right
+  what all its copies are worth (with the price of one copy underneath when there are
+  several in one finish). With card images on, each row has a small picture.
+- **Sort:** the **Sort** menu above the list orders by name, set (release date, then
+  collector number), number, price of one copy, value of every copy, gain or loss
+  (cards with no price paid last), price paid, quantity, acquired date (the earliest
+  purchase; undated cards last), release date, or rarity. The arrow beside it turns
+  the order around. Choosing a sort starts with the most first, except for name and
+  number. Until you choose one, the list follows **Settings → Card order**.
+- **List or grid:** **Grid** shows the cards as pictures, with the number of copies
+  and their value on each.
+- **Filter:** search by name, set, collector number or a purchase's note, and filter by
+  set, color, rarity and finish. **More filters** adds color identity, mana value,
+  condition (any copy in it), language, lot, type ("creature" matches every type line
+  with it), price of one copy (from and to), acquired date (any purchase in the
+  range), a minimum number of copies, and cards that have a note, have a copy with no
+  price paid, or have a copy with no market price. Each filter in use shows as a chip
+  under the filters; click the chip to remove it.
+- The line under the filters counts unique cards, cards and sets, and adds up the
+  market value and price paid of the cards shown. **Clear filters** shows everything
+  again and keeps the sort and view. Sort, view and filters are part of the page's
+  address, so a bookmark keeps them.
 - **Set pages:** choose a set in the **Set** filter, or click a set on Home. They show
   completion, value, the most valuable cards (ranked by one copy), and **Missing
   Cards**. That list is loaded from Scryfall on request; click a missing card to add
@@ -248,7 +265,7 @@ and the desktop and web apps on one computer share them.
 | Theme | Match system, Light, Dark | Match system |
 | Text size | Small, Normal, Large, Larger | Normal |
 | Card images | show or hide (saves data on metered connections) | shown |
-| Card order | By name, By set (newest or oldest first), Most valuable first | By name |
+| Card order | The collection list's order until you choose one in its Sort menu: By name, By set (newest or oldest first), Most valuable first | By name |
 | Value chart | 30 days, 90 days, 1 year, All time (also changed by the chart's buttons) | 90 days |
 | Update prices | Daily, Weekly, Only when I ask | Daily |
 | Price history | load automatically the first time (desktop and web; phones ask) | on |

@@ -199,14 +199,24 @@ fn cumulative(by_date: &BTreeMap<NaiveDate, f64>, undated: f64, today: NaiveDate
     out
 }
 
-/// Rounds dollars to whole cents.
+/// Rounds dollars to whole cents. Never -0 (an empty sum is -0.0), which JSON would
+/// show as "-0.0".
 pub fn round_cents(v: f64) -> f64 {
-    (v * 100.0).round() / 100.0
+    (v * 100.0).round() / 100.0 + 0.0
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cents_without_negative_zero() {
+        let empty: f64 = std::iter::empty::<f64>().sum();
+        assert!(round_cents(empty).is_sign_positive());
+        assert!(round_cents(-0.001).is_sign_positive());
+        assert_eq!(round_cents(1.005_1), 1.01);
+        assert_eq!(round_cents(-2.345_1), -2.35);
+    }
     use crate::collection::{Condition, Purchase};
 
     fn day(s: &str) -> NaiveDate {

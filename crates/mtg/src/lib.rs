@@ -342,7 +342,12 @@ impl Game for Magic {
     }
 
     fn filters(&self) -> Vec<Filter> {
-        vec![Filter { name: "Color", options: &["W", "U", "B", "R", "G", COLOR_MULTICOLOR, COLOR_COLORLESS], matches: matches_color }]
+        const COLORS: &[&str] = &["W", "U", "B", "R", "G", COLOR_MULTICOLOR, COLOR_COLORLESS];
+        vec![
+            Filter { name: "Color", options: COLORS, matches: matches_color },
+            Filter { name: "Color identity", options: COLORS, matches: matches_color_identity },
+            Filter { name: "Mana value", options: &["0", "1", "2", "3", "4", "5", "6", "7+"], matches: matches_mana_value },
+        ]
     }
 
     fn details(&self, c: &Card) -> Vec<Row> {
@@ -369,11 +374,28 @@ const COLOR_COLORLESS: &str = "Colorless";
 
 /// A single color also matches the multicolor cards that include it.
 fn matches_color(c: &Card, want: &str) -> bool {
-    let colors = c.attr_strings("colors");
+    matches_colors(&c.attr_strings("colors"), want)
+}
+
+/// Color identity, as Commander uses it: the same choices as Color.
+fn matches_color_identity(c: &Card, want: &str) -> bool {
+    matches_colors(&c.attr_strings("color_identity"), want)
+}
+
+fn matches_colors(colors: &[&str], want: &str) -> bool {
     match want {
         COLOR_COLORLESS => colors.is_empty(),
         COLOR_MULTICOLOR => colors.len() > 1,
         _ => colors.iter().any(|col| col.eq_ignore_ascii_case(want)),
+    }
+}
+
+/// Mana value: "0" to "6" exactly, "7+" for seven or more.
+fn matches_mana_value(c: &Card, want: &str) -> bool {
+    let Some(mv) = c.attrs.get("cmc").and_then(Value::as_f64) else { return false };
+    match want.strip_suffix('+') {
+        Some(min) => min.parse::<f64>().is_ok_and(|min| mv >= min),
+        None => want.parse::<f64>().is_ok_and(|n| mv == n),
     }
 }
 
@@ -455,6 +477,23 @@ mod tests {
         }
         assert_eq!(Magic::default().finish_name("nonfoil"), "Normal");
         assert_eq!(Magic::default().finish_name("etched"), "Etched");
+    }
+
+    #[test]
+    fn identity_and_mana_value_filters() {
+        let mut c = Card::default();
+        c.set_attr("colors", Vec::<String>::new());
+        c.set_attr("color_identity", vec!["G", "U"]);
+        c.set_attr("cmc", 7.0);
+        assert!(!matches_color(&c, "G") && matches_color(&c, COLOR_COLORLESS), "an artifact with a green-blue ability");
+        assert!(matches_color_identity(&c, "G") && matches_color_identity(&c, COLOR_MULTICOLOR));
+        assert!(!matches_color_identity(&c, COLOR_COLORLESS));
+        assert!(matches_mana_value(&c, "7+") && matches_mana_value(&c, "7") && !matches_mana_value(&c, "6"));
+        c.set_attr("cmc", 3.0);
+        assert!(matches_mana_value(&c, "3") && !matches_mana_value(&c, "7+"));
+        assert!(!matches_mana_value(&Card::default(), "0"), "no mana value: matches nothing");
+        let names: Vec<&str> = Magic::default().filters().iter().map(|f| f.name).collect();
+        assert_eq!(names, ["Color", "Color identity", "Mana value"]);
     }
 
     /// A fake Scryfall with Sol Ring in Commander 2021 (263) in English ($1.85) and
