@@ -615,6 +615,7 @@ function closeCard() {
 // renderCard is the card editor: the card, its value, and "Your Copies", one row per
 // purchase.
 async function renderCard(container, key) {
+  await loadLots();
   const d = await api("GET", gameAPI(`/card?key=${encodeURIComponent(key)}`));
   const c = d.card;
   const err = h("p.error");
@@ -649,11 +650,16 @@ async function renderCard(container, key) {
       date: h("input", { type: "date", value: l.acquired_date || "", "aria-label": "Acquired" }),
       note: h("input", { type: "text", value: l.note || "", placeholder: "Note: where they're kept, who they're for…", "aria-label": "Note" }),
     };
+    r.lot = l.lot || "";
     // The note sits on its own line, folded away as "Add a note" until used.
     const noteBox = h("div.purchase-note");
-    const showNote = () => { fill(noteBox, r.note); r.note.focus(); };
-    if (l.note) fill(noteBox, r.note);
-    else fill(noteBox, h("button.link", { type: "button", onclick: showNote }, "Add a note"));
+    const showNote = () => { fill(noteBox, r.note, lotLine); r.note.focus(); };
+    // A purchase from a lot names it; the lot sets its price.
+    const lotName = r.lot ? ((state.lots || []).find((x) => x.id === r.lot) || {}).name || "a lot" : "";
+    const lotLine = r.lot ? h("p.note", "From ", h("a", { href: `#/lots?id=${encodeURIComponent(r.lot)}` }, lotName),
+      ". The lot sets the price paid; a price typed here is replaced the next time the lot is repriced.") : null;
+    if (l.note) fill(noteBox, r.note, lotLine);
+    else fill(noteBox, h("button.link", { type: "button", onclick: showNote }, "Add a note"), lotLine);
     r.el = h("div.purchase-row",
       h("div.purchase", r.finish, r.cond, r.qty, r.price, r.date,
         h("button", { type: "button", title: "Remove this purchase", "aria-label": "Remove this purchase", onclick: () => {
@@ -679,7 +685,7 @@ async function renderCard(container, key) {
       const quantity = parseInt(r.qty.value, 10);
       if (!Number.isInteger(quantity) || quantity < 0) { err.textContent = "Quantities must be whole numbers (0 or more)."; r.qty.focus(); return; }
       if (quantity === 0) continue;
-      purchases.push({ finish: r.finish.value, condition: r.cond.value, quantity, price_paid: r.price.value ? parseFloat(r.price.value) : 0, acquired_date: r.date.value, note: r.note.value.trim() });
+      purchases.push({ finish: r.finish.value, condition: r.cond.value, quantity, price_paid: r.price.value ? parseFloat(r.price.value) : 0, acquired_date: r.date.value, note: r.note.value.trim(), lot: r.lot });
     }
     if (!purchases.length && !ask(`Remove all of ${c.name} from your collection?`)) return;
     try {
@@ -790,8 +796,9 @@ function addDefaults() {
 // addCard adds copies of a catalog card and remembers the details for the next one.
 async function addCard(c, d) {
   const r = await api("POST", gameAPI("/cards"), { card: c, quantity: d.quantity, finish: d.finish, condition: d.condition,
-    price_paid: d.price ? parseFloat(d.price) : 0, acquired_date: d.date });
-  state.addDefaults = { finish: d.finish, condition: d.condition, price: d.price, date: d.date };
+    price_paid: d.price ? parseFloat(d.price) : 0, acquired_date: d.date, lot: d.lot || "" });
+  if (!d.lot) state.addDefaults = { finish: d.finish, condition: d.condition, price: d.price, date: d.date };
+  else state.addDefaults = { ...addDefaults(), finish: d.finish, condition: d.condition };
   await loadFilters();
   return r;
 }
@@ -799,7 +806,7 @@ async function addCard(c, d) {
 // addForm shows a catalog card with the details of the copies to add. After adding,
 // onAdded(r, card, details) decides what happens next (by default, open the card).
 // Returns { add } so a keyboard shortcut can add without clicking.
-function addForm(container, c, owned, onAdded) {
+function addForm(container, c, owned, onAdded, lot) {
   const d0 = addDefaults();
   const qty = h("input", { type: "number", min: 1, step: 1, value: 1, "aria-label": "Quantity" });
   const finishes = c.finishes && c.finishes.length ? c.finishes : state.filters.finishes;
@@ -811,7 +818,7 @@ function addForm(container, c, owned, onAdded) {
   const add = async () => {
     const quantity = parseInt(qty.value, 10);
     if (!Number.isInteger(quantity) || quantity < 1) { err.textContent = "Quantity must be at least 1."; return; }
-    const details = { quantity, finish: finish.value, condition: cond.value, price: price.value, date: date.value };
+    const details = { quantity, finish: finish.value, condition: cond.value, price: price.value, date: date.value, lot: lot ? lot.id : "" };
     try {
       const r = await addCard(c, details);
       status(`Added ${quantity}× ${c.name} (${sn(c)})${r.alreadyOwned ? " to the copies you already had" : ""}`);
@@ -826,14 +833,14 @@ function addForm(container, c, owned, onAdded) {
       cardImage(c),
       h("div", c.type_line ? h("p", h("strong", c.type_line)) : null, c.oracle_text ? h("p.rules", c.oracle_text) : null,
         h("div.form", h("label", "Quantity"), qty, h("label", "Finish"), finish, h("label", "Condition"), cond,
-          h("label", "Price paid (each)"), price, h("label", "Acquired"), date),
+          lot ? [h("label", "Price and date"), h("span.muted", `Set by the lot “${lot.name}”`)] : [h("label", "Price paid (each)"), price, h("label", "Acquired"), date]),
         err, h("button.primary", { type: "button", onclick: add }, "Add to collection")))));
   return { add };
 }
 
 // pickList lists catalog cards; picking one shows its add form in `preview`. The
 // returned select(i) picks one from the keyboard.
-function pickList(cards, owned, preview, onAdded) {
+function pickList(cards, owned, preview, onAdded, lot) {
   const picker = { current: null, index: -1 };
   const items = cards.map((c, i) => h("div.card", { role: "button", tabindex: -1, onclick: () => picker.select(i) },
     h("div.text", h("strong", c.name),
@@ -846,7 +853,7 @@ function pickList(cards, owned, preview, onAdded) {
     items[i].classList.add("sel");
     items[i].scrollIntoView({ block: "nearest" });
     picker.index = i;
-    picker.current = addForm(preview, cards[i], owned[i], onAdded);
+    picker.current = addForm(preview, cards[i], owned[i], onAdded, lot);
   };
   return picker;
 }
@@ -863,7 +870,25 @@ function viewAdd(params) {
   const results = h("div.list.results", h("p.muted.empty", "Search by name, set code, or both, then pick a printing. ↑ ↓ move through the results; Enter adds."));
   const preview = h("div");
   const session = h("div.session");
+  const banner = h("div");
   let next = "", cards = [], owned = [], total = 0, picker = null, armed = false;
+  let lot = state.activeLot ? (state.lots || []).find((l) => l.id === state.activeLot && l.open) : null;
+  // The lot being entered: what's in it so far, with Pause and Finish. Without one,
+  // an open lot is offered again.
+  const showBanner = () => {
+    if (!lot) {
+      const open = (state.lots || []).filter((l) => l.open);
+      fill(banner, open.map((l) => h("div.card-box.notice.lot-banner", h("span", "An unfinished lot: ", h("strong", l.name), ` — ${lotProgress(l)}`),
+        h("button", { type: "button", onclick: () => { state.activeLot = l.id; lot = l; showBanner(); refreshPicker(); } }, "Continue adding"))),
+        h("p", h("button", { type: "button", onclick: () => showLotDialog(null, (l) => { state.activeLot = l.id; lot = l; showBanner(); refreshPicker(); }) }, "Add a lot…"),
+          h("span.muted", " Cards bought together for one price, such as a bulk lot or a bundle.")));
+      return;
+    }
+    fill(banner, h("div.card-box.notice.lot-banner",
+      h("div", h("strong", lot.name), h("div.muted", [lotProgress(lot), lot.split === "even" ? `${usd4(lot.priceEach)} each` : `worth ${usd(lot.marketValue)} so far`].join(" · "))),
+      h("div.right", h("button", { type: "button", onclick: () => { state.activeLot = null; lot = null; showBanner(); refreshPicker(); } }, "Pause"),
+        h("button.primary", { type: "button", onclick: () => finishLot(lot, () => { state.activeLot = null; lot = null; showBanner(); refreshPicker(); }) }, "Finish"))));
+  };
 
   const showSession = () => {
     const added = state.added || [];
@@ -878,8 +903,9 @@ function viewAdd(params) {
       const d = await api("GET", gameAPI(`/card?key=${encodeURIComponent(a.key)}`));
       const price = a.price ? parseFloat(a.price) : 0;
       let left = a.quantity;
+      const same = (p) => a.lot ? p.lot === a.lot : p.price_paid === price && p.acquired_date === a.date && !p.lot;
       const purchases = d.card.purchases.map((p) => {
-        if (left > 0 && p.finish === a.finish && p.condition === a.condition && p.price_paid === price && p.acquired_date === a.date && !p.note) {
+        if (left > 0 && p.finish === a.finish && p.condition === a.condition && same(p) && !p.note) {
           const take = Math.min(left, p.quantity);
           left -= take;
           return { ...p, quantity: p.quantity - take };
@@ -888,6 +914,10 @@ function viewAdd(params) {
       }).filter((p) => p.quantity > 0);
       if (left > 0) throw new Error(`${a.name} has changed since it was added; change it on its card page instead.`);
       await api("PUT", gameAPI(`/card?key=${encodeURIComponent(a.key)}`), { purchases });
+      if (a.lot) { // the lot's other cards are repriced without these copies
+        const r = await api("PUT", gameAPI(`/lots?id=${encodeURIComponent(a.lot)}`), { recalculate: true });
+        if (lot && lot.id === a.lot) { lot = r.lot; showBanner(); }
+      }
       a.undone = true;
       status(`Took back ${a.quantity}× ${a.name}`);
       await loadFilters();
@@ -897,7 +927,8 @@ function viewAdd(params) {
   // After adding: stay here, ready for the next card.
   const onAdded = (r, c, d) => {
     (state.added = state.added || []).push({ key: r.key, name: c.name, set: c.set, number: c.collector_number, quantity: d.quantity,
-      finish: d.finish, condition: d.condition, price: d.price, date: d.date });
+      finish: d.finish, condition: d.condition, price: d.price, date: d.date, lot: d.lot });
+    if (r.lot) { lot = r.lot; showBanner(); }
     showSession();
     text.value = "";
     hideSuggest();
@@ -905,8 +936,10 @@ function viewAdd(params) {
     text.focus();
   };
 
+  // refreshPicker rebuilds the results so their add form follows the active lot.
+  const refreshPicker = () => { if (picker && cards.length) { const i = picker.index; render(); picker.select(Math.max(i, 0)); } };
   const render = () => {
-    picker = pickList(cards, owned, preview, onAdded);
+    picker = pickList(cards, owned, preview, onAdded, lot);
     fill(results,
       h("p.muted.empty", cards.length ? (total > cards.length ? `Showing ${cards.length} of ${total} printings` : plural(total, "printing", "printings") + " found") : "No cards found."),
       picker.items,
@@ -984,7 +1017,8 @@ function viewAdd(params) {
       try {
         const p = await api("POST", gameAPI("/import?preview=1"), new Blob([listBox.value], { type: "text/plain" }));
         status("");
-        showImportPreview(listOut, p, "pasted list", () => fill(listOut));
+        showImportPreview(listOut, p, lot ? `pasted list for ${lot.name}` : "pasted list", () => fill(listOut), lot,
+          (r) => { if (r.lot) { lot = r.lot; showBanner(); } });
       } catch (e) { status(e.message, true); }
     } }, "Preview"))),
     listOut);
@@ -993,8 +1027,9 @@ function viewAdd(params) {
   const form = h("form.search", { onsubmit: (e) => { e.preventDefault(); run(false); } },
     h("div.suggest-wrap", text, suggest), set, h("button.primary", { type: "submit" }, "Search"),
     pasteBtn, gameInfo().Scan ? h("a.button", { href: "#/scan" }, "Scan a card") : null);
-  fill($("#main"), h("h1", "Add Cards"), form, listPanel, h("div.split", h("div.pane-list", results, session), preview));
+  fill($("#main"), h("h1", "Add Cards"), banner, form, listPanel, h("div.split", h("div.pane-list", results, session), preview));
   showSession();
+  loadLots().then(() => { if (lot) lot = (state.lots || []).find((l) => l.id === lot.id) || lot; showBanner(); });
   if (state.info.client !== "phone") text.focus(); // on phones the keyboard would cover the page
   if (pre.get("text") || pre.get("set")) run(false);
 }
@@ -1165,13 +1200,14 @@ function unmatchedLink(p, fileName) {
 }
 
 // showImportPreview shows what importing would do, with Import and Cancel.
-function showImportPreview(out, p, fileName, cancel) {
+function showImportPreview(out, p, fileName, cancel, lot, done) {
   const importBtn = h("button.primary", { type: "button", onclick: async () => {
     importBtn.disabled = true;
     status(`Importing ${plural(p.copies, "card", "cards")}…`);
     try {
-      const r = await api("POST", gameAPI("/import/commit"), { token: p.token });
-      status(`Imported ${plural(r.cards, "card", "cards")} from ${r.format}.`, false, r.undo);
+      const r = await api("POST", gameAPI("/import/commit"), lot ? { token: p.token, lot: lot.id } : { token: p.token });
+      status(`Imported ${plural(r.cards, "card", "cards")} from ${r.format}${lot ? ` into ${lot.name}` : ""}.`, false, r.undo);
+      if (done) done(r);
       fill(out, h("h2", "Import Complete"), h("pre.summary", r.summary));
       await loadFilters();
     } catch (e) { status(e.message, true); importBtn.disabled = false; }
@@ -1217,6 +1253,188 @@ async function viewBackups() {
     })) : h("p.muted", "No backups yet. One is made before your first import or bulk change."));
 }
 
+// --- Lots ----------------------------------------------------------------------
+
+// loadLots keeps the game's lots in state.lots (for names and the Add page).
+async function loadLots() {
+  try { state.lots = await api("GET", gameAPI("/lots")); } catch { state.lots = state.lots || []; }
+  return state.lots;
+}
+
+// usd4 shows a lot's price per card to four decimal places, as the lot keeps it.
+const usd4 = (v) => (v === null || v === undefined ? "—" : "$" + v.toFixed(4));
+
+// lotProgress says how much of a lot has been entered: "37 of 500 entered".
+const lotProgress = (l) => (l.expected !== null ? `${l.entered} of ${l.expected} entered` : `${plural(l.entered, "card", "cards")} entered`);
+
+// lotCountText describes how a lot was counted.
+function lotCountText(l) {
+  const c = l.count;
+  if (c.kind === "known") return `${plural(c.cards, "card", "cards")}, counted`;
+  if (c.kind === "bundle") return `a bundle: ${c.packs} packs × ${c.cards_per_pack}${c.extra_cards ? ` + ${c.extra_cards} other cards` : ""}${c.lands ? ` + ${c.lands} basic lands${c.lands_share_cost ? "" : " (free)"}` : ""}`;
+  return "counted as they're added";
+}
+
+// showLotDialog creates a lot (lot null) or edits one, then calls done(lot).
+function showLotDialog(lot, done) {
+  const l = lot || { name: "", total_paid: "", acquired_date: today(), count: { kind: "known", cards: "" }, split: "by_value", note: "" };
+  const dlg = $("#dialog");
+  const name = h("input", { type: "text", value: l.name, placeholder: "e.g. 500-card lot from eBay", "aria-label": "Name" });
+  const total = h("input", { type: "number", min: 0, step: "0.01", value: l.total_paid, placeholder: "0.00", "aria-label": "Total paid" });
+  const date = h("input", { type: "date", value: l.acquired_date, "aria-label": "Acquired" });
+  const c = l.count;
+  const kind = h("select", { "aria-label": "How many cards", onchange: () => { showKind(); preview(); } },
+    h("option", { value: "known", selected: c.kind === "known" }, "I counted them"),
+    h("option", { value: "bundle", selected: c.kind === "bundle" }, "It's a bundle"),
+    h("option", { value: "as_entered", selected: c.kind === "as_entered" }, "I'll count as I add"));
+  const num = (v, label, min) => h("input", { type: "number", min: min ?? 0, step: 1, value: v ?? "", "aria-label": label, oninput: () => preview() });
+  const cards = num(c.kind === "known" ? c.cards : "", "Cards", 1);
+  const packs = num(c.kind === "bundle" ? c.packs : 9, "Packs");
+  const perPack = num(c.kind === "bundle" ? c.cards_per_pack : 14, "Cards per pack");
+  const extra = num(c.kind === "bundle" ? c.extra_cards : 0, "Other cards");
+  const lands = num(c.kind === "bundle" ? c.lands : 0, "Basic lands");
+  const share = h("input", { type: "checkbox", checked: c.kind === "bundle" && c.lands_share_cost, onchange: () => preview() });
+  const knownRows = h("div.form", h("label", "Cards"), cards);
+  const bundleRows = h("div.form", h("label", "Packs"), packs, h("label", "Cards per pack"), perPack, h("label", "Other cards"), extra,
+    h("label", "Basic lands"), lands, h("label", ""), h("label.check", share, "Lands share the cost"));
+  const showKind = () => { knownRows.hidden = kind.value !== "known"; bundleRows.hidden = kind.value !== "bundle"; };
+  const split = h("select", { "aria-label": "Split the cost", onchange: () => preview() },
+    h("option", { value: "by_value", selected: l.split !== "even" }, "By each card's market value"),
+    h("option", { value: "even", selected: l.split === "even" }, "Evenly"));
+  const note = h("input", { type: "text", value: l.note || "", "aria-label": "Note" });
+  const result = h("p.note");
+  const err = h("p.error");
+  const count = () => kind.value === "known" ? { kind: "known", cards: parseInt(cards.value, 10) || 0 }
+    : kind.value === "bundle" ? { kind: "bundle", packs: parseInt(packs.value, 10) || 0, cards_per_pack: parseInt(perPack.value, 10) || 0,
+      extra_cards: parseInt(extra.value, 10) || 0, lands: parseInt(lands.value, 10) || 0, lands_share_cost: share.checked }
+    : { kind: "as_entered" };
+  const preview = () => {
+    const n = count();
+    const divisor = n.kind === "known" ? n.cards : n.kind === "bundle" ? n.packs * n.cards_per_pack + n.extra_cards + (n.lands_share_cost ? n.lands : 0) : 0;
+    const paid = parseFloat(total.value) || 0;
+    if (split.value === "by_value") result.textContent = "Each card's price is worked out from its market value when you finish the lot. Until then, cards carry an even share.";
+    else if (n.kind === "as_entered") result.textContent = "The total is divided by the cards entered, so every card's price changes as you add more.";
+    else result.textContent = divisor > 0 ? `${plural(divisor, "card", "cards")}, $${(Math.round(paid / divisor * 10000) / 10000).toFixed(4)} each` : "";
+  };
+  [total].forEach((x) => x.addEventListener("input", preview));
+  const save = async () => {
+    err.textContent = "";
+    const body = { name: name.value.trim(), total_paid: parseFloat(total.value) || 0, acquired_date: date.value, count: count(), split: split.value, note: note.value.trim() };
+    try {
+      const r = lot ? (await api("PUT", gameAPI(`/lots?id=${encodeURIComponent(lot.id)}`), body)).lot : await api("POST", gameAPI("/lots"), body);
+      dlg.close();
+      await loadLots();
+      status(lot ? `Saved ${r.name}.` : `Started ${r.name}: cards you add now belong to it.`);
+      done(r);
+    } catch (e) { err.textContent = e.message; }
+  };
+  fill(dlg, h("div.dlg", h("header", h("h2", lot ? "Edit lot" : "Add a lot")),
+    h("div.body",
+      h("div.form", h("label", "Name"), name, h("label", "Total paid"), total, h("label", "Acquired"), date, h("label", "How many cards?"), kind),
+      knownRows, bundleRows,
+      h("div.form", h("label", "Split the cost"), split, h("label", "Note"), note),
+      result, err),
+    h("footer", h("button", { type: "button", onclick: () => dlg.close() }, "Cancel"), h("button.primary", { type: "button", onclick: save }, lot ? "Save" : "Start adding"))));
+  showKind();
+  preview();
+  dlg.showModal();
+  name.focus();
+}
+
+// finishLot finishes a lot: for a value split it first shows what each card will be
+// costed at; for a short even-split lot it asks which count to divide by.
+async function finishLot(lot, done) {
+  if (lot.split === "by_value") {
+    const pct = lot.marketValue > 0 ? Math.round(lot.total_paid / lot.marketValue * 1000) / 10 : null;
+    const ok = await askDialog("Finish the lot", [`Paid ${usd(lot.total_paid)} for cards worth ${usd(lot.marketValue)} now.`,
+      pct !== null ? `Each card will be costed at ${pct}% of its market price (prices from earlier days are refreshed first).` : "None of its cards has a market price, so the total will be split evenly."],
+      [{ label: "Finish", value: true, primary: true }]);
+    if (!ok) return;
+  }
+  try {
+    const path = gameAPI(`/lots?id=${encodeURIComponent(lot.id)}`);
+    const r = await api("PUT", path, { open: false });
+    if (r.short && r.lot.split === "even") {
+      const spread = await askDialog("Fewer cards than counted", [`You entered ${r.short.entered} of ${r.short.expected} cards. Spread ${usd(r.lot.total_paid)} over the ${r.short.entered} entered, or keep it at ${r.short.expected}?`],
+        [{ label: `Keep ${r.short.expected}`, value: "keep" }, { label: `Spread over ${r.short.entered}`, value: "spread", primary: true }]);
+      if (spread === "spread") await api("PUT", path, { count: { kind: "known", cards: r.short.entered } });
+    }
+    await loadLots();
+    await loadFilters();
+    status(`Finished ${r.lot.name}.${r.note ? " " + r.note : ""}${r.outcome && r.outcome.percent !== null ? ` Each card is costed at ${r.outcome.percent}% of its market price.` : ""}`);
+    done(r.lot);
+  } catch (e) { status(e.message, true); }
+}
+
+// Lots: each lot with what it cost and what its cards are worth now; with ?id=, one
+// lot and its cards.
+async function viewLots(params) {
+  const id = new URLSearchParams(params).get("id");
+  if (id) return viewLot(id);
+  const lots = await loadLots();
+  fill($("#main"), h("h1", "Lots"),
+    h("p.muted", "Cards bought together for one price. Start one from Add cards → Add a lot…"),
+    lots.length ? h("div.list", lots.map((l) => h("a.card", { href: `#/lots?id=${encodeURIComponent(l.id)}` },
+      h("div.text", h("span.name", l.name, l.open ? h("span.muted", " · being entered") : null),
+        h("span.meta", [l.acquired_date, `paid ${usd(l.total_paid)}`, plural(l.copies, "card", "cards"), `worth ${usd(l.marketValue)} now`].filter(Boolean).join(" · "))))))
+      : h("p.muted", "No lots yet."),
+    h("p", h("a.button", { href: "#/add" }, "Add a lot…")));
+}
+
+async function viewLot(id) {
+  const d = await api("GET", gameAPI(`/lots?id=${encodeURIComponent(id)}`));
+  const l = d.lot;
+  const g = gain(l.total_paid, l.marketValue);
+  const path = gameAPI(`/lots?id=${encodeURIComponent(id)}`);
+  const continueAdding = async () => {
+    try {
+      if (!l.open) await api("PUT", path, { open: true });
+      state.activeLot = l.id;
+      await loadLots();
+      go("add");
+    } catch (e) { status(e.message, true); }
+  };
+  const recalc = async () => {
+    try {
+      const r = await api("PUT", path, { recalculate: true });
+      status(`Repriced ${r.lot.name} at today's prices.${r.note ? " " + r.note : ""}`);
+      route();
+    } catch (e) { status(e.message, true); }
+  };
+  const del = async () => {
+    const what = await askDialog(`Delete ${l.name}?`, ["Keep its cards (with the prices they have now), or delete them from your collection too?"],
+      [{ label: "Delete the cards too", value: "remove", danger: true }, { label: "Keep the cards", value: "keep", primary: true }]);
+    if (!what) return;
+    try {
+      const r = await api("DELETE", `${path}&cards=${what}`);
+      status(`Deleted the lot ${l.name}${what === "remove" ? " and its cards" : ""}.`, false, r.undo);
+      if (state.activeLot === l.id) state.activeLot = null;
+      await loadFilters();
+      go("lots");
+    } catch (e) { status(e.message, true); }
+  };
+  const inLot = (c) => c.purchases.filter((p) => p.lot === id);
+  fill($("#main"), h("p", h("a", { href: "#/lots" }, "← Lots")),
+    h("h1", l.name),
+    h("p.muted", [l.acquired_date, lotCountText(l), l.split === "even" ? "split evenly" : "split by market value", l.open ? "being entered" : l.split_date ? `split on ${l.split_date}` : ""].filter(Boolean).join(" · ")),
+    l.note ? h("p", l.note) : null,
+    h("div.tiles",
+      tile("PAID", usd(l.total_paid), l.priceEach !== null ? `${usd4(l.priceEach)} each` : plural(l.copies, "card", "cards")),
+      tile("WORTH NOW", usd(l.marketValue), plural(l.copies, "card", "cards"), "var(--blue)"),
+      tile("CARDS", l.copies.toLocaleString(), lotProgress(l)),
+      tile("GAIN / LOSS", g.text, g.pct, g.color)),
+    h("div.buttons", h("div.right",
+      h("button", { type: "button", onclick: () => showLotDialog(l, () => route()) }, "Edit"),
+      h("button", { type: "button", onclick: continueAdding }, "Continue adding"),
+      !l.open && l.split === "by_value" ? h("button", { type: "button", onclick: recalc }, "Recalculate at today's prices") : null,
+      l.open ? h("button.primary", { type: "button", onclick: () => finishLot(l, () => route()) }, "Finish") : null,
+      h("button.danger", { type: "button", onclick: del }, "Delete"))),
+    h("h2", "Cards"),
+    d.cards.length ? h("div.list", d.cards.map((c) => h("a.card", { href: `#/collection?key=${encodeURIComponent(c.key)}` },
+      h("div.text", h("span.name", c.name),
+        h("span.meta", inLot(c).map((p) => `${p.quantity}× ${fname(p.finish)} ${p.condition} at ${usd4(p.price_paid)}`).join(" · ") + ` · ${sn(c)}`))))) : h("p.muted", "No cards yet."));
+}
+
 // toolRow is one action on the Tools page with what it does.
 const toolRow = (button, about) => h("div.tool", button, h("p.muted", about));
 
@@ -1245,6 +1463,7 @@ async function viewTools() {
       toolRow(h("button", { type: "button", onclick: (e) => exportCollection(e.currentTarget) }, "Export collection"), `Save the collection file to ${where}, for a backup or to move to another device. Import reads it back.`),
       toolRow(h("button", { type: "button", onclick: () => { go("collection"); setTimeout(showBulkEdit, 50); } }, "Bulk edit…"),
         "Change the condition, finish, price paid or date of many cards at once, or delete them. Tick the cards in the collection list (filter it, then Select all shown); Bulk edit is also below the list."),
+      toolRow(h("a.button", { href: "#/lots" }, "Lots…"), "Cards bought together for one price, such as a bulk lot or a bundle: what each lot cost and what its cards are worth now."),
       toolRow(h("a.button", { href: "#/backups" }, "Restore a backup…"), "Go back to the collection as it was before a recent import, bulk edit or bulk delete. The last 10 backups are kept."),
       gameInfo().Scan ? toolRow(h("a.button", { href: "#/scan" }, "Scan a card…"), "Identify a card from the camera or a photo, then add it.") : null),
     h("h2", "Prices"),
@@ -1343,7 +1562,7 @@ async function route() {
   const [path, qs] = location.hash.replace(/^#\/?/, "").split("?");
   const view = path || "home";
   if (state.scanStop && view !== "scan") { state.scanStop(); state.scanStop = null; }
-  const active = view === "import" || view === "backups" ? "tools" : view === "scan" ? "add" : view;
+  const active = ["import", "backups", "lots"].includes(view) ? "tools" : view === "scan" ? "add" : view;
   document.querySelectorAll("#nav a, .tabbar a").forEach((a) => a.classList.toggle("active", a.dataset.view === active));
   try {
     if (view === "collection") await viewCollection(qs || "");
@@ -1352,6 +1571,7 @@ async function route() {
     else if (view === "search") await viewSearch(qs || "");
     else if (view === "import") viewImport();
     else if (view === "backups") await viewBackups();
+    else if (view === "lots") await viewLots(qs || "");
     else if (view === "tools") await viewTools();
     else if (view === "settings") await viewSettings();
     else await viewHome();

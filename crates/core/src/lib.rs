@@ -13,6 +13,7 @@ pub mod game;
 pub mod instance;
 pub mod jsonfile;
 pub mod logging;
+pub mod lots;
 pub mod scan;
 pub mod service;
 pub mod settings;

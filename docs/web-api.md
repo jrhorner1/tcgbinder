@@ -12,7 +12,7 @@ expose the server to untrusted networks.
 catalog ID), passed as a query parameter. Every card in a response has `copies`
 (finish → condition → purchases, the card editor's "Your Copies") and, for
 convenience, `purchases`: the same purchases as a flat list of
-`{"finish","condition","quantity","price_paid","acquired_date","note","market"}`, plus the
+`{"finish","condition","quantity","price_paid","acquired_date","note","lot","market"}`, plus the
 totals `copy_count`, `price_paid`, `market_value` and `each` (one copy in its most
 valuable owned finish). `price_from` is `"en"` when the card's `market` prices are
 its English printing's, because the catalog has none for its language.
@@ -41,6 +41,11 @@ Errors are `{"error": "..."}` with a 4xx/5xx status.
 | `GET /api/games/{game}/printings?key=&lang=` | every printing of the card in a language (default: the card's own) |
 | `PUT /api/games/{game}/card/printing?key=` | move every copy to printing `{"id", "lang"}` (checked on the server among that language's printings) |
 | `POST /api/games/{game}/bulk` | `{"keys":[...], "condition","finish","price_paid","acquired_date","note","delete"}` (`note`: leave it out to keep notes, `""` to remove them); returns `Updated`, `Deleted`, `Skipped` and `undo` |
+| `GET /api/games/{game}/lots` | every lot, newest first: the lot (`id`, `name`, `acquired_date`, `total_paid`, `count`, `split`, `note`, `open`, `created`, `split_date`) with `entered`, `copies`, `cards`, `expected` (null when counted as entered), `priceEach` (the even price, while open or for an even split) and `marketValue` |
+| `POST /api/games/{game}/lots` | create a lot: `{"name", "total_paid", "acquired_date", "count", "split", "note"}`. `count` is `{"kind": "known", "cards"}`, `{"kind": "bundle", "packs", "cards_per_pack", "extra_cards", "lands", "lands_share_cost"}` or `{"kind": "as_entered"}`; `split` is `by_value` or `even` |
+| `GET /api/games/{game}/lots?id=` | one lot and its `cards` |
+| `PUT /api/games/{game}/lots?id=` | change a lot's fields, `"open": false` to finish it, `"open": true` to continue it, or `"recalculate": true` to reprice at today's prices; changing the total, count, date or split reprices its cards. Returns `lot`, `note`, `short` (`{"entered", "expected"}` when a lot is finished short) and `outcome` (a value split's `paid`, `marketValue` and `percent`) |
+| `DELETE /api/games/{game}/lots?id=&cards=keep\|remove` | delete a lot: `keep` leaves its copies with their prices, `remove` deletes them (after a backup; returns `undo`) |
 | `GET /api/games/{game}/backups` | the collection's backups, newest first: `[{"name", "date", "reason", "cards", "size"}]` (`reason`: `import`, `bulk-edit`, `bulk-delete`, `restore`, `merge` or `move`; `cards` counts unique cards) |
 | `POST /api/games/{game}/conflicts/merge` | `{"name"}`: merge a listed conflict copy into the collection (after a backup), then delete it; returns `changed` and `undo` |
 | `POST /api/games/{game}/conflicts/discard` | `{"name"}`: delete a listed conflict copy |
@@ -49,10 +54,10 @@ Errors are `{"error": "..."}` with a 4xx/5xx status.
 | `GET /api/games/{game}/missing?set=` | the set's cards you don't own |
 | `GET /api/games/{game}/search?text=&set=&next=` | catalog search, newest printings first (one page; `next` continues); plain text is searched as a phrase in names, falling back to its words anywhere in a name; `owned` gives the copies you own of each result |
 | `GET /api/games/{game}/autocomplete?q=` | `{"names"}`: card names starting like `q` (from 2 characters) |
-| `POST /api/games/{game}/cards` | add one purchase: `{"card": <search result>, "quantity", "finish", "condition", "price_paid", "acquired_date", "note"}`; returns `newCards` and `alreadyOwned` |
+| `POST /api/games/{game}/cards` | add one purchase: `{"card": <search result>, "quantity", "finish", "condition", "price_paid", "acquired_date", "note", "lot"}`; returns `newCards` and `alreadyOwned`. With `lot` (an open lot's ID), its price and date replace those sent, the lot is repriced, and the answer has its summary as `lot` |
 | `POST /api/games/{game}/import` | import a CSV, a pasted card list (one card per line, e.g. `4 Lightning Bolt (M11) 149`) or collection JSON (multipart field `file`, or the raw body); returns `summary`, `format`, `cards`, `newCards`, `alreadyOwned` |
 | `POST /api/games/{game}/import?preview=1` | read and match the file without saving anything: `token`, `format`, `rows` (read from the file), `cards` (printings), `copies`, `newCards`, `alreadyOwned`, `pricePaid`, `notes` (column warnings first, then rows to check), `unmatched` (`[{"line", "text"}]`: rows that matched no card, as written in the file) and `header` (the file's header line). One preview is kept per game for 15 minutes; a new one replaces it |
-| `POST /api/games/{game}/import/commit` | save a preview: `{"token"}`; returns what `import` returns. `410` if the preview was already saved, replaced, or is too old |
+| `POST /api/games/{game}/import/commit` | save a preview: `{"token", "lot"}` (`lot` optional: the cards go into that open lot); returns what `import` returns. `410` if the preview was already saved, replaced, or is too old |
 | `GET /api/games/{game}/export` | download the collection file |
 | `POST /api/games/{game}/export` | save a copy of the collection file instead (apps that can't download files: the desktop app's Downloads folder, the iPhone app's Files folder); returns `path` |
 | `POST /api/games/{game}/scan` | identify the card in a photo (the raw image as the body): `read` (what was read), `name`, `exact`, `note`, `candidates` (printings, best first), `owned`, `text`; `501` where scanning isn't available (it needs macOS or iOS) |

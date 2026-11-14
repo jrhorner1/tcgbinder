@@ -70,7 +70,7 @@ Per game, in `<data>/<game>/`:
 - `collection.json`: one card per printing (keyed by its catalog ID), holding the
   copies owned as `copies`: finish → condition → list of purchases (`quantity`,
   `price_paid`, `acquired_date`, `note`), the card editor's "Your Copies". Two
-  purchases are one (`Purchase::same_as`) when price paid, date and note match. Also the game's
+  purchases are one (`Purchase::same_as`) when price paid, date, note and lot match. Also the game's
   ID. A card's `price_from` is `"en"` when its prices are borrowed from the English
   printing (Magic's `borrow_english_prices`: Scryfall prices no other language). Kept
   in a `core::jsonfile::JsonFile` (see below).
@@ -81,6 +81,12 @@ Per game, in `<data>/<game>/`:
   file is set aside at startup rather than overwritten. Before each change and save,
   prices another device saved to the file are taken in (days already recorded here
   keep their price), so two devices recording prices never lose days.
+- `lots.json`: lots, cards bought together for one price (`core::lots`, a
+  `JsonFile`). A purchase's `lot` names its lot. `lots::lot_prices` (pure) works out
+  each copy's price from the lot's total: evenly, or by market value once the lot is
+  finished; `Store::reprice_lot` saves them, and `GameService::save_lot` refreshes
+  stale prices before a value split. Conflict copies merge by lot ID, the later
+  `created` winning.
 - `backups/`: copies of `collection.json` taken before each import, bulk edit, bulk
   delete and restore (`Store::backup`), named
   `collection-YYYYMMDD-HHMMSS[-N]-<reason>.json`; the 10 newest are kept. Restoring

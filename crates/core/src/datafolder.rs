@@ -10,6 +10,7 @@ use serde::Serialize;
 
 use crate::collection::read_export;
 use crate::datadir::{COLLECTION_FILE, PRICE_HISTORY_FILE};
+use crate::lots::LOTS_FILE;
 
 /// The folder of backups in each game's data folder.
 const BACKUPS: &str = "backups";
@@ -115,7 +116,7 @@ pub fn transfer(from: &Path, to: &Path, game_ids: &[&str], mode: Mode) -> Result
             continue;
         }
         fs::create_dir_all(&dst)?;
-        for name in [COLLECTION_FILE, PRICE_HISTORY_FILE] {
+        for name in [COLLECTION_FILE, PRICE_HISTORY_FILE, LOTS_FILE] {
             if src.join(name).is_file() {
                 copy_checked(&src.join(name), &dst.join(name))?;
                 copied.push(src.join(name));
@@ -151,17 +152,19 @@ fn copy_checked(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
-/// The conflict copies of the collection in a game's data folder: files named like
-/// `collection*.json` other than `collection.json` itself, as sync services name the
+/// The conflict copies in a game's data folder: files named like `collection*.json`
+/// or `lots*.json` other than those files themselves, as sync services name the
 /// version they didn't keep ("collection 2.json", "collection (conflicted copy).json",
-/// "collection-LAPTOP.json", "collection (1).json"). Sorted by name.
+/// "lots-LAPTOP.json", "collection (1).json"). Sorted by name.
 pub fn conflict_copies(game_dir: &Path) -> Vec<String> {
     let Ok(entries) = fs::read_dir(game_dir) else { return Vec::new() };
     let mut names: Vec<String> = entries
         .flatten()
         .filter(|e| e.path().is_file())
         .filter_map(|e| e.file_name().into_string().ok())
-        .filter(|n| n.starts_with("collection") && n.ends_with(".json") && n != COLLECTION_FILE)
+        .filter(|n| {
+            n.ends_with(".json") && (n.starts_with("collection") && n != COLLECTION_FILE || n.starts_with("lots") && n != LOTS_FILE)
+        })
         .collect();
     names.sort();
     names
@@ -226,10 +229,12 @@ mod tests {
             "collection (conflicted copy 2026-11-14).json",
             "collection_abc.tmp",
             "price-history.json",
+            "lots.json",
+            "lots 2.json",
         ] {
             fs::write(dir.path().join(name), "{}").unwrap();
         }
-        assert_eq!(conflict_copies(dir.path()), ["collection (conflicted copy 2026-11-14).json", "collection 2.json"]);
+        assert_eq!(conflict_copies(dir.path()), ["collection (conflicted copy 2026-11-14).json", "collection 2.json", "lots 2.json"]);
         assert!(conflict_copies(&dir.path().join("missing")).is_empty());
     }
 }

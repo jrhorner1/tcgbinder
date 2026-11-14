@@ -57,6 +57,10 @@ pub trait Game: Send + Sync {
     fn finishes(&self) -> &'static [&'static str];
     /// A finish's display name, e.g. "Normal".
     fn finish_name(&self, finish: &str) -> String;
+    /// Whether the game calls a card a basic land (a bundle's lands may cost nothing).
+    fn is_basic_land(&self, _c: &Card) -> bool {
+        false
+    }
     /// The rarity filter options, lowest first.
     fn rarities(&self) -> &'static [&'static str];
     /// The languages cards are printed in: code (as stored in `Card::language`) and

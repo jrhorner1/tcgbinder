@@ -20,13 +20,16 @@ pub struct Purchase {
     /// The owner's note on these copies (where they're kept, who they're for, ...).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub note: String,
+    /// The lot these copies were bought in (its ID), whose total sets their price.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub lot: String,
 }
 
 impl Purchase {
     /// Whether `other` is the same purchase apart from its quantity, so the two can
-    /// be one: same price paid, acquired date and note.
+    /// be one: same price paid, acquired date, note and lot.
     pub fn same_as(&self, other: &Purchase) -> bool {
-        self.price_paid == other.price_paid && self.acquired_date == other.acquired_date && self.note == other.note
+        self.price_paid == other.price_paid && self.acquired_date == other.acquired_date && self.note == other.note && self.lot == other.lot
     }
 }
 
@@ -59,7 +62,7 @@ impl Copies {
     }
 
     /// Adds a purchase. Copies bought for the same price on the same date, with the
-    /// same note, are one purchase, so a matching one grows instead.
+    /// same note and in the same lot, are one purchase, so a matching one grows instead.
     pub fn add(&mut self, finish: &str, cond: Condition, p: Purchase) {
         if p.quantity <= 0 {
             return;

@@ -6,6 +6,7 @@
 //! See docs/web-api.md for the endpoints.
 
 mod folders;
+mod lots;
 mod views;
 
 pub use folders::{Folders, PickFolder, Restart};
@@ -281,6 +282,15 @@ impl Api {
                     ("GET", ["printings"]) => self.printings(g, key, q.get("lang").map_or("", String::as_str)),
                     ("PUT", ["card", "printing"]) => self.change_printing(g, key, body),
                     ("POST", ["bulk"]) => self.bulk_edit(g, body),
+                    ("GET", ["lots"]) => match q.get("id") {
+                        Some(id) => self.lot(g, id),
+                        None => Ok(self.list_lots(g)),
+                    },
+                    ("POST", ["lots"]) => self.create_lot(g, body),
+                    ("PUT", ["lots"]) => self.update_lot(g, q.get("id").map_or("", String::as_str), body),
+                    ("DELETE", ["lots"]) => {
+                        self.delete_lot(g, q.get("id").map_or("", String::as_str), q.get("cards").map_or("", String::as_str))
+                    }
                     ("GET", ["backups"]) => Ok(Reply::Json(json!(g.store.backups().map_err(internal)?))),
                     ("POST", ["backups", "restore"]) => self.restore_backup(g, body),
                     ("POST", ["conflicts", "merge"]) => self.merge_conflict(g, body),
@@ -523,18 +533,32 @@ impl Api {
             #[serde(flatten)]
             purchase: PurchaseForm,
         }
-        let req: Req = decode(body)?;
+        let mut req: Req = decode(body)?;
         if req.card.id.is_empty() || req.purchase.quantity <= 0 {
             return Err(bad("a card and a quantity of at least 1 are required"));
         }
         req.purchase.validate(&req.card)?;
+        // Added under a lot: the lot sets the price and date.
+        let lot = match req.purchase.lot.as_str() {
+            "" => None,
+            id => Some(self.open_lot(g, id)?),
+        };
+        if let Some(lot) = &lot {
+            req.purchase.price_paid = 0.0;
+            req.purchase.acquired_date = lot.acquired_date.clone();
+        }
         let mut c = req.card;
         c.copies = Default::default(); // only the purchase sent is added
         req.purchase.add(&mut c);
         let key = card_key(&c);
         let (new_cards, already_owned) = g.store.add_cards(vec![c.clone()]).map_err(internal)?;
         tracing::info!(game = g.game.id(), card = c.name, copies = c.copy_count(), already_owned = already_owned > 0, "card added");
-        Ok(Reply::Json(json!({ "key": key, "newCards": new_cards, "alreadyOwned": already_owned })))
+        let mut answer = json!({ "key": key, "newCards": new_cards, "alreadyOwned": already_owned });
+        if let Some(lot) = lot {
+            g.reprice_lot(&lot).map_err(internal)?;
+            answer["lot"] = lots::summary(g, &lot);
+        }
+        Ok(Reply::Json(answer))
     }
 
     /// Moves a card to another printing of the same card. The printing is looked up
@@ -673,8 +697,15 @@ impl Api {
         #[derive(Deserialize)]
         struct Req {
             token: String,
+            /// Import the cards into this lot (a pasted list or a CSV of its contents).
+            #[serde(default)]
+            lot: String,
         }
         let req: Req = decode(body)?;
+        let lot = match req.lot.as_str() {
+            "" => None,
+            id => Some(self.open_lot(g, id)?),
+        };
         let pending = {
             let mut previews = self.previews.lock().unwrap();
             previews.retain(|_, p| p.made.elapsed() < PREVIEW_LIFETIME);
@@ -687,7 +718,19 @@ impl Api {
             status: StatusCode::GONE,
             message: "this preview is no longer available; preview the file again".into(),
         })?;
-        self.job(g, "import", || Ok(import_result(g, &g.commit_import(pending.preview)?)))
+        let mut preview = pending.preview;
+        if let Some(lot) = &lot {
+            lots::put_in_lot(&mut preview.cards, lot);
+        }
+        self.job(g, "import", || {
+            let res = g.commit_import(preview)?;
+            let mut answer = import_result(g, &res);
+            if let Some(lot) = &lot {
+                g.reprice_lot(lot)?;
+                answer["lot"] = lots::summary(g, lot);
+            }
+            Ok(answer)
+        })
     }
 
     fn export_name(g: &GameService) -> String {
@@ -768,6 +811,8 @@ struct PurchaseForm {
     price_paid: f64,
     acquired_date: String,
     note: String,
+    /// The lot the copies belong to; its total sets their price.
+    lot: String,
 }
 
 impl PurchaseForm {
@@ -792,6 +837,7 @@ impl PurchaseForm {
             price_paid: self.price_paid,
             acquired_date: self.acquired_date.clone(),
             note: self.note.trim().to_string(),
+            lot: self.lot.clone(),
         };
         c.add_purchase(&finish, Condition::parse(&self.condition), p);
     }

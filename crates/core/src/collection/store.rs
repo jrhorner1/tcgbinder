@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::{BulkChange, BulkResult, Card, CatalogUpdate};
 use crate::dates;
 use crate::jsonfile::JsonFile;
+use crate::lots::{LotCopy, LotPrices};
 
 /// One game's collection, persisted as a JSON file. Each game has its own. The file
 /// may also be changed by another device through a synced folder: every change first
@@ -248,6 +249,90 @@ impl Store {
                 }
                 changed += usize::from(ours.copies != before);
             }
+            Ok(changed)
+        })
+    }
+
+    /// A lot's copies, one per card, finish and condition (purchases with different
+    /// notes added together), for working out the lot's prices.
+    pub fn lot_copies(&self, lot_id: &str, is_basic_land: impl Fn(&Card) -> bool) -> Vec<LotCopy> {
+        self.file.read(|data| {
+            let mut out: Vec<LotCopy> = Vec::new();
+            for c in data.cards.values() {
+                for (finish, condition, p) in c.copies.each().filter(|(_, _, p)| p.lot == lot_id) {
+                    match out.iter_mut().find(|x| x.card_id == c.id && x.finish == finish && x.condition == condition) {
+                        Some(x) => x.quantity += p.quantity,
+                        None => out.push(LotCopy {
+                            card_id: c.id.clone(),
+                            finish: finish.to_string(),
+                            condition,
+                            quantity: p.quantity,
+                            market: c.market_price(finish),
+                            rarity: c.rarity.clone(),
+                            basic_land: is_basic_land(c),
+                        }),
+                    }
+                }
+            }
+            out
+        })
+    }
+
+    /// The cards with copies in a lot.
+    pub fn lot_cards(&self, lot_id: &str) -> Vec<Card> {
+        self.cards_where(|c| c.copies.each().any(|(_, _, p)| p.lot == lot_id))
+    }
+
+    /// Sets the price paid (from `prices`) and acquired date of every copy in a lot, in
+    /// one save. Returns the number of cards changed.
+    pub fn reprice_lot(&self, lot_id: &str, prices: &LotPrices, acquired_date: &str) -> Result<usize> {
+        self.file.mutate(|data| {
+            let mut changed = 0;
+            let mut extra = prices.extra.clone();
+            for c in data.cards.values_mut().filter(|c| c.copies.each().any(|(_, _, p)| p.lot == lot_id)) {
+                let mut copies = super::Copies::default();
+                for (finish, cond, p) in c.copies.each() {
+                    let mut p = p.clone();
+                    if p.lot == lot_id {
+                        let key = (c.id.clone(), finish.to_string(), cond);
+                        if let Some(price) = prices.each.get(&key) {
+                            p.price_paid = *price;
+                        }
+                        p.acquired_date = acquired_date.to_string();
+                        // The rounding remainder goes on one copy of its card.
+                        if let Some((_, more)) = extra.take_if(|(k, _)| *k == key) {
+                            let one = super::Purchase { quantity: 1, price_paid: crate::lots::round4(p.price_paid + more), ..p.clone() };
+                            p.quantity -= 1;
+                            copies.add(finish, cond, one);
+                        }
+                    }
+                    copies.add(finish, cond, p);
+                }
+                c.copies = copies;
+                changed += 1;
+            }
+            Ok(changed)
+        })
+    }
+
+    /// Deletes a lot from its cards: `remove` deletes the copies, otherwise they stay
+    /// with their prices and no longer belong to a lot. Returns the cards changed.
+    pub fn drop_lot(&self, lot_id: &str, remove: bool) -> Result<usize> {
+        self.file.mutate(|data| {
+            let mut changed = 0;
+            for c in data.cards.values_mut().filter(|c| c.copies.each().any(|(_, _, p)| p.lot == lot_id)) {
+                let mut copies = super::Copies::default();
+                for (finish, cond, p) in c.copies.each() {
+                    match (p.lot == lot_id, remove) {
+                        (true, true) => {}
+                        (true, false) => copies.add(finish, cond, super::Purchase { lot: String::new(), ..p.clone() }),
+                        (false, _) => copies.add(finish, cond, p.clone()),
+                    }
+                }
+                c.copies = copies;
+                changed += 1;
+            }
+            data.cards.retain(|_, c| c.copy_count() > 0);
             Ok(changed)
         })
     }
@@ -620,6 +705,52 @@ mod tests {
         // Merging the same copy again changes nothing.
         let again = s.cards();
         assert_eq!(s.merge_copy(again).unwrap(), 0);
+    }
+
+    #[test]
+    fn lots_reprice_and_drop() {
+        use crate::lots::{Lot, LotCount, LotSplit, lot_prices};
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path().join("c.json"), "mtg").unwrap();
+        let in_lot = |id: &str, lot: &str, q: i64| {
+            let mut c = card(id, 0);
+            c.add_purchase("nonfoil", Condition::NearMint, Purchase { quantity: q, lot: lot.into(), ..Default::default() });
+            c
+        };
+        s.add_cards(vec![in_lot("a", "L1", 2), in_lot("b", "L1", 1), in_lot("a", "L2", 1), card("c", 1)]).unwrap();
+        assert_eq!(s.get("a").unwrap().purchases("nonfoil", Condition::NearMint).len(), 2, "copies from two lots don't merge");
+
+        let lot = Lot {
+            id: "L1".into(),
+            name: "x".into(),
+            total_paid: 10.0,
+            split: LotSplit::ByValue,
+            count: LotCount::AsEntered,
+            ..Lot::default()
+        };
+        let copies = s.lot_copies("L1", |_| false);
+        assert_eq!(copies.iter().map(|c| c.quantity).sum::<i64>(), 3);
+        let prices = lot_prices(&lot, &copies);
+        assert_eq!(s.reprice_lot("L1", &prices, "2026-11-14").unwrap(), 2);
+        let paid: f64 = s
+            .lot_cards("L1")
+            .iter()
+            .flat_map(|c| c.purchase_rows())
+            .filter(|r| r.purchase.lot == "L1")
+            .map(|r| r.purchase.price_paid * r.purchase.quantity as f64)
+            .sum();
+        assert!((paid - 10.0).abs() < 1e-9, "{paid}");
+        assert!(
+            s.get("a").unwrap().purchase_rows().iter().filter(|r| r.purchase.lot == "L1").all(|r| r.purchase.acquired_date == "2026-11-14")
+        );
+
+        // Keep: prices stay, the lot goes; remove: the copies go.
+        s.drop_lot("L1", false).unwrap();
+        assert!(s.lot_cards("L1").is_empty());
+        assert_eq!(s.get("b").unwrap().copy_count(), 1);
+        s.drop_lot("L2", true).unwrap();
+        assert_eq!(s.get("a").unwrap().copy_count(), 2);
+        assert_eq!(s.len(), 3);
     }
 
     #[test]

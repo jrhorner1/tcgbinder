@@ -13,6 +13,7 @@ use chrono::{Months, NaiveDate};
 
 use crate::collection::{Card, PriceHistory, SetInfo, Stats, Store, TimePoint, read_export};
 use crate::game::{Game, ImportReport};
+use crate::lots::{Lot, LotCopy, LotPrices, LotSplit, LotsStore, lot_prices};
 use crate::settings::{Settings, SettingsStore};
 use crate::{datadir, dates};
 
@@ -28,6 +29,8 @@ pub struct GameService {
     pub game: Box<dyn Game>,
     pub store: Store,
     pub prices: PriceHistory,
+    /// Lots: cards bought together for one price.
+    pub lots: LotsStore,
     /// The app settings (price refresh frequency, automatic price history). Without
     /// them, prices refresh daily and price history loads automatically.
     pub settings: Option<Arc<SettingsStore>>,
@@ -45,11 +48,12 @@ impl GameService {
         let dir = datadir::game_dir(data, game.id())?;
         let store = Store::open(dir.join(datadir::COLLECTION_FILE), game.id())?;
         tracing::info!(game = game.id(), path = %store.file_path().display(), cards = store.len(), "collection opened");
-        Ok(GameService::from_store(game, store))
+        GameService::from_store(game, store)
     }
 
-    /// Wraps an open store, loading the price history kept next to it.
-    pub fn from_store(game: Box<dyn Game>, store: Store) -> GameService {
+    /// Wraps an open store, loading the price history and lots kept next to it.
+    pub fn from_store(game: Box<dyn Game>, store: Store) -> Result<GameService> {
+        let lots = LotsStore::open(store.file_path().parent().unwrap_or(Path::new(".")))?;
         let path = store.file_path().with_file_name(datadir::PRICE_HISTORY_FILE);
         let prices = match PriceHistory::open(&path) {
             Ok((prices, warning)) => {
@@ -65,7 +69,46 @@ impl GameService {
                 PriceHistory::in_memory()
             }
         };
-        GameService { game, store, prices, settings: None, auto_history: true, sets: Mutex::default() }
+        Ok(GameService { game, store, prices, lots, settings: None, auto_history: true, sets: Mutex::default() })
+    }
+
+    /// A lot's copies, for working out its prices.
+    pub fn lot_copies(&self, lot: &Lot) -> Vec<LotCopy> {
+        self.store.lot_copies(&lot.id, |c| self.game.is_basic_land(c))
+    }
+
+    /// Works out a lot's prices and saves them to its cards.
+    pub fn reprice_lot(&self, lot: &Lot) -> Result<LotPrices> {
+        let prices = lot_prices(lot, &self.lot_copies(lot));
+        self.store.reprice_lot(&lot.id, &prices, &lot.acquired_date)?;
+        Ok(prices)
+    }
+
+    /// Saves a changed lot and reprices it. A finished value-split lot is split at
+    /// today's prices: the lot's cards are refreshed first when any price is from an
+    /// earlier day (or always, with `refresh`), and the lot records the day.
+    pub fn save_lot(&self, mut lot: Lot, refresh: bool) -> Result<(Lot, LotPrices)> {
+        if !lot.open && lot.split == LotSplit::ByValue {
+            let today = dates::today_string();
+            let cards = self.store.lot_cards(&lot.id);
+            if refresh || cards.iter().any(|c| c.prices_updated < today) {
+                let ids: Vec<String> = cards.iter().map(|c| c.id.clone()).collect();
+                match self.game.refresh(&ids, &mut |_, _| {}) {
+                    Ok(updates) => {
+                        self.store.update_catalog(&updates, &today)?;
+                    }
+                    Err(e) => {
+                        tracing::warn!(game = self.game.id(), error = %e, "could not refresh the lot's prices; using the stored ones")
+                    }
+                }
+            }
+            lot.split_date = today;
+        } else {
+            lot.split_date.clear();
+        }
+        self.lots.save(&lot)?;
+        let prices = self.reprice_lot(&lot)?;
+        Ok((lot, prices))
     }
 
     /// The set sizes for completion stats, loaded once.
@@ -92,6 +135,9 @@ impl GameService {
         }
         if let Err(e) = self.prices.refresh() {
             tracing::debug!(game = self.game.id(), error = %e, "price history not refreshed");
+        }
+        if let Err(e) = self.lots.refresh() {
+            tracing::debug!(game = self.game.id(), error = %e, "lots not refreshed");
         }
     }
 

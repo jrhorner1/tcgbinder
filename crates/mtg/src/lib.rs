@@ -273,6 +273,7 @@ impl Game for Magic {
                 price_paid: r.row.price_paid,
                 acquired_date: r.row.acquired_date.clone(),
                 note: r.row.note.clone(),
+                ..Default::default()
             };
             card.add_purchase(&importer::choose_finish(&r.row.finish, &sc.finishes), r.row.condition, purchase);
             cards.push(card);
@@ -330,6 +331,10 @@ impl Game for Magic {
 
     fn languages(&self) -> &'static [(&'static str, &'static str)] {
         LANGUAGES
+    }
+
+    fn is_basic_land(&self, c: &Card) -> bool {
+        c.type_line.contains("Basic Land")
     }
 
     fn rarities(&self) -> &'static [&'static str] {

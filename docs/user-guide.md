@@ -128,6 +128,39 @@ date).
 - **Missing cards:** on a set page, **Add…** beside a missing card adds it without
   leaving the page.
 
+## Adding a lot
+
+When you buy many cards for one price (a bulk lot, a bundle), **Add a lot…** on the
+Add page records the purchase once and works out each card's price for you:
+- **Name, total paid and date.** Every card in the lot gets the date.
+- **How many cards?**
+  - **I counted them:** one number.
+  - **It's a bundle:** packs × cards per pack (14 by default), other cards, and
+    basic lands. Basic lands cost nothing unless **Lands share the cost** is ticked.
+  - **I'll count as I add:** the total is divided by the cards entered so far.
+- **Split the cost:**
+  - **By each card's market value** (the default): a card worth more costs more. If
+    the lot's cards are worth $80 and it cost $55, each card is costed at 68.75% of
+    its market price. A card without a price is valued at the average of the lot's
+    cards of its rarity.
+  - **Evenly:** every card costs the same, kept to four decimal places so the lot
+    adds up to its total ($38 for 500 cards is $0.0760 each).
+
+While a lot is open, the Add page shows it with how many cards are entered, **Pause**
+and **Finish**. Cards you add (by search, scan or **Paste a list…**) belong to the
+lot, which sets their price and date. Until it's finished they carry an even share.
+**Finish** works out a value split from that day's prices (refreshing older ones
+first), showing what each card will be costed at before saving. If you entered fewer
+cards than counted, it asks whether to spread the total over the cards entered.
+
+A paused lot is offered again the next time you open Add, on any device sharing the
+data folder. **Tools → Lots…** lists every lot with what it cost and what its cards
+are worth now. A lot's page lists its cards, with **Edit** (changing the total, count,
+date or split reprices the cards), **Continue adding**, **Recalculate at today's
+prices** (finished value-split lots) and **Delete** (keep the cards with their prices,
+or delete them too). On a card's page, copies from a lot name it; a price typed there
+is replaced the next time the lot is repriced.
+
 ## Scanning cards
 
 **Scan a card** (on Add, and in the sidebar) identifies a physical card.

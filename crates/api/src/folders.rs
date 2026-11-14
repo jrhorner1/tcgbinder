@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 
 use tcgbinder_core::collection::read_export;
 use tcgbinder_core::datafolder::{self, Mode};
+use tcgbinder_core::lots::LotsData;
 use tcgbinder_core::service::GameService;
 
 use crate::{Api, Error, Reply, Result, bad, decode, internal, not_found, undo};
@@ -83,8 +84,9 @@ impl Api {
             .iter()
             .flat_map(|g| {
                 datafolder::conflict_copies(game_dir(g)).into_iter().map(move |name| {
+                    let kind = if name.starts_with("lots") { "lots" } else { "collection" };
                     let cards = std::fs::read(game_dir(g).join(&name)).ok().and_then(|b| read_export(&b).ok()).map(|(_, c)| c.len());
-                    json!({ "game": g.game.id(), "name": name, "cards": cards })
+                    json!({ "game": g.game.id(), "name": name, "kind": kind, "cards": cards })
                 })
             })
             .collect();
@@ -164,11 +166,19 @@ impl Api {
         Ok(game_dir(g).join(name))
     }
 
-    /// Merges a conflict copy into the collection (after a backup), then deletes it.
+    /// Merges a conflict copy into the collection (after a backup) or the lots, then
+    /// deletes it.
     pub(crate) fn merge_conflict(&self, g: &GameService, body: &[u8]) -> Result {
         let req: NameReq = decode(body)?;
         let path = Self::conflict_path(g, &req.name)?;
         let data = std::fs::read(&path).map_err(|e| internal(e.into()))?;
+        if req.name.starts_with("lots") {
+            let theirs: LotsData = serde_json::from_slice(&data).map_err(|e| bad(format!("{} can't be read: {e}", req.name)))?;
+            let changed = g.lots.merge_copy(theirs).map_err(internal)?;
+            std::fs::remove_file(&path).map_err(|e| internal(e.into()))?;
+            tracing::info!(game = g.game.id(), copy = req.name, changed, "lots conflict copy merged");
+            return Ok(Reply::Json(json!({ "changed": changed })));
+        }
         let (game, cards) = read_export(&data).map_err(|e| bad(format!("{} can't be read: {e:#}", req.name)))?;
         if !game.is_empty() && game != g.game.id() {
             return Err(bad(format!("{} is a {game:?} collection", req.name)));
