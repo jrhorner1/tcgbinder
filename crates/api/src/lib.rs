@@ -288,6 +288,10 @@ impl Api {
                     ("GET", ["set"]) => self.set_page(g, q.get("code").map_or("", String::as_str)),
                     ("GET", ["missing"]) => self.missing(g, q.get("set").map_or("", String::as_str)),
                     ("GET", ["search"]) => self.search(g, &q),
+                    ("GET", ["autocomplete"]) => {
+                        let names = g.game.autocomplete(q.get("q").map_or("", String::as_str)).map_err(upstream)?;
+                        Ok(Reply::Json(json!({ "names": names })))
+                    }
                     ("POST", ["import"]) if q.get("preview").is_some_and(|v| v == "1") => self.preview_import(g, req),
                     ("POST", ["import"]) => self.import(g, req),
                     ("POST", ["import", "commit"]) => self.commit_import(g, body),

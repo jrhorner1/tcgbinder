@@ -39,6 +39,11 @@ pub trait Game: Send + Sync {
     /// Reads another app's export (CSV) and matches it to catalog printings.
     fn import(&self, data: &[u8], progress: Progress) -> Result<(Vec<Card>, ImportReport)>;
 
+    /// Card names starting like `text`, for suggestions while typing (none by default).
+    fn autocomplete(&self, _text: &str) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+
     /// Every printing of the same card (e.g. for moving a card to a different set),
     /// newest first, in `language` (one of [`Game::languages`]'s codes; "" for the
     /// catalog's usual choice).

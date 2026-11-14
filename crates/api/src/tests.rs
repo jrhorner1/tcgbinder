@@ -625,3 +625,27 @@ fn printings_in_a_language() {
     let langs = get(&f.api, "/api/games/mtg/filters")["languages"].clone();
     assert_eq!((langs[0]["code"].as_str(), langs[0]["name"].as_str()), (Some("en"), Some("English")));
 }
+
+#[test]
+fn paste_a_list() {
+    let f = fixture();
+    let list = "Deck\n4 Lightning Bolt (M11) 1\n2x Opt [DOM]\n1 Shock (M19) 156 *F*\n\nSideboard\n1 Not a Card (ZZZ) 9\n";
+    let resp = f.api.handle(&request("POST", "/api/games/mtg/import?preview=1", list.as_bytes().to_vec()));
+    assert_eq!(resp.status(), 200);
+    let p: Value = serde_json::from_slice(resp.body()).unwrap();
+    // Opt has no number, so it's matched by name, which this fake Scryfall can't do.
+    assert_eq!((p["format"].as_str(), p["rows"].as_u64(), p["copies"].as_i64()), (Some("Card list"), Some(4), Some(5)));
+    let lines: Vec<u64> = p["unmatched"].as_array().unwrap().iter().map(|u| u["line"].as_u64().unwrap()).collect();
+    assert_eq!(lines, [3, 7]);
+    assert_eq!(p["unmatched"][1]["text"], "1 Not a Card (ZZZ) 9");
+    let (status, done) = commit(&f, &p["token"]);
+    assert_eq!((status, done["cards"].as_i64()), (200, Some(5)));
+    assert_eq!(f.svc.store.get("aaaaaaaa-0000-4000-8000-000000000001").unwrap().finish_copy_count("foil"), 1);
+}
+
+#[test]
+fn autocomplete_answers() {
+    let f = fixture();
+    let (status, r) = call(&f.api, "GET", "/api/games/mtg/autocomplete?q=s", None);
+    assert_eq!((status, r["names"].as_array().map(Vec::len)), (200, Some(0)));
+}

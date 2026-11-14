@@ -179,10 +179,27 @@ impl Game for Magic {
         Ok(())
     }
 
+    /// Searches card names as a phrase (newest printings first); when that finds
+    /// nothing, searches again with the words anywhere in a name.
     fn search(&self, text: &str, set: &str, next_page: &str) -> Result<SearchPage> {
         let q = scryfall::build_search_query(text, set)?;
-        let page = self.scryfall.search_cards(&q, next_page)?;
+        let mut page = self.scryfall.search_cards(&q, next_page)?;
+        if next_page.is_empty() && page.cards.is_empty() {
+            let plain = scryfall::build_plain_query(text, set)?;
+            if plain != q {
+                page = self.scryfall.search_cards(&plain, "")?;
+            }
+        }
         Ok(SearchPage { cards: page.cards.iter().map(from_scryfall).collect(), total: page.total, next_page: page.next_page })
+    }
+
+    /// Scryfall's name suggestions, from 2 characters typed.
+    fn autocomplete(&self, text: &str) -> Result<Vec<String>> {
+        let text = text.trim();
+        if text.chars().count() < 2 {
+            return Ok(Vec::new());
+        }
+        self.scryfall.autocomplete(text)
     }
 
     fn search_hints(&self) -> (&'static str, &'static str) {
@@ -224,7 +241,7 @@ impl Game for Magic {
     /// Reads a CSV export, matches every row to its exact Scryfall printing and returns
     /// the cards to add.
     fn import(&self, data: &[u8], progress: Progress) -> Result<(Vec<Card>, ImportReport)> {
-        let parsed = importer::parse_csv(data)?;
+        let parsed = importer::parse_any(data)?;
         let format = parsed.format;
         let mut report = ImportReport {
             format: format.clone(),
@@ -512,6 +529,30 @@ mod tests {
         assert_eq!(res.cards, 2);
         let card = svc.store.get(JA).expect("the Japanese printing");
         assert_eq!((card.market_price("nonfoil"), card.price_from.as_str()), (Some(1.85), "en"));
+    }
+
+    #[test]
+    fn phrase_search_falls_back_to_words() {
+        // A Scryfall where only the loose word search finds anything.
+        let srv = testing::FakeServer::start(|req| match (req.path.as_str(), req.query.get("q").map(String::as_str)) {
+            ("/cards/search", Some(q)) if !q.starts_with("name:") => testing::Reply::json(&scryfall::SearchResponse {
+                total_cards: 1,
+                data: vec![scryfall::Card { id: "x".into(), name: "Sol Ring".into(), ..Default::default() }],
+                ..Default::default()
+            }),
+            ("/cards/autocomplete", Some(q)) => testing::Reply::json(&serde_json::json!({ "data": [format!("{q} Ring")] })),
+            _ => testing::Reply::not_found(),
+        });
+        let g = Magic::with_clients(scryfall::Client::unlimited(&srv.url), mtgjson::Client::new(&srv.url));
+        let page = g.search("sol rin", "", "").unwrap();
+        assert_eq!(page.cards.len(), 1);
+        let calls = srv.calls.lock().unwrap().clone();
+        assert_eq!(calls.len(), 2, "{calls:?}");
+        assert!(calls[0].contains("q=name%3A%22sol+rin%22") && calls[0].contains("order=released") && calls[0].contains("dir=desc"));
+        assert!(calls[1].contains("q=sol+rin&"));
+
+        assert_eq!(g.autocomplete("Sol").unwrap(), ["Sol Ring"]);
+        assert!(g.autocomplete("S").unwrap().is_empty(), "two characters at least");
     }
 
     /// Imports a real export against live Scryfall into a temporary collection; skipped

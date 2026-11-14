@@ -557,10 +557,14 @@ async function renderSet(container, code) {
       const m = await api("GET", gameAPI(`/missing?set=${encodeURIComponent(code)}`));
       missingBox.hidden = false;
       fill(missingBox,
-        h("p.muted.empty", m.missing.length ? `${plural(m.missing.length, "card", "cards")} you don't own yet. Click one to add it.` : "You have every card in this set."),
-        m.missing.map((c) => h("div.card", { onclick: () => go("add", new URLSearchParams({ text: c.name, set: code })) },
-          h("span.num", c.collector_number), h("div.text", h("span.name", c.name),
-            h("span.meta", [title(c.rarity), anyPrice(c) ? usd(anyPrice(c)) : ""].filter(Boolean).join(" · "))))));
+        h("p.muted.empty", m.missing.length ? `${plural(m.missing.length, "card", "cards")} you don't own yet. Add one here, or click it to search its printings.` : "You have every card in this set."),
+        m.missing.map((c) => {
+          const row = h("div.card", { onclick: () => go("add", new URLSearchParams({ text: c.name, set: code })) },
+            h("span.num", c.collector_number), h("div.text", h("span.name", c.name),
+              h("span.meta", [title(c.rarity), anyPrice(c) ? usd(anyPrice(c)) : ""].filter(Boolean).join(" · "))),
+            h("button", { type: "button", onclick: (e) => { e.stopPropagation(); addInDialog(c, () => row.remove()); } }, "Add…"));
+          return row;
+        }));
       showMissing.remove();
     } catch (e) { status(e.message, true); showMissing.disabled = false; }
   } }, d.size > 0 ? `Show the ${Math.max(d.size - d.collected, 0)} missing cards` : "Show missing cards");
@@ -577,6 +581,16 @@ async function renderSet(container, code) {
     d.top.length ? cardRows(d.top, (c) => c.each) : h("p.muted", "No market prices yet."),
     h("h2", "Missing Cards"),
     showMissing, missingBox));
+}
+
+// addInDialog shows a catalog card's add form in the dialog, leaving the page as it is.
+function addInDialog(c, added) {
+  const dlg = $("#dialog");
+  const body = h("div.body");
+  fill(dlg, h("div.dlg", h("header", h("h2", "Add a card")), body,
+    h("footer", h("button", { type: "button", onclick: () => dlg.close() }, "Close"))));
+  addForm(body, c, 0, () => { dlg.close(); if (added) added(); });
+  dlg.showModal();
 }
 
 // cardImage is the card's picture, or a placeholder when images are off in Settings.
@@ -767,24 +781,41 @@ async function showPrintings(box, key, c, lang) {
 
 // --- Add and Scan ------------------------------------------------------------
 
-// addForm shows a catalog card with the details of the copies to add.
-function addForm(container, c, owned) {
-  const qty = h("input", { type: "number", min: 1, step: 1, value: 1 });
+// addDefaults are the finish, condition, price and date of the last card added, so
+// adding many cards from one purchase needs them typed once.
+function addDefaults() {
+  return state.addDefaults || { finish: "", condition: state.settings.default_condition, price: "", date: state.settings.default_date === "today" ? today() : "" };
+}
+
+// addCard adds copies of a catalog card and remembers the details for the next one.
+async function addCard(c, d) {
+  const r = await api("POST", gameAPI("/cards"), { card: c, quantity: d.quantity, finish: d.finish, condition: d.condition,
+    price_paid: d.price ? parseFloat(d.price) : 0, acquired_date: d.date });
+  state.addDefaults = { finish: d.finish, condition: d.condition, price: d.price, date: d.date };
+  await loadFilters();
+  return r;
+}
+
+// addForm shows a catalog card with the details of the copies to add. After adding,
+// onAdded(r, card, details) decides what happens next (by default, open the card).
+// Returns { add } so a keyboard shortcut can add without clicking.
+function addForm(container, c, owned, onAdded) {
+  const d0 = addDefaults();
+  const qty = h("input", { type: "number", min: 1, step: 1, value: 1, "aria-label": "Quantity" });
   const finishes = c.finishes && c.finishes.length ? c.finishes : state.filters.finishes;
-  const finish = h("select", finishes.map((x) => h("option", { value: x }, fname(x))));
-  const cond = h("select", state.filters.conditions.map((x) => h("option", { value: x, selected: x === state.settings.default_condition }, x)));
-  const price = h("input", { type: "number", min: 0, step: "0.01", placeholder: "0.00" });
-  const date = h("input", { type: "date", value: state.settings.default_date === "today" ? today() : "" });
+  const finish = h("select", { "aria-label": "Finish" }, finishes.map((x) => h("option", { value: x, selected: x === d0.finish }, fname(x))));
+  const cond = h("select", { "aria-label": "Condition" }, state.filters.conditions.map((x) => h("option", { value: x, selected: x === d0.condition }, x)));
+  const price = h("input", { type: "number", min: 0, step: "0.01", placeholder: "0.00", value: d0.price, "aria-label": "Price paid each" });
+  const date = h("input", { type: "date", value: d0.date, "aria-label": "Acquired" });
   const err = h("p.error");
   const add = async () => {
     const quantity = parseInt(qty.value, 10);
     if (!Number.isInteger(quantity) || quantity < 1) { err.textContent = "Quantity must be at least 1."; return; }
+    const details = { quantity, finish: finish.value, condition: cond.value, price: price.value, date: date.value };
     try {
-      const r = await api("POST", gameAPI("/cards"), { card: c, quantity, finish: finish.value, condition: cond.value,
-        price_paid: price.value ? parseFloat(price.value) : 0, acquired_date: date.value });
+      const r = await addCard(c, details);
       status(`Added ${quantity}× ${c.name} (${sn(c)})${r.alreadyOwned ? " to the copies you already had" : ""}`);
-      await loadFilters();
-      openCard(r.key);
+      if (onAdded) onAdded(r, c, details); else openCard(r.key);
     } catch (e) { err.textContent = e.message; }
   };
   const price1 = anyPrice(c);
@@ -797,38 +828,92 @@ function addForm(container, c, owned) {
         h("div.form", h("label", "Quantity"), qty, h("label", "Finish"), finish, h("label", "Condition"), cond,
           h("label", "Price paid (each)"), price, h("label", "Acquired"), date),
         err, h("button.primary", { type: "button", onclick: add }, "Add to collection")))));
+  return { add };
 }
 
-// pickList lists catalog cards; clicking one shows it in `preview`.
-function pickList(cards, owned, preview) {
-  const items = cards.map((c, i) => h("div.card", { onclick: (e) => {
-    e.currentTarget.parentElement.querySelectorAll(".sel").forEach((x) => x.classList.remove("sel"));
-    e.currentTarget.classList.add("sel");
-    addForm(preview, c, owned[i]);
-  } },
-  h("div.text", h("strong", c.name),
-    h("span.meta", [sn(c), title(c.rarity), (c.released_at || "").slice(0, 4), anyPrice(c) ? usd(anyPrice(c)) : ""].filter(Boolean).join(" · "))),
-  owned[i] ? h("span.owned", `own ${owned[i]}`) : null));
-  return items;
+// pickList lists catalog cards; picking one shows its add form in `preview`. The
+// returned select(i) picks one from the keyboard.
+function pickList(cards, owned, preview, onAdded) {
+  const picker = { current: null, index: -1 };
+  const items = cards.map((c, i) => h("div.card", { role: "button", tabindex: -1, onclick: () => picker.select(i) },
+    h("div.text", h("strong", c.name),
+      h("span.meta", [sn(c), title(c.rarity), (c.released_at || "").slice(0, 4), anyPrice(c) ? usd(anyPrice(c)) : ""].filter(Boolean).join(" · "))),
+    owned[i] ? h("span.owned", `own ${owned[i]}`) : null));
+  picker.items = items;
+  picker.select = (i) => {
+    if (i < 0 || i >= items.length) return;
+    items.forEach((x) => x.classList.remove("sel"));
+    items[i].classList.add("sel");
+    items[i].scrollIntoView({ block: "nearest" });
+    picker.index = i;
+    picker.current = addForm(preview, cards[i], owned[i], onAdded);
+  };
+  return picker;
 }
 
 // Add: search the game's catalog, pick the exact printing, set ownership details.
+// The page stays open after adding, so many cards can be added in a row; each is
+// listed under "Added this session" with an Undo.
 function viewAdd(params) {
   const pre = new URLSearchParams(params || "");
   const [textHint, setHint] = state.filters.searchHints;
-  const text = h("input", { type: "search", placeholder: textHint, value: pre.get("text") || "", "aria-label": "Card name" });
+  const text = h("input", { type: "search", placeholder: textHint, value: pre.get("text") || "", "aria-label": "Card name", autocomplete: "off" });
   const set = h("input.set", { type: "search", placeholder: setHint, value: pre.get("set") || "", "aria-label": "Set" });
-  const results = h("div.list.results", h("p.muted.empty", "Search by name, set code, or both, then pick a printing."));
+  const suggest = h("ul.suggest", { hidden: true, role: "listbox" });
+  const results = h("div.list.results", h("p.muted.empty", "Search by name, set code, or both, then pick a printing. ↑ ↓ move through the results; Enter adds."));
   const preview = h("div");
-  let next = "", cards = [], owned = [], total = 0;
+  const session = h("div.session");
+  let next = "", cards = [], owned = [], total = 0, picker = null, armed = false;
+
+  const showSession = () => {
+    const added = state.added || [];
+    fill(session, added.length ? [h("h2", "Added this session"), h("div.list", added.slice().reverse().map((a) => h("div.card",
+      h("div.text", h("span.name", `${a.quantity}× ${a.name}`), h("span.meta", [`${a.set} · ${a.number}`, fname(a.finish), a.condition].join(" · "))),
+      a.undone ? h("span.muted", "undone") : h("button", { type: "button", onclick: () => undoAdd(a) }, "Undo"))))] : null);
+  };
+  // undoAdd takes back exactly the copies one add put in: the same finish, condition,
+  // price and date, less that quantity.
+  const undoAdd = async (a) => {
+    try {
+      const d = await api("GET", gameAPI(`/card?key=${encodeURIComponent(a.key)}`));
+      const price = a.price ? parseFloat(a.price) : 0;
+      let left = a.quantity;
+      const purchases = d.card.purchases.map((p) => {
+        if (left > 0 && p.finish === a.finish && p.condition === a.condition && p.price_paid === price && p.acquired_date === a.date && !p.note) {
+          const take = Math.min(left, p.quantity);
+          left -= take;
+          return { ...p, quantity: p.quantity - take };
+        }
+        return p;
+      }).filter((p) => p.quantity > 0);
+      if (left > 0) throw new Error(`${a.name} has changed since it was added; change it on its card page instead.`);
+      await api("PUT", gameAPI(`/card?key=${encodeURIComponent(a.key)}`), { purchases });
+      a.undone = true;
+      status(`Took back ${a.quantity}× ${a.name}`);
+      await loadFilters();
+      showSession();
+    } catch (e) { status(e.message, true); }
+  };
+  // After adding: stay here, ready for the next card.
+  const onAdded = (r, c, d) => {
+    (state.added = state.added || []).push({ key: r.key, name: c.name, set: c.set, number: c.collector_number, quantity: d.quantity,
+      finish: d.finish, condition: d.condition, price: d.price, date: d.date });
+    showSession();
+    text.value = "";
+    hideSuggest();
+    armed = false;
+    text.focus();
+  };
 
   const render = () => {
+    picker = pickList(cards, owned, preview, onAdded);
     fill(results,
       h("p.muted.empty", cards.length ? (total > cards.length ? `Showing ${cards.length} of ${total} printings` : plural(total, "printing", "printings") + " found") : "No cards found."),
-      pickList(cards, owned, preview),
+      picker.items,
       next ? h("button", { type: "button", style: "margin:8px 12px", onclick: () => run(true) }, "Load more results") : null);
   };
   const run = async (more) => {
+    hideSuggest();
     if (!more) {
       if (!text.value.trim() && !set.value.trim()) { status("Enter a card name, a set code, or both."); return; }
       cards = []; owned = []; next = "";
@@ -844,12 +929,72 @@ function viewAdd(params) {
       total = r.total;
       render();
       status("");
-      if (!more && cards.length) results.querySelector(".card").click();
+      if (!more && cards.length) picker.select(0);
     } catch (e) { status(e.message, true); }
   };
-  const form = h("form.search", { onsubmit: (e) => { e.preventDefault(); run(false); } }, text, set, h("button.primary", { type: "submit" }, "Search"),
-    gameInfo().Scan ? h("a.button", { href: "#/scan" }, "Scan a card") : null);
-  fill($("#main"), h("h1", "Add Cards"), form, h("div.split", h("div.pane-list", results), preview));
+
+  // Name suggestions while typing: after 2 characters, 200 ms after the last key, and
+  // only the answer to the latest request is shown.
+  let timer = null, asked = 0, chosen = -1;
+  const hideSuggest = () => { clearTimeout(timer); asked++; suggest.hidden = true; chosen = -1; };
+  const markSuggest = () => [...suggest.children].forEach((li, i) => li.classList.toggle("sel", i === chosen));
+  const pickSuggest = (name) => { text.value = name; run(false); };
+  text.addEventListener("input", () => {
+    armed = false;
+    clearTimeout(timer);
+    const q = text.value.trim();
+    if (q.length < 2 || /[:=<>!"]/.test(q)) { hideSuggest(); return; }
+    timer = setTimeout(async () => {
+      const mine = ++asked;
+      try {
+        const r = await api("GET", gameAPI(`/autocomplete?q=${encodeURIComponent(q)}`));
+        if (mine !== asked) return; // a later request is on its way
+        chosen = -1;
+        fill(suggest, r.names.map((n) => h("li", { role: "option", onmousedown: (e) => { e.preventDefault(); pickSuggest(n); } }, n)));
+        suggest.hidden = !r.names.length;
+      } catch { /* suggestions are optional */ }
+    }, 200);
+  });
+  text.addEventListener("blur", () => setTimeout(hideSuggest, 150));
+  text.addEventListener("keydown", (e) => {
+    const open = !suggest.hidden && suggest.children.length;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      if (open) { chosen = Math.max(-1, Math.min(suggest.children.length - 1, chosen + step)); markSuggest(); return; }
+      if (picker && picker.items.length) { picker.select(Math.max(0, Math.min(picker.items.length - 1, picker.index + step))); armed = true; }
+    } else if (e.key === "Escape") {
+      hideSuggest();
+    } else if (e.key === "Enter") {
+      if (open && chosen >= 0) { e.preventDefault(); pickSuggest(suggest.children[chosen].textContent); }
+      else if (armed && picker && picker.current) { e.preventDefault(); picker.current.add(); }
+      // otherwise the form submits: search
+    }
+  });
+
+  // Paste a list: send it to the import preview.
+  const listBox = h("textarea", { rows: 8, placeholder: "4 Lightning Bolt\n1 Sol Ring (C21) 263\n2 Shock [M19] *F*", "aria-label": "Card list" });
+  const listOut = h("div");
+  const listPanel = h("div.card-box", { hidden: true },
+    h("p.muted", "One card per line: a count, the name, and optionally the set and collector number, as decklists from Moxfield, Archidekt or MTG Arena write them. Add *F* for foil."),
+    listBox,
+    h("div.buttons", h("div.right", h("button.primary", { type: "button", onclick: async () => {
+      if (!listBox.value.trim()) { status("Paste a list first."); return; }
+      status("Matching the cards…");
+      try {
+        const p = await api("POST", gameAPI("/import?preview=1"), new Blob([listBox.value], { type: "text/plain" }));
+        status("");
+        showImportPreview(listOut, p, "pasted list", () => fill(listOut));
+      } catch (e) { status(e.message, true); }
+    } }, "Preview"))),
+    listOut);
+  const pasteBtn = h("button", { type: "button", onclick: () => { listPanel.hidden = !listPanel.hidden; if (!listPanel.hidden) listBox.focus(); } }, "Paste a list…");
+
+  const form = h("form.search", { onsubmit: (e) => { e.preventDefault(); run(false); } },
+    h("div.suggest-wrap", text, suggest), set, h("button.primary", { type: "submit" }, "Search"),
+    pasteBtn, gameInfo().Scan ? h("a.button", { href: "#/scan" }, "Scan a card") : null);
+  fill($("#main"), h("h1", "Add Cards"), form, listPanel, h("div.split", h("div.pane-list", results, session), preview));
+  showSession();
   if (state.info.client !== "phone") text.focus(); // on phones the keyboard would cover the page
   if (pre.get("text") || pre.get("set")) run(false);
 }
@@ -880,13 +1025,31 @@ function viewScan() {
     try {
       const r = await api("POST", gameAPI("/scan"), blob);
       const preview = h("div");
+      // After adding a scanned card, go straight back to the camera for the next one.
+      const again = () => { if (canCamera) startCamera(); else fill(result); };
+      const picker = pickList(r.candidates, r.owned, preview, again);
+      const best = r.candidates[0];
+      let quick = null;
+      if (r.exact && best) {
+        const d = addDefaults();
+        const fin = (best.finishes || []).includes(d.finish) ? d.finish : (best.finishes || [])[0] || "";
+        quick = h("button.primary", { type: "button", onclick: async () => {
+          quick.disabled = true;
+          try {
+            await addCard(best, { quantity: 1, finish: fin, condition: d.condition, price: d.price, date: d.date });
+            status(`Added 1× ${best.name} (${sn(best)})`);
+            again();
+          } catch (e) { status(e.message, true); quick.disabled = false; }
+        } }, `Add 1× ${best.name} (${sn(best)}) · ${fname(fin)} · ${d.condition}`);
+      }
       fill(result,
         h("p.scan-read", "Read: ", h("strong", r.read)),
         r.note ? h("p.note.scan-read", r.note) : null,
+        quick ? h("p.scan-read", quick, " ", h("span.muted", "or set the details below")) : null,
         r.candidates.length ? h("div.split",
-          h("div.pane-list", h("div.list.results", pickList(r.candidates, r.owned, preview))), preview)
+          h("div.pane-list", h("div.list.results", picker.items)), preview)
           : h("p.scan-read", h("a.button", { href: `#/add?${new URLSearchParams({ text: r.name || "" })}` }, "Search by hand")));
-      if (r.candidates.length) result.querySelector(".results .card").click();
+      if (r.candidates.length) picker.select(0);
     } catch (e) { fill(result, h("p.error.scan-read", e.message)); }
   };
 
@@ -995,7 +1158,7 @@ function viewImport() {
 // unmatchedLink offers the rows that matched no card as a CSV with the file's header,
 // to fix and import again.
 function unmatchedLink(p, fileName) {
-  const text = [p.header, ...p.unmatched.map((u) => u.text)].join("\n") + "\n";
+  const text = [p.header, ...p.unmatched.map((u) => u.text)].filter(Boolean).join("\n") + "\n";
   const url = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
   const name = fileName.replace(/\.[^.]*$/, "") + "-unmatched.csv";
   return h("a.button", { href: url, download: name }, "Download the unmatched rows");

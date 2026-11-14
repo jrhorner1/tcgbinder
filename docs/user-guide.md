@@ -101,10 +101,32 @@ since; otherwise use **Tools → Restore a backup…**. Imports offer Undo the s
 
 ## Adding cards
 
-**Add** searches Scryfall by name, set code or both, and lists every printing (cards
-you already own say so). Pick the exact one, then set the quantity, finish,
-condition, price paid and date. Adding a printing you already own adds a purchase to
-it (or to a matching purchase with the same finish, condition, price and date).
+**Add** searches Scryfall by name, set code or both, and lists every printing, newest
+first (cards you already own say so). Pick the exact one, then set the quantity,
+finish, condition, price paid and date. Adding a printing you already own adds a
+purchase to it (or to a matching purchase with the same finish, condition, price and
+date).
+
+- **Searching:** a name is searched as a phrase, so "sol ring" finds Sol Ring and not
+  every card with "sol" and "ring" somewhere in its name. If the phrase finds
+  nothing, the words are searched anywhere in a name. Scryfall's search syntax (such
+  as `t:goblin cmc<=2`, or a name in quotes) is used as typed.
+- **Suggestions:** after two letters, card names appear under the name box; pick one
+  to search for it.
+- **Adding many cards:** after adding, the page stays open with the name box empty
+  and the finish, condition, price and date kept for the next card. The cards appear
+  under **Added this session**, each with **Undo**, which takes back exactly those
+  copies.
+- **Keyboard:** Enter searches; ↑ and ↓ move through the results (or the
+  suggestions); Enter then adds the selected printing.
+- **Paste a list…** takes a card list, one card per line, as decklists from
+  Moxfield, Archidekt or MTG Arena write them: `4 Lightning Bolt`,
+  `4x Lightning Bolt`, `4 Lightning Bolt (M11) 149`, `4 Lightning Bolt [M11]`, with
+  `*F*` or `(foil)` at the end for foil. Headings such as "Sideboard" and comments
+  (`//`, `#`) are skipped. It shows the same preview as an import before anything is
+  saved. Import accepts such a list as a file too.
+- **Missing cards:** on a set page, **Add…** beside a missing card adds it without
+  leaving the page.
 
 ## Scanning cards
 
@@ -127,7 +149,10 @@ up by what's printed on it:
   around the card's copyright year, in the card's language, are listed first.
 
 The result lists the printings it could be, with the add form for the first one.
-**Search by hand** helps when the card was misread.
+When the printing is certain (the set and collector number were read), a single
+button adds one copy with the finish and condition you used last. After adding, the
+camera starts again for the next card. **Search by hand** helps when the card was
+misread.
 
 Tips: good light without glare on the name and the bottom-left corner, and the whole
 card in view. Scanning can't tell foil from non-foil, so set the finish yourself.

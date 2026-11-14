@@ -16,7 +16,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
 pub use card::{Card, Face, ImageUris, Prices};
-pub use search::{SearchPage, SearchResponse, build_search_query};
+pub use search::{SearchPage, SearchResponse, build_plain_query, build_search_query};
 pub use sets::load_sets;
 
 /// The User-Agent sent to every service, as Scryfall asks.

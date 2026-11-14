@@ -39,7 +39,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 a { color: var(--blue); }
-button, .button, select, input {
+button, .button, select, input, textarea {
   font: inherit; color: var(--text); background: var(--panel-2);
   border: 1px solid var(--line); border-radius: 7px; padding: 6px 11px;
 }
@@ -198,6 +198,17 @@ label.inline { display: inline-flex; gap: 8px; align-items: center; color: var(-
 .search input { flex: 1; min-width: 160px; }
 .search input.set { flex: 0 0 130px; min-width: 0; }
 .results { max-height: 65vh; min-height: 0; }
+/* Name suggestions under the Add page's name box. */
+.suggest-wrap { position: relative; flex: 1; min-width: 160px; display: flex; }
+.suggest-wrap input { flex: 1; min-width: 0; }
+.suggest { position: absolute; top: 100%; left: 0; right: 0; z-index: 20; margin: 4px 0 0; padding: 4px 0; list-style: none;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 24px rgb(0 0 0 / .25); max-height: 50vh; overflow: auto; }
+.suggest li { padding: 6px 12px; cursor: pointer; }
+.suggest li:hover, .suggest li.sel { background: var(--blue-soft); }
+.session { margin-top: 14px; }
+.session .list .card { cursor: default; }
+.list .card button { padding: 4px 10px; }
+textarea { width: 100%; min-height: 8em; font: inherit; font-size: 16px; }
 .camera { position: relative; background: #000; border-radius: var(--radius); overflow: hidden; aspect-ratio: 3 / 4; max-height: 70vh; margin: 0 auto 12px; width: 100%; max-width: 520px; }
 .camera video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .camera .guide { position: absolute; inset: 8% 14%; border: 3px solid rgba(255, 255, 255, .85); border-radius: 18px; box-shadow: 0 0 0 999px rgba(0, 0, 0, .35); pointer-events: none; }

@@ -14,7 +14,8 @@ crates/core            game-neutral: cards and their copies, the JSON store, pri
                        one game (import, prices, history, daily sync, value chart); logging,
                        the folders (datadir.rs) and changing the data folder (datafolder.rs),
                        single-instance lock
-crates/mtg             Magic: Scryfall catalog, CSV importer, MTGJSON price history, scan matching
+crates/mtg             Magic: Scryfall catalog, CSV and card-list importer, MTGJSON price history,
+                       scan matching
 crates/vision          Apple's Vision framework reading text off a card photo (Objective-C)
 ```
 
