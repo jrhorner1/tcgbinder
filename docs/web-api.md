@@ -70,5 +70,8 @@ Imports, bulk changes and restores back up the collection first and answer `undo
 `backups/restore` undoes the change, as long as nothing else has changed the
 collection since.
 
-Long jobs (import, refresh, price history) return `409` if the same job is already running.
+Long jobs (import and its preview, refresh, price history) return `409` if the same job
+is already running. `GET /api/games/{game}/jobs` gives the game's running jobs and how far
+each has got: `{"jobs": [{"name", "done", "total", "message"}]}` (`done` and `total` are
+0 when a job can't count its steps).
 Request bodies (an import file, a photo) can be up to 64 MB.

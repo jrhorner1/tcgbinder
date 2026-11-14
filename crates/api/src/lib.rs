@@ -91,8 +91,8 @@ pub struct Api {
     client: Client,
     settings: Arc<SettingsStore>,
     games: Vec<Arc<GameService>>,
-    /// "<game>/<job>": long jobs running.
-    busy: Mutex<HashSet<String>>,
+    /// "<game>/<job>" → the progress of each long job running.
+    busy: Mutex<HashMap<String, JobProgress>>,
     read_image: Option<ReadImage>,
     /// Where exports are saved, for apps that can't download files.
     export_dir: Option<PathBuf>,
@@ -103,6 +103,31 @@ pub struct Api {
     restart: Option<Restart>,
     /// The data folder was changed: until the app restarts, nothing may be saved.
     switched: AtomicBool,
+}
+
+/// How far a long job has got.
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct JobProgress {
+    /// Steps done and in all (both 0 when the job can't count them).
+    pub done: usize,
+    pub total: usize,
+    /// What it's doing now, e.g. "Downloading price history".
+    pub message: String,
+}
+
+/// Lets a job report its progress, for `GET .../jobs`.
+pub struct Reporter<'a> {
+    api: &'a Api,
+    key: String,
+}
+
+impl Reporter<'_> {
+    /// Records how far the job has got.
+    pub fn report(&self, done: usize, total: usize, message: &str) {
+        if let Some(p) = self.api.busy.lock().unwrap().get_mut(&self.key) {
+            *p = JobProgress { done, total, message: message.to_string() };
+        }
+    }
 }
 
 /// How long an import preview can wait to be committed.
@@ -305,12 +330,13 @@ impl Api {
                     ("POST", ["import"]) if q.get("preview").is_some_and(|v| v == "1") => self.preview_import(g, req),
                     ("POST", ["import"]) => self.import(g, req),
                     ("POST", ["import", "commit"]) => self.commit_import(g, body),
-                    ("POST", ["refresh"]) => self.job(g, "refresh", || {
-                        let n = g.refresh_prices(&mut |_, _| {})?;
+                    ("GET", ["jobs"]) => Ok(self.jobs(g)),
+                    ("POST", ["refresh"]) => self.job(g, "refresh", |r| {
+                        let n = g.refresh_prices(&mut |done, total| r.report(done, total, "Refreshing prices"))?;
                         Ok(json!({ "updated": n }))
                     }),
-                    ("POST", ["price-history"]) => self.job(g, "price-history", || {
-                        let n = g.load_price_history(&mut |_| {})?;
+                    ("POST", ["price-history"]) => self.job(g, "price-history", |r| {
+                        let n = g.load_price_history(&mut |msg| r.report(0, 0, msg))?;
                         Ok(json!({ "printings": n }))
                     }),
                     ("GET", ["export"]) => self.export(g),
@@ -325,14 +351,33 @@ impl Api {
     }
 
     /// Runs a long operation unless one of the same kind is already running.
-    fn job(&self, g: &GameService, name: &str, run: impl FnOnce() -> anyhow::Result<Value>) -> Result {
+    /// Runs a long operation unless one of the same kind is already running. `run` can
+    /// report its progress, which `GET .../jobs` gives while it runs.
+    fn job(&self, g: &GameService, name: &str, run: impl FnOnce(&Reporter) -> anyhow::Result<Value>) -> Result {
         let key = format!("{}/{name}", g.game.id());
-        if !self.busy.lock().unwrap().insert(key.clone()) {
-            return Err(Error { status: StatusCode::CONFLICT, message: "already running".into() });
+        {
+            let mut busy = self.busy.lock().unwrap();
+            if busy.contains_key(&key) {
+                return Err(Error { status: StatusCode::CONFLICT, message: "already running".into() });
+            }
+            busy.insert(key.clone(), JobProgress::default());
         }
-        let res = run();
+        let res = run(&Reporter { api: self, key: key.clone() });
         self.busy.lock().unwrap().remove(&key);
         res.map(Reply::Json).map_err(upstream)
+    }
+
+    /// The game's long jobs running now, with their progress.
+    fn jobs(&self, g: &GameService) -> Reply {
+        let prefix = format!("{}/", g.game.id());
+        let busy = self.busy.lock().unwrap();
+        let jobs: Vec<Value> = busy
+            .iter()
+            .filter_map(|(k, p)| {
+                k.strip_prefix(&prefix).map(|name| json!({ "name": name, "done": p.done, "total": p.total, "message": p.message }))
+            })
+            .collect();
+        Reply::Json(json!({ "jobs": jobs }))
     }
 
     fn scanning(&self, g: &GameService) -> bool {
@@ -670,15 +715,15 @@ impl Api {
     /// Imports the file sent as a multipart "file" field or as the raw body.
     fn import(&self, g: &GameService, req: &Request) -> Result {
         let data = Self::upload(req)?;
-        self.job(g, "import", || Ok(import_result(g, &g.import(&data, &mut |_, _| {})?)))
+        self.job(g, "import", |r| Ok(import_result(g, &g.import(&data, &mut |done, total| r.report(done, total, "Matching cards"))?)))
     }
 
     /// Reads and matches an import file without saving it, and keeps the result for
     /// `import/commit`. A new preview replaces the game's previous one.
     fn preview_import(&self, g: &GameService, req: &Request) -> Result {
         let data = Self::upload(req)?;
-        self.job(g, "import", || {
-            let preview = g.preview_import(&data, &mut |_, _| {})?;
+        self.job(g, "import", |r| {
+            let preview = g.preview_import(&data, &mut |done, total| r.report(done, total, "Matching cards"))?;
             let token = new_token();
             let answer = json!({
                 "token": token, "format": preview.report.format, "rows": preview.report.rows,
@@ -722,7 +767,8 @@ impl Api {
         if let Some(lot) = &lot {
             lots::put_in_lot(&mut preview.cards, lot);
         }
-        self.job(g, "import", || {
+        self.job(g, "import", |r| {
+            r.report(0, 0, "Saving");
             let res = g.commit_import(preview)?;
             let mut answer = import_result(g, &res);
             if let Some(lot) = &lot {

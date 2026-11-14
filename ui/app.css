@@ -83,6 +83,7 @@ input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--blue); mar
 main { flex: 1; padding: 18px 20px 24px; width: 100%; max-width: 1440px; }
 footer { padding: 8px 20px; color: var(--muted); font-size: 13px; min-height: 2.2em; }
 footer.error { color: var(--red); }
+#status progress { width: 140px; height: 8px; margin-right: 10px; vertical-align: middle; accent-color: var(--blue); }
 .tabbar, .phone-only { display: none; }
 
 h1 { font-size: 26px; margin: 2px 0 12px; letter-spacing: -.01em; }
@@ -133,6 +134,19 @@ a.card { color: inherit; text-decoration: none; }
 .filters input[type=search] { width: 100%; }
 .filters .menus { display: grid; grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 6px; }
 .filters select.on { border-color: var(--blue); background: var(--blue-soft); }
+.filters .menus .set-menu { grid-column: 1 / -1; }
+/* Rows that are buttons or links, so the keyboard reaches them, look like rows. */
+.list button.card, .rows button.row, .list .card button.text, .list .card a.rowlink, .bars button.label {
+  font: inherit; color: inherit; background: none; border: 0; border-radius: 0; text-align: left; white-space: normal; justify-content: flex-start;
+}
+.list button.card { width: 100%; border-bottom: 1px solid var(--line); }
+.list button.card:last-child { border-bottom: 0; }
+.rows button.row { width: 100%; padding: 7px 0; border-bottom: 1px solid var(--line); }
+.list .card button.text { padding: 0; align-items: flex-start; cursor: pointer; }
+.list .card a.rowlink { flex: 1; min-width: 0; display: flex; gap: 10px; align-items: center; text-decoration: none; }
+.list .card a.rowlink .text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.bars button.label { display: block; width: 100%; padding: 0; color: var(--blue); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
 .counts { font-size: 13px; margin: 0; display: flex; justify-content: space-between; gap: 8px; align-items: center; }
 .list { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: auto; flex: 1; min-height: 120px; }
 .list .card { display: flex; gap: 10px; align-items: center; padding: 7px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
@@ -235,6 +249,7 @@ pre.summary { background: var(--panel); border: 1px solid var(--line); border-ra
 /* Dialogs (bulk edit) */
 dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--text); padding: 0; width: min(560px, calc(100vw - 24px)); max-height: calc(100vh - 40px); }
 dialog::backdrop { background: rgba(0, 0, 0, .5); }
+dialog.ask { width: min(440px, calc(100vw - 24px)); }
 dialog .dlg { display: flex; flex-direction: column; max-height: calc(100vh - 42px); }
 dialog .dlg > header { padding: 16px 18px 6px; }
 dialog .dlg > header h2 { margin: 0; }

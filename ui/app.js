@@ -93,11 +93,31 @@ function copiesSummary(c) {
 
 // status shows a message in the status line, optionally with Undo for a change the
 // server took a backup before (`undo` from its answer: {backup, revision}).
-function status(msg, isError, undo) {
+// status shows a message in the status line, optionally with Undo for a change the
+// server took a backup before (`undo` from its answer: {backup, revision}), or a
+// progress bar ({done, total}).
+function status(msg, isError, undo, progress) {
   const el = $("#status");
   const undoBtn = undo && h("button.link", { type: "button", onclick: () => undoChange(undo) }, "Undo");
-  fill(el, msg || "", undoBtn ? " " : null, undoBtn);
+  const bar = progress && progress.total ? h("progress", { value: progress.done, max: progress.total }) : null;
+  fill(el, bar, msg || "", undoBtn ? " " : null, undoBtn);
   el.className = isError ? "error" : "";
+}
+
+// whileRunning shows a long job's progress in the status line (polling GET /jobs
+// once a second) until `promise` settles, and returns its result.
+async function whileRunning(promise) {
+  let running = true;
+  const timer = setInterval(async () => {
+    try {
+      const r = await api("GET", gameAPI("/jobs"));
+      const j = r.jobs[0];
+      if (!running || !j || !j.message) return;
+      const count = j.total ? ` — ${j.done.toLocaleString()} of ${j.total.toLocaleString()}` : "";
+      status(`${j.message}${count}…`, false, null, j);
+    } catch { /* the job's own answer reports failures */ }
+  }, 1000);
+  try { return await promise; } finally { running = false; clearInterval(timer); }
 }
 
 // undoChange restores the backup taken before a change, unless the collection has
@@ -130,21 +150,32 @@ async function api(method, path, body) {
 }
 const gameAPI = (path) => `/api/games/${encodeURIComponent(state.game)}${path}`;
 
-// ask confirms a deletion, unless the user turned that off in Settings.
-const ask = (msg) => !state.settings.confirm_delete || confirm(msg);
+// confirmDialog asks a yes/no question in the app's own dialog and resolves to true
+// for yes. (The apps' web views answer window.confirm() with "no" without showing it,
+// so the browser's own dialog can't be used.)
+function confirmDialog(message, { danger = false, action = "OK", title = "Are you sure?" } = {}) {
+  return askDialog(title, message, [{ label: action, value: true, primary: !danger, danger }]).then((v) => v === true);
+}
 
-// askDialog asks one question in the app's dialog and resolves to the chosen
-// button's value, or null if closed. buttons: [{label, value, primary, danger}];
-// with cancel false there is no Cancel button (a message to acknowledge).
+// ask confirms a deletion, unless the user turned that off in Settings.
+const ask = async (msg, action = "Delete") => !state.settings.confirm_delete || confirmDialog(msg, { danger: true, action });
+
+// askDialog asks one question in a dialog of its own (so it can open over another)
+// and resolves to the chosen button's value, or null if closed. buttons: [{label,
+// value, primary, danger}]; with cancel false there is no Cancel button (a message
+// to acknowledge).
 function askDialog(title, message, buttons, cancel = true) {
-  const dlg = $("#dialog");
   return new Promise((resolve) => {
-    const done = (v) => { dlg.onclose = null; dlg.close(); resolve(v); };
+    const dlg = h("dialog.ask");
+    let answered = false;
+    const done = (v) => { if (answered) return; answered = true; dlg.close(); dlg.remove(); resolve(v); };
+    const choices = buttons.map((b) => h("button" + (b.primary ? ".primary" : b.danger ? ".danger" : ""), { type: "button", onclick: () => done(b.value) }, b.label));
     fill(dlg, h("div.dlg", h("header", h("h2", title)), h("div.body", [message].flat().map((m) => h("p", m))),
-      h("footer", cancel ? h("button", { type: "button", onclick: () => done(null) }, "Cancel") : null,
-        buttons.map((b) => h("button" + (b.primary ? ".primary" : b.danger ? ".danger" : ""), { type: "button", onclick: () => done(b.value) }, b.label)))));
-    dlg.onclose = () => resolve(null);
+      h("footer", cancel ? h("button", { type: "button", onclick: () => done(null) }, "Cancel") : null, choices)));
+    dlg.addEventListener("close", () => done(null));
+    document.body.append(dlg);
     dlg.showModal();
+    (choices.find((b) => b.classList.contains("primary")) || choices[0])?.focus();
   });
 }
 
@@ -212,7 +243,7 @@ function dataNotices(df, home) {
   }
   for (const c of df.conflicts.filter((c) => c.game === state.game)) {
     const act = async (what) => {
-      if (what === "discard" && !confirm(`Delete ${c.name}? Its changes are lost.`)) return;
+      if (what === "discard" && !(await confirmDialog(`Delete ${c.name}? Its changes are lost.`, { danger: true, action: "Discard it" }))) return;
       try {
         const r = await api("POST", gameAPI(`/conflicts/${what}`), { name: c.name });
         status(what === "merge" ? `Merged ${c.name}: ${plural(r.changed, "card", "cards")} changed.` : `Discarded ${c.name}.`, false, r.undo);
@@ -300,7 +331,7 @@ function legend(series) {
 
 function bars(items, max, color) {
   return h("div.bars", items.flatMap((it) => [
-    it.onclick ? h("div.label.link", { title: it.label, onclick: it.onclick, role: "link" }, it.label) : h("div.label", { title: it.label }, it.label),
+    it.onclick ? h("button.label.link", { type: "button", title: it.label, onclick: it.onclick }, it.label) : h("div.label", { title: it.label }, it.label),
     h("div.track", h("div.fill", { style: `width:${Math.max(0, Math.min(1, it.value / (max || 1))) * 100}%;background:${color}` })),
     h("div.num", it.text),
   ]));
@@ -317,7 +348,7 @@ function gain(cost, market) {
 }
 
 function cardRows(cards, amount) {
-  return h("div.rows", cards.map((c, i) => h("div.row", { onclick: () => openCard(c.key) },
+  return h("div.rows", cards.map((c, i) => h("button.row", { type: "button", onclick: () => openCard(c.key) },
     h("span.name", `${i + 1}. ${c.name}`),
     h("span.where", [sn(c), copiesSummary(c), englishPrice(c)].filter(Boolean).join(" · ")),
     h("span.amt", usd(amount(c))))));
@@ -377,7 +408,7 @@ async function runJob(button, path, busy, done) {
   button.disabled = true;
   status(busy);
   try {
-    const r = await api("POST", gameAPI(path));
+    const r = await whileRunning(api("POST", gameAPI(path)));
     status(done(r));
     route();
   } catch (err) {
@@ -414,8 +445,10 @@ async function viewCollection(params) {
     clearTimeout(timer);
     timer = setTimeout(() => nav((p) => { search.value ? p.set("q", search.value) : p.delete("q"); }, true), 250);
   });
+  const setMenu = menu("set", "Set", (f.sets || []).map((x) => ({ value: x.Code, label: x.Label })));
+  setMenu.classList.add("set-menu"); // set names are long: the menu gets its own line
   const filters = h("div.filters", search, h("div.menus",
-    menu("set", "Set", (f.sets || []).map((x) => ({ value: x.Code, label: x.Label }))),
+    setMenu,
     (f.filters || []).map((x) => menu("f." + x.Name, x.Name, x.Options)),
     menu("rarity", "Rarity", f.rarities, title),
     menu("finish", "Finish", f.finishes, fname)));
@@ -436,8 +469,10 @@ async function viewCollection(params) {
       onclick: (e) => e.stopPropagation(),
       onchange: (e) => { e.target.checked ? ticked.set(c.key, tickInfo(c)) : ticked.delete(c.key); updateBar(); } });
     boxes.set(c.key, box);
-    return h("div.card" + (c.key === q.get("key") ? ".sel" : ""), { onclick: () => openCard(c.key) },
-      box, h("div.text", h("span.name", c.name), h("span.meta", [sn(c), copiesSummary(c), englishPrice(c), noted(c)].filter(Boolean).join(" · "))));
+    // The tick box and the button that opens the card sit side by side.
+    return h("div.card" + (c.key === q.get("key") ? ".sel" : ""),
+      box, h("button.text", { type: "button", onclick: () => openCard(c.key) },
+        h("span.name", c.name), h("span.meta", [sn(c), copiesSummary(c), englishPrice(c), noted(c)].filter(Boolean).join(" · "))));
   };
   const list = h("div.list", data.cards.length ? data.cards.map(row) : h("p.muted.empty", "No cards match."));
 
@@ -519,7 +554,7 @@ function showBulkEdit() {
     }
     if (!body.delete && !body.condition && !body.finish && !body.acquired_date && body.price_paid === undefined && body.note === undefined) { err.textContent = "Choose at least one change."; return; }
     const n = plural(chosen.size, "card", "cards");
-    if (!(body.delete ? ask(`Delete every copy of ${n}? You can undo it right after, or restore a backup from Tools.`) : confirm(`Apply the changes to every copy of ${n}?`))) return;
+    if (!(await (body.delete ? ask(`Delete every copy of ${n}? You can undo it right after, or restore a backup from Tools.`) : confirmDialog(`Apply the changes to every copy of ${n}?`, { action: "Apply" })))) return;
     try {
       const r = await api("POST", gameAPI("/bulk"), body);
       status(body.delete ? `Deleted ${plural(r.Deleted, "card", "cards")}.` :
@@ -559,10 +594,11 @@ async function renderSet(container, code) {
       fill(missingBox,
         h("p.muted.empty", m.missing.length ? `${plural(m.missing.length, "card", "cards")} you don't own yet. Add one here, or click it to search its printings.` : "You have every card in this set."),
         m.missing.map((c) => {
-          const row = h("div.card", { onclick: () => go("add", new URLSearchParams({ text: c.name, set: code })) },
-            h("span.num", c.collector_number), h("div.text", h("span.name", c.name),
-              h("span.meta", [title(c.rarity), anyPrice(c) ? usd(anyPrice(c)) : ""].filter(Boolean).join(" · "))),
-            h("button", { type: "button", onclick: (e) => { e.stopPropagation(); addInDialog(c, () => row.remove()); } }, "Add…"));
+          const row = h("div.card",
+            h("a.rowlink", { href: `#/add?${new URLSearchParams({ text: c.name, set: code })}` },
+              h("span.num", c.collector_number), h("span.text", h("span.name", c.name),
+                h("span.meta", [title(c.rarity), anyPrice(c) ? usd(anyPrice(c)) : ""].filter(Boolean).join(" · ")))),
+            h("button", { type: "button", onclick: () => addInDialog(c, () => row.remove()) }, "Add…"));
           return row;
         }));
       showMissing.remove();
@@ -687,7 +723,7 @@ async function renderCard(container, key) {
       if (quantity === 0) continue;
       purchases.push({ finish: r.finish.value, condition: r.cond.value, quantity, price_paid: r.price.value ? parseFloat(r.price.value) : 0, acquired_date: r.date.value, note: r.note.value.trim(), lot: r.lot });
     }
-    if (!purchases.length && !ask(`Remove all of ${c.name} from your collection?`)) return;
+    if (!purchases.length && !(await ask(`Remove all of ${c.name} from your collection?`, "Remove"))) return;
     try {
       const r = await api("PUT", gameAPI(`/card?key=${encodeURIComponent(key)}`), { purchases });
       status(r.deleted ? `Deleted ${c.name}` : `Saved ${c.name}`);
@@ -695,7 +731,7 @@ async function renderCard(container, key) {
     } catch (e) { err.textContent = e.message; }
   };
   const del = async () => {
-    if (!ask(`Remove all ${c.copy_count} of ${c.name} (${sn(c)}) from your collection?`)) return;
+    if (!(await ask(`Remove all ${c.copy_count} of ${c.name} (${sn(c)}) from your collection?`, "Remove"))) return;
     try {
       await api("DELETE", gameAPI(`/card?key=${encodeURIComponent(key)}`));
       ticks().delete(key);
@@ -750,7 +786,7 @@ async function renderCard(container, key) {
         c.type_line ? h("p", h("strong", c.type_line)) : null,
         c.oracle_text ? h("p.rules", c.oracle_text) : null,
         h("dl.kv", kv.flatMap(([k, v]) => [h("dt", k), h("dd", v)])),
-        d.others && d.others.length ? [h("h2", "Other Printings You Own"), h("div.rows", d.others.map((o) => h("div.row", { onclick: () => openCard(o.key) },
+        d.others && d.others.length ? [h("h2", "Other Printings You Own"), h("div.rows", d.others.map((o) => h("button.row", { type: "button", onclick: () => openCard(o.key) },
           h("span.name", `${o.set_name} · ${sn(o)}`), h("span.where", copiesSummary(o)))))] : null))));
 }
 
@@ -769,7 +805,8 @@ async function showPrintings(box, key, c, lang) {
       h("p.note", "Pick the printing you own; every purchase moves with its condition, price paid, date and note. A card's language belongs to its printing, so choose a language to see its printings."),
       langMenu,
       r.printings.length ? null : h("p.muted", `No printings in ${languageName(language)}.`),
-      h("div.list.results", r.printings.map((p) => h("div.card" + (p.id === r.current ? ".sel" : ""), {
+      h("div.list.results", r.printings.map((p) => h("button.card" + (p.id === r.current ? ".sel" : ""), {
+        type: "button",
         onclick: async () => {
           if (p.id === r.current) return;
           try {
@@ -842,7 +879,7 @@ function addForm(container, c, owned, onAdded, lot) {
 // returned select(i) picks one from the keyboard.
 function pickList(cards, owned, preview, onAdded, lot) {
   const picker = { current: null, index: -1 };
-  const items = cards.map((c, i) => h("div.card", { role: "button", tabindex: -1, onclick: () => picker.select(i) },
+  const items = cards.map((c, i) => h("button.card", { type: "button", onclick: () => picker.select(i) },
     h("div.text", h("strong", c.name),
       h("span.meta", [sn(c), title(c.rarity), (c.released_at || "").slice(0, 4), anyPrice(c) ? usd(anyPrice(c)) : ""].filter(Boolean).join(" · "))),
     owned[i] ? h("span.owned", `own ${owned[i]}`) : null));
@@ -1015,7 +1052,7 @@ function viewAdd(params) {
       if (!listBox.value.trim()) { status("Paste a list first."); return; }
       status("Matching the cards…");
       try {
-        const p = await api("POST", gameAPI("/import?preview=1"), new Blob([listBox.value], { type: "text/plain" }));
+        const p = await whileRunning(api("POST", gameAPI("/import?preview=1"), new Blob([listBox.value], { type: "text/plain" })));
         status("");
         showImportPreview(listOut, p, lot ? `pasted list for ${lot.name}` : "pasted list", () => fill(listOut), lot,
           (r) => { if (r.lot) { lot = r.lot; showBanner(); } });
@@ -1156,9 +1193,10 @@ async function viewSearch(params) {
     total ? null : h("p.muted", "No cards in your collection match. Search the catalog to add one."),
     r.games.map((g) => [
       r.games.length > 1 || g.Total ? h("h2", `${g.Name} — ${plural(g.Total, "match", "matches")}`) : null,
-      g.Cards.length ? h("div.list", g.Cards.map((c) => h("div.card", { onclick: async () => { await switchTo(g.Game); go("collection", new URLSearchParams({ key: c.key })); } },
-        h("div.text", h("span.name", c.name), h("span.meta", `${sn(c)} · ${copiesSummary(c)}`))))) : null,
-      g.Total > g.Cards.length ? h("p.muted", `Showing the first ${g.Cards.length}; refine the search to see more.`) : null,
+      g.Cards.length ? h("div.list", g.Cards.map((c) => h("button.card", { type: "button", onclick: async () => { await switchTo(g.Game); go("collection", new URLSearchParams({ key: c.key })); } },
+        h("span.text", h("span.name", c.name), h("span.meta", `${sn(c)} · ${copiesSummary(c)}`))))) : null,
+      g.Total > g.Cards.length ? h("p", h("span.muted", `Showing the first ${g.Cards.length}. `),
+        h("button.link", { type: "button", onclick: async () => { await switchTo(g.Game); go("collection", new URLSearchParams({ q })); } }, `Show all ${g.Total.toLocaleString()}`)) : null,
       h("p", h("button", { type: "button", onclick: async () => { await switchTo(g.Game); go("add", new URLSearchParams({ text: q })); } },
         `Search the ${g.Name} catalog for “${q}”`)),
     ]));
@@ -1177,7 +1215,7 @@ function viewImport() {
     fill(out);
     status(`Reading ${file.files[0].name}… matching cards can take a minute for large files.`);
     try {
-      const p = await api("POST", gameAPI("/import?preview=1"), file.files[0]);
+      const p = await whileRunning(api("POST", gameAPI("/import?preview=1"), file.files[0]));
       status("");
       showImportPreview(out, p, file.files[0].name, () => { file.value = ""; fill(out); });
     } catch (e) { status(e.message, true); }
@@ -1205,7 +1243,7 @@ function showImportPreview(out, p, fileName, cancel, lot, done) {
     importBtn.disabled = true;
     status(`Importing ${plural(p.copies, "card", "cards")}…`);
     try {
-      const r = await api("POST", gameAPI("/import/commit"), lot ? { token: p.token, lot: lot.id } : { token: p.token });
+      const r = await whileRunning(api("POST", gameAPI("/import/commit"), lot ? { token: p.token, lot: lot.id } : { token: p.token }));
       status(`Imported ${plural(r.cards, "card", "cards")} from ${r.format}${lot ? ` into ${lot.name}` : ""}.`, false, r.undo);
       if (done) done(r);
       fill(out, h("h2", "Import Complete"), h("pre.summary", r.summary));
@@ -1235,7 +1273,7 @@ async function viewBackups() {
   const list = await api("GET", gameAPI("/backups"));
   const why = { import: "Before an import", "bulk-edit": "Before a bulk edit", "bulk-delete": "Before a bulk delete", restore: "Before a restore", merge: "Before a merge", move: "Before a move" };
   const restore = async (b, button) => {
-    if (!confirm(`Replace your collection with the backup from ${b.date} (${plural(b.cards, "unique card", "unique cards")})? Your current collection is backed up first, so you can come back to it.`)) return;
+    if (!(await confirmDialog(`Replace your collection with the backup from ${b.date} (${plural(b.cards, "unique card", "unique cards")})? Your current collection is backed up first, so you can come back to it.`, { action: "Restore" }))) return;
     button.disabled = true;
     try {
       const r = await api("POST", gameAPI("/backups/restore"), { name: b.name });
@@ -1539,7 +1577,7 @@ async function viewSettings() {
     h("h2", "About"),
     h("p", `${state.info.name} ${state.info.version}`),
     h("p", h("button", { type: "button", onclick: async () => {
-      if (!confirm("Put every setting back to how it was when the app was installed? Your collection isn't affected.")) return;
+      if (!(await confirmDialog("Put every setting back to how it was when the app was installed? Your collection isn't affected.", { action: "Restore defaults" }))) return;
       await saveSettings(d.defaults, "defaults restored");
       route();
     } }, "Restore defaults")));
@@ -1589,7 +1627,7 @@ async function watchForChanges() {
     if (state.skipRevision || state.revision === null) {
       state.revision = revision;
       state.skipRevision = false;
-    } else if (revision !== state.revision && !busy && !$("#dialog").open && !location.hash.startsWith("#/scan") && !location.hash.startsWith("#/add")) {
+    } else if (revision !== state.revision && !busy && !document.querySelector("dialog[open]") && !location.hash.startsWith("#/scan") && !location.hash.startsWith("#/add")) {
       state.revision = revision;
       await loadFilters();
       route();

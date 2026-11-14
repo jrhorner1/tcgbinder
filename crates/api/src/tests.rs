@@ -762,3 +762,22 @@ fn import_into_a_lot() {
     assert_eq!((status, r["lot"]["entered"].as_i64(), r["lot"]["priceEach"].as_f64()), (200, Some(4), Some(2.0)));
     assert_eq!(lot_purchases(&f, "aaaaaaaa-0000-4000-8000-000000000101", &lot["id"]), [(2.0, "2026-11-03".into(), 4)]);
 }
+
+#[test]
+fn jobs_report_progress() {
+    let f = fixture();
+    assert_eq!(get(&f.api, "/api/games/mtg/jobs")["jobs"].as_array().unwrap().len(), 0);
+    let seen = std::cell::RefCell::new(Value::Null);
+    let res = f.api.job(&f.svc, "import", |r| {
+        r.report(3, 10, "Matching cards");
+        let Reply::Json(v) = f.api.jobs(&f.svc) else { unreachable!() };
+        *seen.borrow_mut() = v;
+        // The same job can't start twice.
+        assert!(f.api.job(&f.svc, "import", |_| Ok(Value::Null)).is_err());
+        Ok(json!({}))
+    });
+    assert!(res.is_ok());
+    let jobs = seen.into_inner();
+    assert_eq!(jobs["jobs"][0], json!({ "name": "import", "done": 3, "total": 10, "message": "Matching cards" }));
+    assert_eq!(get(&f.api, "/api/games/mtg/jobs")["jobs"].as_array().unwrap().len(), 0, "gone once finished");
+}

@@ -23,6 +23,10 @@ card** below them. On phones the tab bar at the bottom has **Home**, **Cards**,
   set to open it.
 - **Value by Set** and **Most Valuable Cards.** Click a set or card to open it.
 
+Long jobs (importing, refreshing prices, loading price history) show their progress in
+the status line at the bottom. Confirmations, such as before deleting, appear in the
+app's own dialog. Every row in a list can be reached with Tab and opened with Enter.
+
 Prices refresh automatically: at startup, then whenever the stored prices are from an
 earlier day (checked hourly). **Settings → Update prices** can make that weekly or
 manual-only, and **Tools → Refresh prices now** refreshes on demand. When prices
@@ -193,7 +197,8 @@ card in view. Scanning can't tell foil from non-foil, so set the finish yourself
 ## Search
 
 The search box at the top searches your whole collection, across every game. If the
-card isn't there, **Search the catalog** opens Add with the same search.
+card isn't there, **Search the catalog** opens Add with the same search. It shows the first 200 matches per game; **Show all N** opens the collection list
+with the same search.
 
 ## Tools
 
