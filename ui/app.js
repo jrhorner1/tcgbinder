@@ -63,6 +63,9 @@ const gameInfo = () => state.info.games.find((g) => g.ID === state.game) || stat
 const shortName = (name) => name.split(":")[0];
 const finishRank = (f) => { const i = state.filters.finishes.indexOf(f); return i < 0 ? 99 : i; };
 const anyPrice = (c) => (c.each ? c.each : Object.values(c.market || {})[0] || 0);
+// englishPrice marks a card valued at its English printing's price (the catalog has
+// none for its own language).
+const englishPrice = (c) => (c.price_from === "en" ? "English price" : null);
 
 // copiesSummary describes a card's copies compactly: "×3" when they're all in the usual
 // finish and near mint, otherwise per finish, e.g. "Normal ×2 · Foil ×1 (1 LP)".
@@ -201,7 +204,7 @@ function gain(cost, market) {
 function cardRows(cards, amount) {
   return h("div.rows", cards.map((c, i) => h("div.row", { onclick: () => openCard(c.key) },
     h("span.name", `${i + 1}. ${c.name}`),
-    h("span.where", `${sn(c)} · ${copiesSummary(c)}`),
+    h("span.where", [sn(c), copiesSummary(c), englishPrice(c)].filter(Boolean).join(" · ")),
     h("span.amt", usd(amount(c))))));
 }
 
@@ -318,7 +321,7 @@ async function viewCollection(params) {
       onchange: (e) => { e.target.checked ? ticked.set(c.key, tickInfo(c)) : ticked.delete(c.key); updateBar(); } });
     boxes.set(c.key, box);
     return h("div.card" + (c.key === q.get("key") ? ".sel" : ""), { onclick: () => openCard(c.key) },
-      box, h("div.text", h("span.name", c.name), h("span.meta", `${sn(c)} · ${copiesSummary(c)}`)));
+      box, h("div.text", h("span.name", c.name), h("span.meta", [sn(c), copiesSummary(c), englishPrice(c)].filter(Boolean).join(" · "))));
   };
   const list = h("div.list", data.cards.length ? data.cards.map(row) : h("p.muted.empty", "No cards match."));
 
@@ -554,7 +557,8 @@ async function renderCard(container, key) {
   const unpriced = c.purchases.filter((l) => !l.market).reduce((n, l) => n + l.quantity, 0);
   const g = c.market_value && c.price_paid ? gain(c.price_paid, c.market_value) : null;
   const marketText = Object.entries(c.market || {}).sort((a, b) => finishRank(a[0]) - finishRank(b[0]))
-    .map(([k, v]) => `${usd(v)} ${fname(k)}`).join(" · ") + (c.prices_updated ? `  (as of ${c.prices_updated})` : "");
+    .map(([k, v]) => `${usd(v)} ${fname(k)}`).join(" · ") + (c.prices_updated ? `  (as of ${c.prices_updated})` : "")
+    + (englishPrice(c) ? " — the English printing's price: the catalog has none for this language" : "");
   const kv = [["Set", `${c.set_name} (${c.set})`], ["Collector number", c.collector_number], ["Rarity", title(c.rarity)],
     ...(d.details || []).map((r) => [r.Label, r.Value]),
     c.lang && c.lang !== "en" ? ["Language", c.lang.toUpperCase()] : null,
@@ -572,7 +576,7 @@ async function renderCard(container, key) {
         d.link.url ? h("p", { style: "text-align:center" }, h("a", { href: d.link.url, target: "_blank", rel: "noopener noreferrer" }, d.link.label)) : null),
       h("div",
         h("div.tiles", { style: "grid-template-columns:repeat(auto-fit,minmax(140px,1fr))" },
-          tile("MARKET VALUE", c.market_value ? usd(c.market_value) : "—", c.market_value ? valueDet : "no market price yet", "var(--blue)"),
+          tile("MARKET VALUE", c.market_value ? usd(c.market_value) : "—", c.market_value ? [valueDet, englishPrice(c)].filter(Boolean).join(" · ") : "no market price yet", "var(--blue)"),
           tile("PRICE PAID", c.price_paid ? usd(c.price_paid) : "—", c.price_paid ? paidDet : "price paid not recorded"),
           tile("GAIN / LOSS", g ? g.text : "—", g ? g.pct : "needs both prices", g ? g.color : null)),
         h("h2", "Your Copies"),

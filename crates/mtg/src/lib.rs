@@ -106,6 +106,43 @@ fn market_from_prices(p: &scryfall::Prices, finishes: &[String]) -> BTreeMap<Str
         .collect()
 }
 
+impl Magic {
+    /// Scryfall prices no non-English printing, so each one in `foreign` takes the
+    /// prices of the English printing with the same set and collector number, marked
+    /// with `price_from = "en"`. Printings with no English counterpart stay unpriced.
+    fn borrow_english_prices(&self, foreign: &[scryfall::Card], out: &mut HashMap<String, CatalogUpdate>) -> Result<()> {
+        let key = |set: &str, number: &str| (set.to_lowercase(), number.to_lowercase());
+        let mut wanted: Vec<(String, String)> = foreign.iter().map(|sc| key(&sc.set, &sc.collector_number)).collect();
+        wanted.sort();
+        wanted.dedup();
+        let mut english: HashMap<(String, String), scryfall::Card> = HashMap::new();
+        for chunk in wanted.chunks(scryfall::COLLECTION_BATCH_SIZE) {
+            let bodies: Vec<_> = chunk
+                .iter()
+                .map(|(set, number)| {
+                    serde_json::Map::from_iter([
+                        ("set".to_string(), Value::from(set.as_str())),
+                        ("collector_number".into(), Value::from(number.as_str())),
+                    ])
+                })
+                .collect();
+            let resp = self.scryfall.fetch_collection(&bodies).context("looking up English prices failed")?;
+            for en in resp.data.into_iter().filter(|c| c.lang == "en") {
+                english.insert(key(&en.set, &en.collector_number), en);
+            }
+        }
+        for sc in foreign {
+            let Some(en) = english.get(&key(&sc.set, &sc.collector_number)) else { continue };
+            let market = market_from_prices(&en.prices, &sc.finishes);
+            if let (false, Some(update)) = (market.is_empty(), out.get_mut(&sc.id)) {
+                update.market = market;
+                update.price_from = "en".into();
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Game for Magic {
     fn id(&self) -> &'static str {
         ID
@@ -133,6 +170,7 @@ impl Game for Magic {
     fn refresh(&self, ids: &[String], progress: Progress) -> Result<HashMap<String, CatalogUpdate>> {
         let list: Vec<&String> = ids.iter().filter(|id| scryfall::is_uuid(id)).collect();
         let mut out = HashMap::new();
+        let mut foreign = Vec::new(); // non-English printings without prices
         for (n, chunk) in list.chunks(scryfall::COLLECTION_BATCH_SIZE).enumerate() {
             let bodies: Vec<_> =
                 chunk.iter().map(|id| serde_json::Map::from_iter([("id".to_string(), Value::from(id.as_str()))])).collect();
@@ -142,11 +180,16 @@ impl Game for Magic {
                     market: market_from_prices(&sc.prices, &sc.finishes),
                     type_line: sc.type_line.clone(),
                     rules_text: sc.text(),
+                    price_from: String::new(),
                 };
+                if update.market.is_empty() && !sc.lang.is_empty() && sc.lang != "en" {
+                    foreign.push(sc.clone());
+                }
                 out.insert(sc.id, update);
             }
             progress(((n + 1) * scryfall::COLLECTION_BATCH_SIZE).min(list.len()), list.len());
         }
+        self.borrow_english_prices(&foreign, &mut out)?;
         Ok(out)
     }
 
@@ -355,6 +398,85 @@ mod tests {
         }
         assert_eq!(Magic::default().finish_name("nonfoil"), "Normal");
         assert_eq!(Magic::default().finish_name("etched"), "Etched");
+    }
+
+    /// A fake Scryfall with Sol Ring in Commander 2021 (263) in English ($1.85) and
+    /// Japanese (no prices), a Japanese-only promo, and an English card of its own.
+    fn language_server() -> testing::FakeServer {
+        use scryfall::{CollectionResponse, Prices};
+        let card = |id: &str, lang: &str, set: &str, number: &str, usd: Option<&str>| scryfall::Card {
+            id: id.into(),
+            name: "Sol Ring".into(),
+            lang: lang.into(),
+            set: set.into(),
+            collector_number: number.into(),
+            finishes: vec!["nonfoil".into(), "foil".into()],
+            prices: Prices { usd: usd.map(String::from), ..Default::default() },
+            ..Default::default()
+        };
+        let catalog = [
+            card(JA, "ja", "c21", "263", None),
+            card(EN, "en", "c21", "263", Some("1.85")),
+            card(PROMO, "ja", "pjp", "1", None),
+            card(OTHER, "en", "m19", "1", Some("0.50")),
+        ];
+        testing::FakeServer::start(move |req| {
+            if let Some(rest) = req.path.strip_prefix("/cards/") {
+                // /cards/{set}/{number}/{lang}: one printing in a language.
+                let parts: Vec<&str> = rest.split('/').collect();
+                if let [set, number, lang] = parts[..] {
+                    return match catalog.iter().find(|c| c.set == set && c.collector_number == number && c.lang == lang) {
+                        Some(c) => testing::Reply::json(c),
+                        None => testing::Reply::not_found(),
+                    };
+                }
+            }
+            let body: Value = serde_json::from_slice(&req.body).unwrap_or_default();
+            let mut resp = CollectionResponse::default();
+            for id in body["identifiers"].as_array().cloned().unwrap_or_default() {
+                // By set and number Scryfall answers with the English printing, if any.
+                let hit = catalog.iter().find(|c| match id.get("id") {
+                    Some(want) => c.id == *want,
+                    None => c.set == id["set"] && c.collector_number == id["collector_number"] && (c.lang == "en" || c.set == "pjp"),
+                });
+                match hit {
+                    Some(c) => resp.data.push(c.clone()),
+                    None => resp.not_found.push(id.as_object().cloned().unwrap_or_default()),
+                }
+            }
+            testing::Reply::json(&resp)
+        })
+    }
+
+    const JA: &str = "bbbbbbbb-0000-4000-8000-000000000001";
+    const EN: &str = "bbbbbbbb-0000-4000-8000-000000000002";
+    const PROMO: &str = "bbbbbbbb-0000-4000-8000-000000000003";
+    const OTHER: &str = "bbbbbbbb-0000-4000-8000-000000000004";
+
+    #[test]
+    fn foreign_printings_take_the_english_price() {
+        let srv = language_server();
+        let g = Magic::with_clients(scryfall::Client::unlimited(&srv.url), mtgjson::Client::new(&srv.url));
+        let ids: Vec<String> = [JA, PROMO, OTHER].iter().map(|s| s.to_string()).collect();
+        let got = g.refresh(&ids, &mut |_, _| {}).unwrap();
+        assert_eq!(got[JA].market, BTreeMap::from([("nonfoil".to_string(), 1.85)]));
+        assert_eq!(got[JA].price_from, "en");
+        assert!(got[PROMO].market.is_empty() && got[PROMO].price_from.is_empty(), "no English printing: unpriced");
+        assert_eq!((got[OTHER].market["nonfoil"], got[OTHER].price_from.as_str()), (0.5, ""));
+        let calls = srv.calls.lock().unwrap().len();
+        assert_eq!(calls, 2, "one batch by ID, one for the English printings");
+    }
+
+    #[test]
+    fn imported_foreign_cards_are_priced_at_once() {
+        let srv = language_server();
+        let g = Magic::with_clients(scryfall::Client::unlimited(&srv.url), mtgjson::Client::new(&srv.url));
+        let dir = tempfile::tempdir().unwrap();
+        let svc = tcgbinder_core::service::GameService::open(dir.path(), Box::new(g)).unwrap();
+        let res = svc.import(b"Name,Set Code,Collector Number,Language,Quantity\nSol Ring,C21,263,Japanese,2\n", &mut |_, _| {}).unwrap();
+        assert_eq!(res.cards, 2);
+        let card = svc.store.get(JA).expect("the Japanese printing");
+        assert_eq!((card.market_price("nonfoil"), card.price_from.as_str()), (Some(1.85), "en"));
     }
 
     /// Imports a real export against live Scryfall into a temporary collection; skipped

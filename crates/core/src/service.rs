@@ -101,6 +101,17 @@ impl GameService {
         self.prices.save()
     }
 
+    /// Prices the given cards from the game's catalog (only those still unpriced in the
+    /// collection). A failure is logged: the next price refresh tries again.
+    fn price_cards(&self, ids: &[String]) {
+        let ids: Vec<String> = ids.iter().filter(|id| self.store.get(id).is_some_and(|c| c.market.is_empty())).cloned().collect();
+        let updated = self.game.refresh(&ids, &mut |_, _| {}).and_then(|u| self.store.update_catalog(&u, &dates::today_string()));
+        match updated {
+            Ok(n) => tracing::info!(game = self.game.id(), cards = n, "priced cards imported without a price"),
+            Err(e) => tracing::warn!(game = self.game.id(), error = %e, "could not price the imported cards"),
+        }
+    }
+
     /// Fetches current prices from the game's catalog, saves them and records today's
     /// prices. Returns the number of cards updated.
     pub fn refresh_prices(&self, progress: &mut dyn FnMut(usize, usize)) -> Result<usize> {
@@ -225,10 +236,16 @@ impl GameService {
     }
 
     /// Saves the cards of a preview. The counts are worked out again, since the
-    /// collection may have changed since the preview.
+    /// collection may have changed since the preview. Cards that came in without a
+    /// price (such as non-English printings) are then priced, so they don't wait for
+    /// the next refresh.
     pub fn commit_import(&self, preview: ImportPreview) -> Result<ImportResult> {
         let ImportPreview { cards, report, copies, .. } = preview;
+        let unpriced: Vec<String> = cards.iter().filter(|c| c.market.is_empty()).map(|c| c.id.clone()).collect();
         let (new_cards, already_owned) = self.store.add_cards(cards)?;
+        if !unpriced.is_empty() {
+            self.price_cards(&unpriced);
+        }
         tracing::info!(
             game = self.game.id(),
             format = report.format,

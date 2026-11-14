@@ -28,6 +28,12 @@ earlier day (checked hourly). **Settings → Update prices** can make that weekl
 manual-only, and **Tools → Refresh prices now** refreshes on demand. When prices
 change in the background, the open page updates itself (unless you're typing).
 
+Scryfall has no prices for cards printed in other languages, so a non-English card is
+valued at the price of the English printing with the same set and collector number.
+Such cards say **English price** in the lists and on the card page. A card with no
+English printing (some promos) stays unpriced. An imported non-English card is priced
+as soon as the import finishes.
+
 ## Collection
 
 - **Browse:** every card is listed with its set, number and copies, in name order, by

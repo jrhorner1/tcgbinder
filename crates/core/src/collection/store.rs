@@ -198,6 +198,7 @@ impl Store {
             for c in data.cards.values_mut() {
                 let Some(u) = updates.get(&c.id) else { continue };
                 c.market = u.market.clone();
+                c.price_from = u.price_from.clone();
                 c.prices_updated = date.to_string();
                 if c.rules_text.is_empty() && !u.rules_text.is_empty() {
                     // Fill in text for cards saved without it.

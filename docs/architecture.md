@@ -68,7 +68,9 @@ Per game, in `<data>/<game>/`:
 - `collection.json`: one card per printing (keyed by its catalog ID), holding the
   copies owned as `copies`: finish → condition → list of purchases (`quantity`,
   `price_paid`, `acquired_date`), the card editor's "Your Copies". Also the game's
-  ID. Kept in a `core::jsonfile::JsonFile` (see below).
+  ID. A card's `price_from` is `"en"` when its prices are borrowed from the English
+  printing (Magic's `borrow_english_prices`: Scryfall prices no other language). Kept
+  in a `core::jsonfile::JsonFile` (see below).
 - `price-history.json`: daily prices per printing and finish, each as a start date
   and an array of prices in cents, one per day (`-1` for a day without one). That's
   much smaller and faster than a map by date. It is only ever added to: saves are

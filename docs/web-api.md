@@ -14,7 +14,8 @@ catalog ID), passed as a query parameter. Every card in a response has `copies`
 convenience, `purchases`: the same purchases as a flat list of
 `{"finish","condition","quantity","price_paid","acquired_date","market"}`, plus the
 totals `copy_count`, `price_paid`, `market_value` and `each` (one copy in its most
-valuable owned finish).
+valuable owned finish). `price_from` is `"en"` when the card's `market` prices are
+its English printing's, because the catalog has none for its language.
 
 Names follow the UI: **Cards** counts every card owned and **unique cards** counts
 printings; **price paid** and **market value** are the totals on the tiles.

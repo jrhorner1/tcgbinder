@@ -98,6 +98,10 @@ pub struct Card {
     /// `YYYY-MM-DD` of the last price refresh.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub prices_updated: String,
+    /// Where `market` came from when not this printing: `"en"` when the catalog has no
+    /// prices for it and the prices are the English printing's. Empty normally.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub price_from: String,
     /// Game-specific fields, keyed by their JSON name. Use the attr helpers.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub attrs: BTreeMap<String, Value>,
@@ -143,6 +147,8 @@ pub struct CatalogUpdate {
     pub market: BTreeMap<String, f64>,
     pub type_line: String,
     pub rules_text: String,
+    /// As [`Card::price_from`]: `"en"` when the prices are the English printing's.
+    pub price_from: String,
 }
 
 /// A set, for completion stats.
