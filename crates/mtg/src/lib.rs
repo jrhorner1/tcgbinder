@@ -472,7 +472,7 @@ mod tests {
         let srv = language_server();
         let g = Magic::with_clients(scryfall::Client::unlimited(&srv.url), mtgjson::Client::new(&srv.url));
         let dir = tempfile::tempdir().unwrap();
-        let svc = tcgbinder_core::service::GameService::open(dir.path(), Box::new(g)).unwrap();
+        let svc = tcgbinder_core::service::GameService::open(dir.path(), dir.path(), Box::new(g)).unwrap();
         let res = svc.import(b"Name,Set Code,Collector Number,Language,Quantity\nSol Ring,C21,263,Japanese,2\n", &mut |_, _| {}).unwrap();
         assert_eq!(res.cards, 2);
         let card = svc.store.get(JA).expect("the Japanese printing");

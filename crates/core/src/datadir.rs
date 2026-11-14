@@ -1,13 +1,22 @@
-//! The app's data folder: one subfolder per game, so each game keeps its own
-//! collection, price history and caches.
+//! The app's two folders, each with one subfolder per game.
+//!
+//! The **local folder** is always the platform's app data folder. It holds what
+//! belongs to this device: settings, the log, the instance locks and caches.
 //!
 //! ```text
-//! <data>/settings.json
-//! <data>/tcgbinder.lock
-//! <data>/tcgbinder.log
+//! <local>/settings.json
+//! <local>/tcgbinder.log
+//! <local>/locks/<hash of the data folder>.lock
+//! <local>/mtg/scryfall-sets.json
+//! ```
+//!
+//! The **data folder** holds the collection. It is the local folder unless the user
+//! chose another (for example one a sync service shares between devices).
+//!
+//! ```text
 //! <data>/mtg/collection.json
 //! <data>/mtg/price-history.json
-//! <data>/mtg/scryfall-sets.json
+//! <data>/mtg/backups/
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -17,6 +26,20 @@ pub const APP_ID: &str = "io.github.jrhorner1.tcgbinder";
 
 /// The name of each game's collection file.
 pub const COLLECTION_FILE: &str = "collection.json";
+
+/// The name of each game's price history file.
+pub const PRICE_HISTORY_FILE: &str = "price-history.json";
+
+/// The single-instance lock for a data folder, in the local folder: named after the
+/// data folder, so two different data folders can be open at once.
+pub fn lock_path(local: &Path, data: &Path) -> PathBuf {
+    // FNV-1a: stable across builds, unlike the standard library's hasher.
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in data.as_os_str().as_encoded_bytes() {
+        hash = (hash ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3);
+    }
+    local.join("locks").join(format!("{hash:016x}.lock"))
+}
 
 /// The folder for a game's files, created if needed.
 pub fn game_dir(root: &Path, game_id: &str) -> std::io::Result<PathBuf> {

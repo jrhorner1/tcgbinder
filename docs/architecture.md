@@ -4,7 +4,7 @@ TCG Binder is a Rust workspace with one user interface for every platform:
 
 ```
 ui/                    the user interface: plain HTML, CSS and JavaScript (no build step)
-src-tauri/             the app (crate `tcgbinder`): command-line flags, data folder, logging,
+src-tauri/             the app (crate `tcgbinder`): command-line flags, the two folders, logging,
                        single-instance lock; registers the games; runs the Tauri window
                        (desktop and iPhone) or, with --web, the HTTP server (src/web.rs)
 crates/api             the JSON API and the embedded UI, as one request → response handler
@@ -12,7 +12,8 @@ crates/core            game-neutral: cards and their copies, the JSON store, pri
                        stats, filters, bulk edit; settings; JSON files shared with other
                        devices (jsonfile.rs); the Game trait; the service for
                        one game (import, prices, history, daily sync, value chart); logging,
-                       data folder, single-instance lock
+                       the folders (datadir.rs) and changing the data folder (datafolder.rs),
+                       single-instance lock
 crates/mtg             Magic: Scryfall catalog, CSV importer, MTGJSON price history, scan matching
 crates/vision          Apple's Vision framework reading text off a card photo (Objective-C)
 ```
@@ -84,8 +85,31 @@ Per game, in `<data>/<game>/`:
   accepts only a name that is listed, never a path.
 - Caches, for example Magic's `scryfall-sets.json`.
 
-In `<data>/`: `settings.json` (the user's settings, `core::settings`, also a
-`JsonFile`), `tcgbinder.lock` (single instance), and `tcgbinder.log`.
+Caches stay in `<local>/<game>/`. In `<local>/`: `settings.json` (this device's
+settings, `core::settings`, also a `JsonFile`), `locks/<hash of the data folder>.lock`
+(single instance per data folder) and `tcgbinder.log`.
+
+### The local folder and the data folder
+
+`core::datadir` describes the two. The **local folder** is the platform's app data
+folder (Tauri's `app_data_dir`, or `datadir::default_root` for `--web`). The **data
+folder** is `--data-dir` / `TCGBINDER_DATA_DIR` (shown as fixed), else the
+`data_dir` setting, else the local folder. A chosen folder that doesn't exist at
+startup is an error, not a new empty collection. `GameService::open(local, data)`
+opens the game's caches in the first and its files in the second.
+
+Changing the data folder (`api/src/folders.rs`, `core::datafolder`): `inspect` says
+what a folder holds; `transfer` moves or copies each game's collection, price history
+and backups and checks the copies read back; the choice is saved as `data_dir`, and
+the app restarts (the desktop app through the `with_restart` hook; `--web` asks the
+user). Until then the API refuses changes. The folder picker is another hook,
+`with_folder_picker` (desktop: `tauri-plugin-dialog`).
+
+Conflict copies (`datafolder::conflict_copies`): files named `collection*.json`
+beside `collection.json`, which sync services leave when two devices save at once.
+`Store::merge_copy` merges one without counting twice: the union of cards; for a
+card in both, the union of purchases, the larger quantity where both have the same
+purchase.
 
 ### Files another device may change
 

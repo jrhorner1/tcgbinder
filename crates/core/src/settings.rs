@@ -68,6 +68,12 @@ pub struct Settings {
     pub confirm_delete: bool,
     /// debug, info, warn or error.
     pub log_level: String,
+
+    // Data
+    /// The data folder this device uses; "" for the local folder. Changed only through
+    /// the data folder API, which moves or checks the data first.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub data_dir: String,
 }
 
 impl Default for Settings {
@@ -85,6 +91,7 @@ impl Default for Settings {
             default_date: "today".into(),
             confirm_delete: true,
             log_level: "info".into(),
+            data_dir: String::new(),
         }
     }
 }
@@ -133,6 +140,9 @@ impl Settings {
     /// out keep their values; unknown fields are ignored.
     pub fn with_changes(&self, change: &Value) -> Result<Settings> {
         let Value::Object(change) = change else { bail!("settings must be a JSON object") };
+        if change.contains_key("data_dir") {
+            bail!("the data folder is changed in Settings → Data, which moves or checks the collection first");
+        }
         let mut v = serde_json::to_value(self)?;
         if let Value::Object(map) = &mut v {
             for (k, val) in change {
@@ -277,5 +287,6 @@ mod tests {
         assert_eq!(next.theme, "system");
         assert!(s.with_changes(&serde_json::json!({"show_images": "yes"})).is_err());
         assert!(s.with_changes(&serde_json::json!([1])).is_err());
+        assert!(s.with_changes(&serde_json::json!({"data_dir": "/tmp"})).is_err());
     }
 }

@@ -90,6 +90,9 @@ h2 { font-size: 17px; margin: 26px 0 10px; }
 .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 26px; }
 .section-head h2 { margin: 0; }
 .card-box { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
+.card-box.notice { border-color: var(--amber); margin-bottom: 14px; }
+.card-box.notice h2 { margin-top: 0; }
+.card-box.notice p, .settings-path code { overflow-wrap: anywhere; }
 
 /* Home */
 .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }

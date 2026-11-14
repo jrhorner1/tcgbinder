@@ -26,8 +26,12 @@ Errors are `{"error": "..."}` with a 4xx/5xx status.
 | `GET /api/info` | app name, version, games (`ID`, `Name`, and `Scan`: whether card scanning works here), chart ranges, `client` (`desktop`, `phone` or `web`), `saveExports` |
 | `GET /api/status` | `{"revision"}`: changes whenever a collection is saved or reloaded, so open pages can refresh after background work. Each call first checks every game's files for changes another device made |
 | `GET /api/search?q=` | search every game's collection |
+| `GET /api/data-folder` | the data folder: `path`, `isDefault`, `defaultPath`, `fixed` (set by `--data-dir` or `TCGBINDER_DATA_DIR`), `firstRun`, `canPick` (a folder picker exists here), `restartsItself`, and `conflicts`: `[{"game", "name", "cards"}]`, conflict copies of a collection |
+| `POST /api/data-folder/pick` | show the system folder picker: `{"path"}`, `null` if cancelled; `501` where there is none (`--web`, iPhone) |
+| `POST /api/data-folder/inspect` | `{"path"}` (absolute): what is there, `{"exists", "writable", "games": [{"id", "cards"}]}` |
+| `POST /api/data-folder` | `{"path", "mode"}`: switch to `path` (`""` for the default folder). `mode` `use` opens what is there; `move` and `copy` take the current data along (refused if `path` already has a collection; `move` backs up first and deletes the originals once the copies check out). Saves the choice and answers `{"restart": true, "restartsItself", "path"}`; until the app restarts, requests that change data get `409`. `409` when the folder is fixed |
 | `GET /api/settings` | `{"settings", "choices", "defaults", "dataDir"}` |
-| `PUT /api/settings` | change settings: send only the ones to change, e.g. `{"theme":"dark"}`; invalid values are rejected |
+| `PUT /api/settings` | change settings: send only the ones to change, e.g. `{"theme":"dark"}`; invalid values are rejected, and so is `data_dir` (use `POST /api/data-folder`) |
 | `GET /api/games/{game}/home?range=90D` | Home: `cards`, `uniqueCards`, `sets`, `pricePaid`, `marketValue` (and unknown/unpriced counts), the value chart's `marketValue`/`pricePaid`/`estimate` series, `bySet`, `topCards`, `canLoadHistory`/`historyLoaded` |
 | `GET /api/games/{game}/filters` | set list, rarities, finishes (with display names), game filters, conditions |
 | `GET /api/games/{game}/cards?q=&set=&rarity=&finish=&f.<Filter>=` | the filtered cards (`cards`, in the Card order setting's order) with counts: `matched`, `uniqueCards`, `cardCount`, `sets` |
@@ -38,6 +42,8 @@ Errors are `{"error": "..."}` with a 4xx/5xx status.
 | `PUT /api/games/{game}/card/printing?key=` | move every copy to printing `{"id"}` (checked on the server) |
 | `POST /api/games/{game}/bulk` | `{"keys":[...], "condition","finish","price_paid","acquired_date","delete"}`; returns `Updated`, `Deleted`, `Skipped` and `undo` |
 | `GET /api/games/{game}/backups` | the collection's backups, newest first: `[{"name", "date", "reason", "cards", "size"}]` (`reason`: `import`, `bulk-edit`, `bulk-delete`, `restore`, `merge` or `move`; `cards` counts unique cards) |
+| `POST /api/games/{game}/conflicts/merge` | `{"name"}`: merge a listed conflict copy into the collection (after a backup), then delete it; returns `changed` and `undo` |
+| `POST /api/games/{game}/conflicts/discard` | `{"name"}`: delete a listed conflict copy |
 | `POST /api/games/{game}/backups/restore` | `{"name", "ifRevision"}`: replace the collection with a listed backup, after backing up the current one; returns `cards` (unique cards) and `undo`. With `ifRevision`, `409` unless the collection is still at that revision. `404` for a name not listed |
 | `GET /api/games/{game}/set?code=` | set page: completion, value, top cards by one copy |
 | `GET /api/games/{game}/missing?set=` | the set's cards you don't own |

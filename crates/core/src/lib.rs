@@ -7,6 +7,7 @@
 
 pub mod collection;
 pub mod datadir;
+pub mod datafolder;
 pub mod dates;
 pub mod game;
 pub mod instance;

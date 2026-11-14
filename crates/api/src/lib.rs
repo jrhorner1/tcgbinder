@@ -5,11 +5,14 @@
 //!
 //! See docs/web-api.md for the endpoints.
 
+mod folders;
 mod views;
+
+pub use folders::{Folders, PickFolder, Restart};
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -94,6 +97,11 @@ pub struct Api {
     export_dir: Option<PathBuf>,
     /// Game ID → the import preview waiting to be committed (at most one per game).
     previews: Mutex<HashMap<String, PendingImport>>,
+    folders: Option<Folders>,
+    pick_folder: Option<PickFolder>,
+    restart: Option<Restart>,
+    /// The data folder was changed: until the app restarts, nothing may be saved.
+    switched: AtomicBool,
 }
 
 /// How long an import preview can wait to be committed.
@@ -195,6 +203,10 @@ impl Api {
             read_image: None,
             export_dir: None,
             previews: Mutex::default(),
+            folders: None,
+            pick_folder: None,
+            restart: None,
+            switched: AtomicBool::new(false),
         }
     }
 
@@ -217,6 +229,8 @@ impl Api {
         let changes = req.method() != Method::GET && req.method() != Method::HEAD;
         let result = if changes && !req.headers().contains_key(CLIENT_HEADER) {
             Err(Error { status: StatusCode::FORBIDDEN, message: format!("missing {CLIENT_HEADER} header") })
+        } else if changes && self.switched.load(Ordering::SeqCst) {
+            Err(Error { status: StatusCode::CONFLICT, message: "the data folder has changed: restart TCG Binder to use it".into() })
         } else if req.body().len() > MAX_BODY {
             Err(Error { status: StatusCode::PAYLOAD_TOO_LARGE, message: "the request is too large".into() })
         } else if let Some(rest) = path.strip_prefix("/api/") {
@@ -246,6 +260,10 @@ impl Api {
         match (m.as_str(), parts.as_slice()) {
             ("GET", ["info"]) => Ok(self.info()),
             ("GET", ["status"]) => Ok(self.status()),
+            ("GET", ["data-folder"]) => self.data_folder(),
+            ("POST", ["data-folder"]) => self.change_data_folder(body),
+            ("POST", ["data-folder", "pick"]) => self.pick_data_folder(),
+            ("POST", ["data-folder", "inspect"]) => self.inspect_data_folder(body),
             ("GET", ["search"]) => Ok(self.search_all(q.get("q").map_or("", String::as_str))),
             ("GET", ["settings"]) => Ok(self.get_settings()),
             ("PUT", ["settings"]) => self.put_settings(body),
@@ -265,6 +283,8 @@ impl Api {
                     ("POST", ["bulk"]) => self.bulk_edit(g, body),
                     ("GET", ["backups"]) => Ok(Reply::Json(json!(g.store.backups().map_err(internal)?))),
                     ("POST", ["backups", "restore"]) => self.restore_backup(g, body),
+                    ("POST", ["conflicts", "merge"]) => self.merge_conflict(g, body),
+                    ("POST", ["conflicts", "discard"]) => self.discard_conflict(g, body),
                     ("GET", ["set"]) => self.set_page(g, q.get("code").map_or("", String::as_str)),
                     ("GET", ["missing"]) => self.missing(g, q.get("set").map_or("", String::as_str)),
                     ("GET", ["search"]) => self.search(g, &q),
@@ -707,7 +727,10 @@ impl Api {
     // --- Settings ----------------------------------------------------------------
 
     fn get_settings(&self) -> Reply {
-        let data_dir = self.settings.path().and_then(|p| p.parent()).map(|d| d.display().to_string()).unwrap_or_default();
+        let data_dir = match &self.folders {
+            Some(f) => f.data.display().to_string(),
+            None => self.settings.path().and_then(|p| p.parent()).map(|d| d.display().to_string()).unwrap_or_default(),
+        };
         let choices: serde_json::Map<String, Value> = choices::ALL.iter().map(|(k, v)| (k.to_string(), json!(v))).collect();
         Reply::Json(json!({ "settings": self.settings.get(), "choices": choices, "defaults": Settings::default(), "dataDir": data_dir }))
     }

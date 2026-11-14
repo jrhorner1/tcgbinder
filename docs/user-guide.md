@@ -168,7 +168,8 @@ imported.
 ## Settings
 
 Changes save as you make them and apply to every game. They're stored in
-`settings.json` in the data folder and shared by the desktop and web apps.
+`settings.json` in the app's own folder (see below), so each device keeps its own,
+and the desktop and web apps on one computer share them.
 
 | Setting | Choices | Default |
 |---|---|---|
@@ -184,19 +185,48 @@ Changes save as you make them and apply to every game. They're stored in
 | Ask before deleting cards | on or off | on |
 | Log detail | Debug, Info, Warnings, Errors only (`--log-level` overrides it) | Info |
 
-Settings also shows the data folder, the version, and **Restore defaults**.
+Settings also shows the data folder (see below), the version, and **Restore
+defaults**.
 
 ## Where your data lives
 
-Each game has its own folder in the app's data folder:
+Your collection is kept in the **data folder**. Each game has its own folder in it:
+`mtg/` holds `collection.json` (your cards), `price-history.json` and `backups/`.
 
-| Platform | Data folder |
+By default the data folder is the app's own folder:
+
+| Platform | The app's folder |
 |---|---|
 | macOS | `~/Library/Application Support/io.github.jrhorner1.tcgbinder` |
 | Windows | `%APPDATA%\io.github.jrhorner1.tcgbinder` |
 | Linux | `~/.local/share/io.github.jrhorner1.tcgbinder` |
 | iPhone, iPad | the app's private storage |
 
-Inside it, `mtg/` holds `collection.json` (your cards),
-`price-history.json` and caches; the log file `tcgbinder.log` and `settings.json`
-sit in the data folder itself. See the README for command-line options.
+The app's folder always holds this device's `settings.json`, the log file
+`tcgbinder.log` and caches.
+
+### Choosing another folder
+
+**Settings → Data → Change…** (desktop app) picks another data folder, for example
+one in iCloud Drive, Dropbox or OneDrive, so two computers share one collection. The
+web app has a box for the folder's path instead.
+- An empty folder: **Move it here** takes your cards, price history and backups
+  along (and deletes them from the old folder once the copies check out); **Start
+  fresh** begins an empty collection there.
+- A folder that already has a collection: **Use it** opens that collection. Yours
+  stays where it was.
+
+The desktop app then restarts to use the new folder; restart the web app yourself.
+**Use the default folder** goes back to the app's folder. The first time you open
+the app, Home offers the same choice.
+
+If the chosen folder can't be found when the app starts (a drive that isn't
+connected, or a folder not synced yet), the app says so instead of starting an
+empty collection there.
+
+When another device changes the collection, this one picks the change up within 15
+seconds. If two devices save at the same moment, the sync service keeps the other
+version as a separate file (such as "collection 2.json"), and Home says so:
+**Merge it** adds its cards and copies to yours without counting any twice (a card
+deleted on one device comes back); **Discard it** deletes that file. A backup is
+taken before merging. See the README for command-line options.

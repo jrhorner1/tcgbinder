@@ -30,6 +30,8 @@ tauri = { version = "2", features = [] }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 clap = { version = "4", features = ["derive", "env"] }
 tauri-plugin-single-instance = "2"
+# Settings → Data → Change… (the system folder picker).
+tauri-plugin-dialog = "2"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
 
 [features]

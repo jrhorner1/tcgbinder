@@ -221,6 +221,38 @@ impl Store {
         })
     }
 
+    /// Merges the cards of a conflict copy of this collection (the same file, saved by
+    /// another device at the same time), without counting anything twice: the union of
+    /// both files' cards; for a card in both, the union of their purchases, taking the
+    /// larger quantity where both have the same purchase (finish, condition, price paid
+    /// and acquired date). A card or purchase deleted on one side comes back. Returns
+    /// the number of cards that changed or were added.
+    pub fn merge_copy(&self, cards: Vec<Card>) -> Result<usize> {
+        self.file.mutate(|data| {
+            let mut changed = 0;
+            for mut theirs in cards.into_iter().filter(|c| !c.id.is_empty()) {
+                normalize_card(&mut theirs);
+                let key = card_key(&theirs);
+                let Some(ours) = data.cards.get_mut(&key) else {
+                    data.cards.insert(key, theirs);
+                    changed += 1;
+                    continue;
+                };
+                let before = ours.copies.clone();
+                for (finish, cond, p) in theirs.copies.each() {
+                    let same = |q: &super::Purchase| q.price_paid == p.price_paid && q.acquired_date == p.acquired_date;
+                    let list = ours.copies.0.entry(finish.to_string()).or_default().entry(cond).or_default();
+                    match list.iter_mut().find(|q| same(q)) {
+                        Some(q) => q.quantity = q.quantity.max(p.quantity),
+                        None => list.push(p.clone()),
+                    }
+                }
+                changed += usize::from(ours.copies != before);
+            }
+            Ok(changed)
+        })
+    }
+
     /// What [`Store::add_cards`] would return for `cards`, without changing anything:
     /// how many new cards it would create and how many it would add to.
     pub fn count_new(&self, cards: &[Card]) -> (usize, usize) {
@@ -571,6 +603,24 @@ mod tests {
             assert!(s.restore(bad).is_err(), "{bad}");
         }
         assert!(s.backup("whatever").is_err());
+    }
+
+    #[test]
+    fn merging_a_conflict_copy_counts_nothing_twice() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path().join("c.json"), "mtg").unwrap();
+        s.add_cards(vec![card("a", 2), card("b", 1)]).unwrap();
+        // The other device: a with 3 of the same purchase, a second purchase of a, no b, and c.
+        let mut a = card("a", 3);
+        a.add_purchase("foil", Condition::LightPlay, Purchase { quantity: 1, price_paid: 5.0, ..Default::default() });
+        assert_eq!(s.merge_copy(vec![a, card("c", 1)]).unwrap(), 2);
+        let a = s.get("a").unwrap();
+        assert_eq!((a.copy_count(), a.purchases("nonfoil", Condition::NearMint)[0].quantity), (4, 3));
+        assert_eq!(s.get("b").unwrap().copy_count(), 1, "kept though the copy lacks it");
+        assert_eq!(s.get("c").unwrap().copy_count(), 1);
+        // Merging the same copy again changes nothing.
+        let again = s.cards();
+        assert_eq!(s.merge_copy(again).unwrap(), 0);
     }
 
     #[test]

@@ -38,11 +38,11 @@ pub struct GameService {
 }
 
 impl GameService {
-    /// Prepares the game's folder inside `root` and opens its collection and price
-    /// history.
-    pub fn open(root: &Path, game: Box<dyn Game>) -> Result<GameService> {
-        let dir = datadir::game_dir(root, game.id())?;
-        game.open(&dir)?;
+    /// Prepares the game's folders and opens its collection and price history from
+    /// the `data` folder. The game keeps its caches in the `local` folder.
+    pub fn open(local: &Path, data: &Path, game: Box<dyn Game>) -> Result<GameService> {
+        game.open(&datadir::game_dir(local, game.id())?)?;
+        let dir = datadir::game_dir(data, game.id())?;
         let store = Store::open(dir.join(datadir::COLLECTION_FILE), game.id())?;
         tracing::info!(game = game.id(), path = %store.file_path().display(), cards = store.len(), "collection opened");
         Ok(GameService::from_store(game, store))
@@ -50,7 +50,7 @@ impl GameService {
 
     /// Wraps an open store, loading the price history kept next to it.
     pub fn from_store(game: Box<dyn Game>, store: Store) -> GameService {
-        let path = store.file_path().with_file_name("price-history.json");
+        let path = store.file_path().with_file_name(datadir::PRICE_HISTORY_FILE);
         let prices = match PriceHistory::open(&path) {
             Ok((prices, warning)) => {
                 if let Some(w) = warning {

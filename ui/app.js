@@ -129,6 +129,103 @@ const gameAPI = (path) => `/api/games/${encodeURIComponent(state.game)}${path}`;
 // ask confirms a deletion, unless the user turned that off in Settings.
 const ask = (msg) => !state.settings.confirm_delete || confirm(msg);
 
+// askDialog asks one question in the app's dialog and resolves to the chosen
+// button's value, or null if closed. buttons: [{label, value, primary, danger}];
+// with cancel false there is no Cancel button (a message to acknowledge).
+function askDialog(title, message, buttons, cancel = true) {
+  const dlg = $("#dialog");
+  return new Promise((resolve) => {
+    const done = (v) => { dlg.onclose = null; dlg.close(); resolve(v); };
+    fill(dlg, h("div.dlg", h("header", h("h2", title)), h("div.body", [message].flat().map((m) => h("p", m))),
+      h("footer", cancel ? h("button", { type: "button", onclick: () => done(null) }, "Cancel") : null,
+        buttons.map((b) => h("button" + (b.primary ? ".primary" : b.danger ? ".danger" : ""), { type: "button", onclick: () => done(b.value) }, b.label)))));
+    dlg.onclose = () => resolve(null);
+    dlg.showModal();
+  });
+}
+
+// --- The data folder ---------------------------------------------------------
+
+// dataFolder is where the collection is kept (GET /api/data-folder), or null where
+// it can't be changed.
+const dataFolder = () => api("GET", "/api/data-folder").catch(() => null);
+
+// changeDataFolder switches to `path` ("" for the default folder): it looks at what is
+// there, asks what to do, then has the app restart.
+async function changeDataFolder(df, path) {
+  const target = path || df.defaultPath;
+  let seen;
+  try { seen = await api("POST", "/api/data-folder/inspect", { path: target }); } catch (e) { status(e.message, true); return; }
+  if (!seen.writable) { status(`TCG Binder can't write to ${target}. Choose another folder.`, true); return; }
+  const cards = seen.games.reduce((n, g) => n + g.cards, 0);
+  const mode = seen.games.length
+    ? await askDialog("Use this folder?", [`This folder has a collection of ${plural(cards, "unique card", "unique cards")}: ${target}`, "Use it? Your current collection stays where it is."], [{ label: "Use it", value: "use", primary: true }])
+    : await askDialog("Move your collection?", [`Move your collection to ${target}, or start fresh there?`, "Moving takes your cards, price history and backups along."], [{ label: "Start fresh", value: "use" }, { label: "Move it here", value: "move", primary: true }]);
+  if (!mode) return;
+  try {
+    const r = await api("POST", "/api/data-folder", { path, mode });
+    if (r.restartsItself) status(`Using ${r.path}. Restarting…`);
+    else await askDialog("Restart TCG Binder", [`Your collection is now kept in ${r.path}.`, "Stop TCG Binder and start it again to use it. Until then, changes can't be saved."], [{ label: "OK", value: true, primary: true }], false);
+  } catch (e) { status(e.message, true); }
+}
+
+// chooseDataFolder shows the system's folder picker, then switches to the folder.
+async function chooseDataFolder(df) {
+  try {
+    const r = await api("POST", "/api/data-folder/pick");
+    if (r.path) await changeDataFolder(df, r.path);
+  } catch (e) { status(e.message, true); }
+}
+
+// dataSection is Settings → Data: where the collection is kept, and changing it.
+function dataSection(df, fallback) {
+  const intro = h("p.muted", "Your collections, price history and backups are kept in this folder. Choose a folder in iCloud Drive, Dropbox or OneDrive to share them between devices. Settings stay on each device.");
+  if (!df) return [intro, h("p.settings-path", h("code", fallback || "(not saved)"))];
+  const where = h("p.settings-path", h("code", df.path), df.isDefault ? h("span.muted", " (the default)") : null);
+  if (df.fixed) return [intro, where, h("p.muted", "Set by --data-dir or TCGBINDER_DATA_DIR when TCG Binder was started.")];
+  if (state.info.client === "phone") return [intro, where];
+  const useDefault = df.isDefault ? null : h("button", { type: "button", onclick: () => changeDataFolder(df, "") }, "Use the default folder");
+  if (df.canPick) return [intro, where, h("div.buttons", h("div.right", h("button", { type: "button", onclick: () => chooseDataFolder(df) }, "Change…"), useDefault))];
+  const field = h("input", { type: "text", placeholder: "/full/path/to/a/folder", "aria-label": "Data folder path" });
+  return [intro, where, h("div.search", field, h("button", { type: "button", onclick: () => field.value.trim() && changeDataFolder(df, field.value.trim()) }, "Use this folder")),
+    h("p.muted", "A folder on the computer running TCG Binder."), useDefault ? h("p", useDefault) : null];
+}
+
+// dataNotices are Home's notices about the data folder: the first-run welcome and
+// conflict copies another device left.
+function dataNotices(df, home) {
+  if (!df) return [];
+  const out = [];
+  if (df.firstRun && !home.cards && !store("welcomed")) {
+    const panel = h("div.card-box.notice",
+      h("h2", "Welcome to TCG Binder"),
+      h("p", `Your collection will be kept in ${df.path}. Keep it there, or choose a folder (for example in iCloud Drive or Dropbox to share it between devices).`),
+      h("div.buttons", h("div.right",
+        h("button", { type: "button", onclick: () => { store("welcomed", "1"); panel.remove(); } }, "Keep it there"),
+        df.canPick ? h("button.primary", { type: "button", onclick: () => chooseDataFolder(df) }, "Choose a folder…")
+          : h("a.button", { href: "#/settings" }, "Choose a folder…"))));
+    out.push(panel);
+  }
+  for (const c of df.conflicts.filter((c) => c.game === state.game)) {
+    const act = async (what) => {
+      if (what === "discard" && !confirm(`Delete ${c.name}? Its changes are lost.`)) return;
+      try {
+        const r = await api("POST", gameAPI(`/conflicts/${what}`), { name: c.name });
+        status(what === "merge" ? `Merged ${c.name}: ${plural(r.changed, "card", "cards")} changed.` : `Discarded ${c.name}.`, false, r.undo);
+        await loadFilters();
+        route();
+      } catch (e) { status(e.message, true); }
+    };
+    out.push(h("div.card-box.notice",
+      h("h2", "Another device saved a different version of your collection"),
+      h("p", `${c.name}${c.cards !== null ? ` (${plural(c.cards, "unique card", "unique cards")})` : ""} was saved by another device at the same time as this one. Merging adds its cards and copies to yours without counting any twice; a card deleted on one device comes back. Discarding deletes that file.`),
+      h("div.buttons", h("div.right",
+        h("button", { type: "button", onclick: () => act("discard") }, "Discard it"),
+        h("button.primary", { type: "button", onclick: () => act("merge") }, "Merge it")))));
+  }
+  return out;
+}
+
 // --- Charts ------------------------------------------------------------------
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -226,7 +323,7 @@ function cardRows(cards, amount) {
 
 async function viewHome() {
   const range = state.range;
-  const o = await api("GET", gameAPI(`/home?range=${encodeURIComponent(range)}`));
+  const [o, df] = await Promise.all([api("GET", gameAPI(`/home?range=${encodeURIComponent(range)}`)), dataFolder()]);
   const g = gain(o.pricePaid, o.marketValue);
   const series = [
     { name: "Market value", color: "var(--blue)", points: o.chart.marketValue },
@@ -254,6 +351,7 @@ async function viewHome() {
 
   fill($("#main"),
     h("h1", o.name),
+    dataNotices(df, o),
     h("div.tiles",
       tile("CARDS", o.cards.toLocaleString(), `${plural(o.uniqueCards, "unique card", "unique cards")} · ${plural(o.sets, "set", "sets")}`),
       tile("PRICE PAID", usd(o.pricePaid), o.pricePaidUnknown ? `${plural(o.pricePaidUnknown, "card", "cards")} without a price paid` : "every card has a price paid"),
@@ -1027,8 +1125,7 @@ async function viewSettings() {
       row("Deleting", check("confirm_delete", "Ask before deleting cards", "delete confirmation")),
       row("Log detail", menu("log_level", "log level"), phone ? "How much goes in the log file" : "How much goes in the log file; --log-level overrides it at startup")),
     h("h2", "Data"),
-    h("p.muted", "Your collections, price history and settings are kept in this folder. Back it up to keep them safe (Tools → Export collection saves a copy)."),
-    h("p", h("code", d.dataDir || "(not saved)")),
+    dataSection(await dataFolder(), d.dataDir),
     h("h2", "About"),
     h("p", `${state.info.name} ${state.info.version}`),
     h("p", h("button", { type: "button", onclick: async () => {

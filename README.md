@@ -20,8 +20,8 @@ See [docs/](docs/README.md): user guide, web API, architecture and data sources.
 tcgbinder [OPTIONS]           open the desktop app
 tcgbinder --web [OPTIONS]     serve the app in a web browser
 
-      --data-dir <FOLDER>    data folder (default: the app's data folder) [env: TCGBINDER_DATA_DIR]
-      --log-file <PATH>      log file (default: tcgbinder.log in the data folder; "-" for stderr only)
+      --data-dir <FOLDER>    data folder (default: the one chosen in Settings → Data) [env: TCGBINDER_DATA_DIR]
+      --log-file <PATH>      log file (default: tcgbinder.log in the app's folder; "-" for stderr only)
       --log-level <LEVEL>    debug, info, warn or error (default: the Log detail setting)
       --web                  serve the web app instead of opening the desktop window
       --listen <ADDRESS>     address for --web [default: 127.0.0.1:8080]
@@ -179,18 +179,27 @@ begin, a grey line estimates value at today's prices.
 
 ## Data
 
-Each game keeps its own files in its own folder inside the app's data folder
-(`~/Library/Application Support/io.github.jrhorner1.tcgbinder/` on macOS,
+The app uses two folders. Its own folder (the **local folder**:
+`~/Library/Application Support/io.github.jrhorner1.tcgbinder/` on macOS,
 `%APPDATA%\io.github.jrhorner1.tcgbinder\` on Windows,
 `~/.local/share/io.github.jrhorner1.tcgbinder/` on Linux, the app's private storage
-on iPhone; `--data-dir` or `TCGBINDER_DATA_DIR` chooses another folder):
+on iPhone) holds this device's settings, log, locks and caches. The **data folder**
+holds the collections: the local folder unless you choose another in Settings → Data
+(for example one in iCloud Drive or Dropbox, to share it between computers).
+`--data-dir` or `TCGBINDER_DATA_DIR` sets the data folder for one run.
 
 ```
-<data>/settings.json            settings, shared by every game
-<data>/mtg/collection.json      Magic collection
-<data>/mtg/price-history.json   daily prices per printing, for the value chart
-<data>/mtg/scryfall-sets.json   cached set sizes (refreshed weekly)
+<local>/settings.json              settings for this device
+<local>/tcgbinder.log              the log
+<local>/locks/<hash>.lock          one lock per data folder in use
+<local>/mtg/scryfall-sets.json     cached set sizes (refreshed weekly)
+<data>/mtg/collection.json         Magic collection
+<data>/mtg/price-history.json      daily prices per printing, for the value chart
+<data>/mtg/backups/                the last 10 backups of the collection
 ```
+
+Settings used to live in the data folder: when the local folder has no
+`settings.json` yet, those of a `--data-dir` folder are copied in once.
 
 **Import** accepts CSV exports from other collection apps and collection `.json`
 files written by this app (a backup or another device's collection). A JSON file is
@@ -199,5 +208,6 @@ purchases.
 
 Only one copy of the app can use a data folder at a time: opening the desktop app
 again brings its window forward, and starting `--web` while it runs (or the other way
-round) stops with "already running". The lock (`tcgbinder.lock` in the data folder) is
-an OS file lock, so it is released automatically even if the app crashes.
+round) stops with "already running". The lock (in the local folder's `locks/`, named
+after the data folder) is an OS file lock, so it is released automatically even if
+the app crashes.
