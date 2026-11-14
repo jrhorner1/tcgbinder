@@ -242,6 +242,7 @@ impl GameService {
     pub fn commit_import(&self, preview: ImportPreview) -> Result<ImportResult> {
         let ImportPreview { cards, report, copies, .. } = preview;
         let unpriced: Vec<String> = cards.iter().filter(|c| c.market.is_empty()).map(|c| c.id.clone()).collect();
+        let backup = self.store.backup("import")?;
         let (new_cards, already_owned) = self.store.add_cards(cards)?;
         if !unpriced.is_empty() {
             self.price_cards(&unpriced);
@@ -254,7 +255,7 @@ impl GameService {
             merged = already_owned,
             "import complete"
         );
-        Ok(ImportResult { report, cards: copies, new_cards, already_owned })
+        Ok(ImportResult { report, cards: copies, new_cards, already_owned, backup })
     }
 }
 
@@ -288,6 +289,8 @@ pub struct ImportResult {
     pub cards: i64,
     pub new_cards: usize,
     pub already_owned: usize,
+    /// The backup of the collection taken just before (its name), for undo.
+    pub backup: String,
 }
 
 impl ImportResult {
@@ -496,6 +499,7 @@ mod tests {
             cards: 3,
             new_cards: 1,
             already_owned: 1,
+            ..Default::default()
         };
         assert_eq!(
             r.summary(),

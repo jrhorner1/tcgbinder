@@ -114,11 +114,17 @@ fn new_token() -> String {
 }
 
 /// What an import did, as the API answers it.
-fn import_result(res: &ImportResult) -> Value {
+fn import_result(g: &GameService, res: &ImportResult) -> Value {
     json!({
         "summary": res.summary(), "cards": res.cards, "newCards": res.new_cards,
-        "alreadyOwned": res.already_owned, "format": res.report.format,
+        "alreadyOwned": res.already_owned, "format": res.report.format, "undo": undo(g, &res.backup),
     })
+}
+
+/// How to undo a change: restore `backup`, as long as the collection is still at the
+/// revision the change left it at.
+fn undo(g: &GameService, backup: &str) -> Value {
+    json!({ "backup": backup, "revision": g.store.revision() })
 }
 
 /// An error answer.
@@ -257,6 +263,8 @@ impl Api {
                     ("GET", ["printings"]) => self.printings(g, key),
                     ("PUT", ["card", "printing"]) => self.change_printing(g, key, body),
                     ("POST", ["bulk"]) => self.bulk_edit(g, body),
+                    ("GET", ["backups"]) => Ok(Reply::Json(json!(g.store.backups().map_err(internal)?))),
+                    ("POST", ["backups", "restore"]) => self.restore_backup(g, body),
                     ("GET", ["set"]) => self.set_page(g, q.get("code").map_or("", String::as_str)),
                     ("GET", ["missing"]) => self.missing(g, q.get("set").map_or("", String::as_str)),
                     ("GET", ["search"]) => self.search(g, &q),
@@ -560,9 +568,36 @@ impl Api {
         if change.is_empty() {
             return Err(bad("choose at least one change"));
         }
+        let backup = g.store.backup(if change.delete { "bulk-delete" } else { "bulk-edit" }).map_err(internal)?;
         let res = g.store.bulk_edit(&req.keys, &change).map_err(internal)?;
         tracing::info!(game = g.game.id(), cards = req.keys.len(), updated = res.updated, deleted = res.deleted, "bulk edit");
-        Ok(Reply::Json(serde_json::to_value(res).map_err(|e| internal(e.into()))?))
+        let mut answer = serde_json::to_value(res).map_err(|e| internal(e.into()))?;
+        answer["undo"] = undo(g, &backup);
+        Ok(Reply::Json(answer))
+    }
+
+    /// Replaces the collection with a backup. With `ifRevision` (Undo), only while the
+    /// collection is still at that revision: otherwise something changed since, and
+    /// the undo would lose it.
+    fn restore_backup(&self, g: &GameService, body: &[u8]) -> Result {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Req {
+            name: String,
+            if_revision: Option<u64>,
+        }
+        let req: Req = decode(body)?;
+        if req.if_revision.is_some_and(|r| r != g.store.revision()) {
+            return Err(Error {
+                status: StatusCode::CONFLICT,
+                message: "the collection has changed since, so it can't be undone here; use Tools → Restore a backup".into(),
+            });
+        }
+        if !g.store.backups().map_err(internal)?.iter().any(|b| b.name == req.name) {
+            return Err(not_found(format!("there is no backup named {:?}", req.name)));
+        }
+        let backup = g.store.restore(&req.name).map_err(internal)?;
+        Ok(Reply::Json(json!({ "cards": g.store.len(), "undo": undo(g, &backup) })))
     }
 
     /// The file sent as a multipart "file" field or as the raw body.
@@ -578,7 +613,7 @@ impl Api {
     /// Imports the file sent as a multipart "file" field or as the raw body.
     fn import(&self, g: &GameService, req: &Request) -> Result {
         let data = Self::upload(req)?;
-        self.job(g, "import", || Ok(import_result(&g.import(&data, &mut |_, _| {})?)))
+        self.job(g, "import", || Ok(import_result(g, &g.import(&data, &mut |_, _| {})?)))
     }
 
     /// Reads and matches an import file without saving it, and keeps the result for
@@ -619,7 +654,7 @@ impl Api {
             status: StatusCode::GONE,
             message: "this preview is no longer available; preview the file again".into(),
         })?;
-        self.job(g, "import", || Ok(import_result(&g.commit_import(pending.preview)?)))
+        self.job(g, "import", || Ok(import_result(g, &g.commit_import(pending.preview)?)))
     }
 
     fn export_name(g: &GameService) -> String {

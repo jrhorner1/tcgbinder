@@ -447,8 +447,13 @@ fn import_preview_then_commit() {
     assert_eq!((f.svc.store.revision(), f.svc.store.len()), (revision, cards), "a preview saves nothing");
 
     assert_eq!(commit(&f, &json!("not the token")).0, 410);
-    let (status, committed) = commit(&f, &p["token"]);
+    let (status, mut committed) = commit(&f, &p["token"]);
     assert_eq!(status, 200);
+    let mut imported = imported;
+    for v in [&mut committed, &mut imported] {
+        let undo = v.as_object_mut().unwrap().remove("undo").unwrap();
+        assert!(undo["backup"].as_str().unwrap().ends_with("-import.json"));
+    }
     assert_eq!(committed, imported);
     let all = |f: &Fixture| serde_json::to_value(f.svc.store.cards()).unwrap();
     assert_eq!(all(&f), all(&direct));
@@ -462,4 +467,33 @@ fn a_new_preview_replaces_the_old_one() {
     let second = preview(&f);
     assert_eq!(commit(&f, &first["token"]).0, 410);
     assert_eq!(commit(&f, &second["token"]).0, 200);
+}
+
+#[test]
+fn undo_a_bulk_delete_and_restore_backups() {
+    let f = fixture();
+    let (status, r) = call(&f.api, "POST", "/api/games/mtg/bulk", Some(json!({ "keys": [SHOCK, OPT], "delete": true })));
+    assert_eq!((status, r["Deleted"].as_u64()), (200, Some(2)));
+    assert!(f.svc.store.is_empty());
+    let undo = r["undo"].clone();
+    assert!(undo["backup"].as_str().unwrap().ends_with("-bulk-delete.json"));
+
+    let list = get(&f.api, "/api/games/mtg/backups");
+    assert_eq!(
+        (list[0]["name"].clone(), list[0]["reason"].as_str(), list[0]["cards"].as_u64()),
+        (undo["backup"].clone(), Some("bulk-delete"), Some(2))
+    );
+
+    // Undo only while nothing else has changed.
+    let stale = json!({ "name": undo["backup"], "ifRevision": undo["revision"].as_u64().unwrap() + 1 });
+    assert_eq!(call(&f.api, "POST", "/api/games/mtg/backups/restore", Some(stale)).0, 409);
+    let (status, restored) =
+        call(&f.api, "POST", "/api/games/mtg/backups/restore", Some(json!({ "name": undo["backup"], "ifRevision": undo["revision"] })));
+    assert_eq!((status, restored["cards"].as_u64()), (200, Some(2)));
+    assert!(f.svc.store.get(SHOCK).is_some());
+    assert_eq!(get(&f.api, "/api/games/mtg/backups")[0]["reason"], "restore", "a restore backs up first");
+
+    for name in ["../collection.json", "collection.json", "x/../../collection.json"] {
+        assert_eq!(call(&f.api, "POST", "/api/games/mtg/backups/restore", Some(json!({ "name": name }))).0, 404, "{name}");
+    }
 }

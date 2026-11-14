@@ -84,8 +84,11 @@ Every card in the collection list has a tick box:
    there. Finish changes skip printings that don't come in that finish, and copies
    that end up identical join one purchase.
 
-The ticks clear once the changes are applied. **Tools → Bulk edit…** opens the same
-dialog.
+The ticks clear once the changes are applied. The status line then offers **Undo**,
+which puts the collection back as it was, as long as nothing else has changed it
+since; otherwise use **Tools → Restore a backup…**. Imports offer Undo the same way.
+
+**Tools → Bulk edit…** opens the same dialog.
 
 ## Adding cards
 
@@ -136,6 +139,10 @@ The Tools page works on the selected game:
   folder; the iPhone app saves it to its folder in the Files app; the web app
   downloads it.
 - **Bulk edit…** (see above) and **Scan a card…**.
+- **Restore a backup…:** a copy of the collection is saved before every import,
+  bulk edit, bulk delete and restore, and the last 10 are kept. The list shows when
+  each was taken, before what, and how many unique cards it holds. Restoring one
+  replaces the collection (the current one is backed up first, so you can go back).
 - **Refresh prices now** and **Load/Update price history**, with when each last ran.
 
 ## Importing

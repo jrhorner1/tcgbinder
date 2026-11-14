@@ -78,6 +78,10 @@ Per game, in `<data>/<game>/`:
   file is set aside at startup rather than overwritten. Before each change and save,
   prices another device saved to the file are taken in (days already recorded here
   keep their price), so two devices recording prices never lose days.
+- `backups/`: copies of `collection.json` taken before each import, bulk edit, bulk
+  delete and restore (`Store::backup`), named
+  `collection-YYYYMMDD-HHMMSS[-N]-<reason>.json`; the 10 newest are kept. Restoring
+  accepts only a name that is listed, never a path.
 - Caches, for example Magic's `scryfall-sets.json`.
 
 In `<data>/`: `settings.json` (the user's settings, `core::settings`, also a

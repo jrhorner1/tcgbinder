@@ -87,10 +87,24 @@ function copiesSummary(c) {
   }).join(" · ");
 }
 
-function status(msg, isError) {
+// status shows a message in the status line, optionally with Undo for a change the
+// server took a backup before (`undo` from its answer: {backup, revision}).
+function status(msg, isError, undo) {
   const el = $("#status");
-  el.textContent = msg || "";
+  const undoBtn = undo && h("button.link", { type: "button", onclick: () => undoChange(undo) }, "Undo");
+  fill(el, msg || "", undoBtn ? " " : null, undoBtn);
   el.className = isError ? "error" : "";
+}
+
+// undoChange restores the backup taken before a change, unless the collection has
+// changed since (the server checks the revision).
+async function undoChange(undo) {
+  try {
+    const r = await api("POST", gameAPI("/backups/restore"), { name: undo.backup, ifRevision: undo.revision });
+    status(`Undone: the collection is back to ${plural(r.cards, "unique card", "unique cards")}.`);
+    await loadFilters();
+    route();
+  } catch (e) { status(e.message, true); }
 }
 
 // api calls the app's JSON API. Bodies may be objects (sent as JSON) or files and
@@ -395,11 +409,11 @@ function showBulkEdit() {
     if (price.value !== "") body.price_paid = parseFloat(price.value);
     if (!body.delete && !body.condition && !body.finish && !body.acquired_date && body.price_paid === undefined) { err.textContent = "Choose at least one change."; return; }
     const n = plural(chosen.size, "card", "cards");
-    if (!(body.delete ? ask(`Delete every copy of ${n}? This can't be undone.`) : confirm(`Apply the changes to every copy of ${n}?`))) return;
+    if (!(body.delete ? ask(`Delete every copy of ${n}? You can undo it right after, or restore a backup from Tools.`) : confirm(`Apply the changes to every copy of ${n}?`))) return;
     try {
       const r = await api("POST", gameAPI("/bulk"), body);
-      status(body.delete ? `Deleted ${plural(r.Deleted, "card", "cards")}` :
-        `Updated ${plural(r.Updated, "card", "cards")}${r.Skipped.length ? `; ${r.Skipped.length} kept their finish (the printing doesn't come in it)` : ""}`);
+      status(body.delete ? `Deleted ${plural(r.Deleted, "card", "cards")}.` :
+        `Updated ${plural(r.Updated, "card", "cards")}${r.Skipped.length ? `; ${r.Skipped.length} kept their finish (the printing doesn't come in it)` : ""}.`, false, r.undo);
       ticked.clear();
       dlg.close();
       await loadFilters();
@@ -868,7 +882,7 @@ function showImportPreview(out, p, fileName, cancel) {
     status(`Importing ${plural(p.copies, "card", "cards")}…`);
     try {
       const r = await api("POST", gameAPI("/import/commit"), { token: p.token });
-      status(`Imported ${plural(r.cards, "card", "cards")} from ${r.format}`);
+      status(`Imported ${plural(r.cards, "card", "cards")} from ${r.format}.`, false, r.undo);
       fill(out, h("h2", "Import Complete"), h("pre.summary", r.summary));
       await loadFilters();
     } catch (e) { status(e.message, true); importBtn.disabled = false; }
@@ -889,6 +903,29 @@ function showImportPreview(out, p, fileName, cancel) {
       h("pre.raw", p.unmatched.map((u) => `Line ${u.line}: ${u.text}`).join("\n"))) : null,
     p.notes.length ? h("pre.summary", p.notes.join("\n")) : null,
     h("div.buttons", h("div.right", p.copies ? importBtn : null, h("button", { type: "button", onclick: cancel }, "Cancel"))));
+}
+
+// Backups: the collection as it was before each import, bulk change and restore.
+async function viewBackups() {
+  const list = await api("GET", gameAPI("/backups"));
+  const why = { import: "Before an import", "bulk-edit": "Before a bulk edit", "bulk-delete": "Before a bulk delete", restore: "Before a restore", merge: "Before a merge", move: "Before a move" };
+  const restore = async (b, button) => {
+    if (!confirm(`Replace your collection with the backup from ${b.date} (${plural(b.cards, "unique card", "unique cards")})? Your current collection is backed up first, so you can come back to it.`)) return;
+    button.disabled = true;
+    try {
+      const r = await api("POST", gameAPI("/backups/restore"), { name: b.name });
+      status(`Restored the backup from ${b.date}: ${plural(r.cards, "unique card", "unique cards")}.`, false, r.undo);
+      await loadFilters();
+      await viewBackups();
+    } catch (e) { status(e.message, true); button.disabled = false; }
+  };
+  fill($("#main"),
+    h("h1", "Restore a Backup"),
+    h("p", "A copy of the collection is saved before every import, bulk edit, bulk delete and restore. The last 10 are kept."),
+    list.length ? h("div.card-box", list.map((b) => {
+      const button = h("button", { type: "button", onclick: () => restore(b, button) }, "Restore");
+      return toolRow(button, `${b.date} · ${why[b.reason] || b.reason} · ${plural(b.cards, "unique card", "unique cards")}`);
+    })) : h("p.muted", "No backups yet. One is made before your first import or bulk change."));
 }
 
 // toolRow is one action on the Tools page with what it does.
@@ -919,6 +956,7 @@ async function viewTools() {
       toolRow(h("button", { type: "button", onclick: (e) => exportCollection(e.currentTarget) }, "Export collection"), `Save the collection file to ${where}, for a backup or to move to another device. Import reads it back.`),
       toolRow(h("button", { type: "button", onclick: () => { go("collection"); setTimeout(showBulkEdit, 50); } }, "Bulk edit…"),
         "Change the condition, finish, price paid or date of many cards at once, or delete them. Tick the cards in the collection list (filter it, then Select all shown); Bulk edit is also below the list."),
+      toolRow(h("a.button", { href: "#/backups" }, "Restore a backup…"), "Go back to the collection as it was before a recent import, bulk edit or bulk delete. The last 10 backups are kept."),
       gameInfo().Scan ? toolRow(h("a.button", { href: "#/scan" }, "Scan a card…"), "Identify a card from the camera or a photo, then add it.") : null),
     h("h2", "Prices"),
     h("div.card-box",
@@ -1017,7 +1055,7 @@ async function route() {
   const [path, qs] = location.hash.replace(/^#\/?/, "").split("?");
   const view = path || "home";
   if (state.scanStop && view !== "scan") { state.scanStop(); state.scanStop = null; }
-  const active = view === "import" ? "tools" : view === "scan" ? "add" : view;
+  const active = view === "import" || view === "backups" ? "tools" : view === "scan" ? "add" : view;
   document.querySelectorAll("#nav a, .tabbar a").forEach((a) => a.classList.toggle("active", a.dataset.view === active));
   try {
     if (view === "collection") await viewCollection(qs || "");
@@ -1025,6 +1063,7 @@ async function route() {
     else if (view === "scan") viewScan();
     else if (view === "search") await viewSearch(qs || "");
     else if (view === "import") viewImport();
+    else if (view === "backups") await viewBackups();
     else if (view === "tools") await viewTools();
     else if (view === "settings") await viewSettings();
     else await viewHome();

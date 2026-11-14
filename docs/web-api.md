@@ -36,7 +36,9 @@ Errors are `{"error": "..."}` with a 4xx/5xx status.
 | `DELETE /api/games/{game}/card?key=` | delete a card (every copy) |
 | `GET /api/games/{game}/printings?key=` | every printing of the card |
 | `PUT /api/games/{game}/card/printing?key=` | move every copy to printing `{"id"}` (checked on the server) |
-| `POST /api/games/{game}/bulk` | `{"keys":[...], "condition","finish","price_paid","acquired_date","delete"}` |
+| `POST /api/games/{game}/bulk` | `{"keys":[...], "condition","finish","price_paid","acquired_date","delete"}`; returns `Updated`, `Deleted`, `Skipped` and `undo` |
+| `GET /api/games/{game}/backups` | the collection's backups, newest first: `[{"name", "date", "reason", "cards", "size"}]` (`reason`: `import`, `bulk-edit`, `bulk-delete`, `restore`, `merge` or `move`; `cards` counts unique cards) |
+| `POST /api/games/{game}/backups/restore` | `{"name", "ifRevision"}`: replace the collection with a listed backup, after backing up the current one; returns `cards` (unique cards) and `undo`. With `ifRevision`, `409` unless the collection is still at that revision. `404` for a name not listed |
 | `GET /api/games/{game}/set?code=` | set page: completion, value, top cards by one copy |
 | `GET /api/games/{game}/missing?set=` | the set's cards you don't own |
 | `GET /api/games/{game}/search?text=&set=&next=` | catalog search (one page; `next` continues); `owned` gives the copies you own of each result |
@@ -50,6 +52,11 @@ Errors are `{"error": "..."}` with a 4xx/5xx status.
 | `POST /api/games/{game}/scan/frame` | read one camera frame: `key` (what it says about the card), `complete` (enough to look it up), `lines` |
 | `POST /api/games/{game}/refresh` | refresh prices now |
 | `POST /api/games/{game}/price-history` | Load (or Update) price history |
+
+Imports, bulk changes and restores back up the collection first and answer `undo`:
+`{"backup", "revision"}`. Sending `{"name": backup, "ifRevision": revision}` to
+`backups/restore` undoes the change, as long as nothing else has changed the
+collection since.
 
 Long jobs (import, refresh, price history) return `409` if the same job is already running.
 Request bodies (an import file, a photo) can be up to 64 MB.
