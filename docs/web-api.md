@@ -12,7 +12,7 @@ expose the server to untrusted networks.
 catalog ID), passed as a query parameter. Every card in a response has `copies`
 (finish → condition → purchases, the card editor's "Your Copies") and, for
 convenience, `purchases`: the same purchases as a flat list of
-`{"finish","condition","quantity","price_paid","acquired_date","market"}`, plus the
+`{"finish","condition","quantity","price_paid","acquired_date","note","market"}`, plus the
 totals `copy_count`, `price_paid`, `market_value` and `each` (one copy in its most
 valuable owned finish). `price_from` is `"en"` when the card's `market` prices are
 its English printing's, because the catalog has none for its language.
@@ -33,14 +33,14 @@ Errors are `{"error": "..."}` with a 4xx/5xx status.
 | `GET /api/settings` | `{"settings", "choices", "defaults", "dataDir"}` |
 | `PUT /api/settings` | change settings: send only the ones to change, e.g. `{"theme":"dark"}`; invalid values are rejected, and so is `data_dir` (use `POST /api/data-folder`) |
 | `GET /api/games/{game}/home?range=90D` | Home: `cards`, `uniqueCards`, `sets`, `pricePaid`, `marketValue` (and unknown/unpriced counts), the value chart's `marketValue`/`pricePaid`/`estimate` series, `bySet`, `topCards`, `canLoadHistory`/`historyLoaded` |
-| `GET /api/games/{game}/filters` | set list, rarities, finishes (with display names), game filters, conditions |
-| `GET /api/games/{game}/cards?q=&set=&rarity=&finish=&f.<Filter>=` | the filtered cards (`cards`, in the Card order setting's order) with counts: `matched`, `uniqueCards`, `cardCount`, `sets` |
+| `GET /api/games/{game}/filters` | set list, rarities, finishes (with display names), game filters, conditions, and `languages` (`[{"code", "name"}]`) |
+| `GET /api/games/{game}/cards?q=&set=&rarity=&finish=&f.<Filter>=` | the filtered cards (`q` matches name, set, number or a purchase's note) (`cards`, in the Card order setting's order) with counts: `matched`, `uniqueCards`, `cardCount`, `sets` |
 | `GET /api/games/{game}/card?key=` | one card: `card`, `raw` (as stored), editor `details`, catalog `link`, `others` (other printings you own) |
-| `PUT /api/games/{game}/card?key=` | replace the card's purchases: `{"purchases":[{"finish","condition","quantity","price_paid","acquired_date"}, ...]}`; no copies left deletes it |
+| `PUT /api/games/{game}/card?key=` | replace the card's purchases: `{"purchases":[{"finish","condition","quantity","price_paid","acquired_date","note"}, ...]}`; no copies left deletes it |
 | `DELETE /api/games/{game}/card?key=` | delete a card (every copy) |
-| `GET /api/games/{game}/printings?key=` | every printing of the card |
-| `PUT /api/games/{game}/card/printing?key=` | move every copy to printing `{"id"}` (checked on the server) |
-| `POST /api/games/{game}/bulk` | `{"keys":[...], "condition","finish","price_paid","acquired_date","delete"}`; returns `Updated`, `Deleted`, `Skipped` and `undo` |
+| `GET /api/games/{game}/printings?key=&lang=` | every printing of the card in a language (default: the card's own) |
+| `PUT /api/games/{game}/card/printing?key=` | move every copy to printing `{"id", "lang"}` (checked on the server among that language's printings) |
+| `POST /api/games/{game}/bulk` | `{"keys":[...], "condition","finish","price_paid","acquired_date","note","delete"}` (`note`: leave it out to keep notes, `""` to remove them); returns `Updated`, `Deleted`, `Skipped` and `undo` |
 | `GET /api/games/{game}/backups` | the collection's backups, newest first: `[{"name", "date", "reason", "cards", "size"}]` (`reason`: `import`, `bulk-edit`, `bulk-delete`, `restore`, `merge` or `move`; `cards` counts unique cards) |
 | `POST /api/games/{game}/conflicts/merge` | `{"name"}`: merge a listed conflict copy into the collection (after a backup), then delete it; returns `changed` and `undo` |
 | `POST /api/games/{game}/conflicts/discard` | `{"name"}`: delete a listed conflict copy |
@@ -48,7 +48,7 @@ Errors are `{"error": "..."}` with a 4xx/5xx status.
 | `GET /api/games/{game}/set?code=` | set page: completion, value, top cards by one copy |
 | `GET /api/games/{game}/missing?set=` | the set's cards you don't own |
 | `GET /api/games/{game}/search?text=&set=&next=` | catalog search (one page; `next` continues); `owned` gives the copies you own of each result |
-| `POST /api/games/{game}/cards` | add one purchase: `{"card": <search result>, "quantity", "finish", "condition", "price_paid", "acquired_date"}`; returns `newCards` and `alreadyOwned` |
+| `POST /api/games/{game}/cards` | add one purchase: `{"card": <search result>, "quantity", "finish", "condition", "price_paid", "acquired_date", "note"}`; returns `newCards` and `alreadyOwned` |
 | `POST /api/games/{game}/import` | import a CSV or collection JSON (multipart field `file`, or the raw body); returns `summary`, `format`, `cards`, `newCards`, `alreadyOwned` |
 | `POST /api/games/{game}/import?preview=1` | read and match the file without saving anything: `token`, `format`, `rows` (read from the file), `cards` (printings), `copies`, `newCards`, `alreadyOwned`, `pricePaid`, `notes` (column warnings first, then rows to check), `unmatched` (`[{"line", "text"}]`: rows that matched no card, as written in the file) and `header` (the file's header line). One preview is kept per game for 15 minutes; a new one replaces it |
 | `POST /api/games/{game}/import/commit` | save a preview: `{"token"}`; returns what `import` returns. `410` if the preview was already saved, replaced, or is too old |

@@ -34,6 +34,7 @@ pub struct PurchaseView {
     /// Per copy.
     pub price_paid: f64,
     pub acquired_date: String,
+    pub note: String,
     /// The market price of one copy in this finish (0 if unknown).
     pub market: f64,
 }
@@ -49,6 +50,7 @@ pub fn view(c: &Card) -> CardView<'_> {
             quantity: r.purchase.quantity,
             price_paid: r.purchase.price_paid,
             acquired_date: r.purchase.acquired_date,
+            note: r.purchase.note,
         })
         .collect();
     CardView {

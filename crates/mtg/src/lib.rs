@@ -23,6 +23,28 @@ use tcgbinder_core::game::{self, DailyPriceMap, Filter, Game, ImportReport, Pric
 /// The game's identifier and data folder name.
 pub const ID: &str = "mtg";
 
+/// The languages Magic cards are printed in, by Scryfall's code (the codes
+/// `importer::parse_language` returns).
+pub const LANGUAGES: &[(&str, &str)] = &[
+    ("en", "English"),
+    ("es", "Spanish"),
+    ("fr", "French"),
+    ("de", "German"),
+    ("it", "Italian"),
+    ("pt", "Portuguese"),
+    ("ja", "Japanese"),
+    ("ko", "Korean"),
+    ("ru", "Russian"),
+    ("zhs", "Simplified Chinese"),
+    ("zht", "Traditional Chinese"),
+    ("he", "Hebrew"),
+    ("la", "Latin"),
+    ("grc", "Ancient Greek"),
+    ("ar", "Arabic"),
+    ("sa", "Sanskrit"),
+    ("ph", "Phyrexian"),
+];
+
 /// Magic, using Scryfall and MTGJSON.
 pub struct Magic {
     pub scryfall: scryfall::Client,
@@ -229,7 +251,12 @@ impl Game for Magic {
                 approx.push(format!("  {} → {} · {}", r.row.describe(), sc.set.to_uppercase(), sc.collector_number));
             }
             let mut card = from_scryfall(sc);
-            let purchase = Purchase { quantity: r.row.quantity, price_paid: r.row.price_paid, acquired_date: r.row.acquired_date.clone() };
+            let purchase = Purchase {
+                quantity: r.row.quantity,
+                price_paid: r.row.price_paid,
+                acquired_date: r.row.acquired_date.clone(),
+                note: r.row.note.clone(),
+            };
             card.add_purchase(&importer::choose_finish(&r.row.finish, &sc.finishes), r.row.condition, purchase);
             cards.push(card);
         }
@@ -244,10 +271,14 @@ impl Game for Magic {
         Ok((cards, report))
     }
 
-    /// Every printing of the card, found by its Oracle ID (or exact name).
-    fn printings(&self, c: &Card) -> Result<Vec<Card>> {
+    /// Every printing of the card, found by its Oracle ID (or exact name), in a
+    /// language (Scryfall's `lang:`).
+    fn printings(&self, c: &Card, language: &str) -> Result<Vec<Card>> {
         let oracle = c.attr_str("oracle_id");
-        let q = if oracle.is_empty() { format!("!\"{}\"", importer::front_face(&c.name)) } else { format!("oracleid:{oracle}") };
+        let mut q = if oracle.is_empty() { format!("!\"{}\"", importer::front_face(&c.name)) } else { format!("oracleid:{oracle}") };
+        if LANGUAGES.iter().any(|(code, _)| *code == language) {
+            q = format!("{q} lang:{language}");
+        }
         let mut out: Vec<Card> = self.scryfall.search_all(&q, 5)?.iter().map(from_scryfall).collect();
         out.sort_by(|a, b| b.released_at.cmp(&a.released_at));
         Ok(out)
@@ -278,6 +309,10 @@ impl Game for Magic {
                 c.next().map(|first| first.to_uppercase().chain(c).collect()).unwrap_or_default()
             }
         }
+    }
+
+    fn languages(&self) -> &'static [(&'static str, &'static str)] {
+        LANGUAGES
     }
 
     fn rarities(&self) -> &'static [&'static str] {

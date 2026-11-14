@@ -38,8 +38,11 @@ impl Query<'_> {
                 && (is_any(&self.rarity) || c.rarity.eq_ignore_ascii_case(&self.rarity))
                 && (is_any(&self.finish) || c.has_finish(&self.finish))
                 && self.matches.as_ref().is_none_or(|m| m(c))
-                // Each term in the name, set code, set name or number.
-                && terms.iter().all(|t| [&c.name, &c.set, &c.set_name, &c.collector_number].iter().any(|field| contains_fold(field, t)))
+                // Each term in the name, set code, set name, number or a purchase's note.
+                && terms.iter().all(|t| {
+                    [&c.name, &c.set, &c.set_name, &c.collector_number].iter().any(|field| contains_fold(field, t))
+                        || c.copies.each().any(|(_, _, p)| contains_fold(&p.note, t))
+                })
         }
     }
 }
@@ -182,6 +185,24 @@ mod tests {
         assert_eq!(q(&|q| q.text = "149".into()), "Lightning Bolt");
         assert_eq!(q(&|q| q.set = FILTER_ANY.into()), "Lightning Bolt,Scapeshift,Shock,Éclair");
         assert_eq!(q(&|q| q.matches = Some(Box::new(|c: &Card| c.name.len() == 5))), "Shock");
+    }
+
+    #[test]
+    fn search_finds_notes() {
+        let mut noted = card("Opt", "DOM", "60", "common", "nonfoil");
+        noted.add_purchase(
+            "foil",
+            Condition::NearMint,
+            Purchase { quantity: 1, note: "Trade binder, page 3".into(), ..Default::default() },
+        );
+        let plain = card("Shock", "M19", "156", "common", "nonfoil");
+        let find = |text: &str| {
+            let q = Query { text: text.into(), ..Query::default() };
+            [&noted, &plain].iter().filter(|c| q.matcher()(c)).map(|c| c.name.clone()).collect::<Vec<_>>()
+        };
+        assert_eq!(find("binder"), ["Opt"]);
+        assert_eq!(find("opt page"), ["Opt"], "terms can mix name and note");
+        assert!(find("binder shock").is_empty());
     }
 
     #[test]

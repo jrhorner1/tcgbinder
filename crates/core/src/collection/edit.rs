@@ -56,6 +56,8 @@ pub struct BulkChange {
     pub finish: Option<String>,
     pub price_paid: Option<f64>,
     pub acquired_date: Option<String>,
+    /// Set every copy's note; an empty string clears it.
+    pub note: Option<String>,
     pub delete: bool,
 }
 
@@ -72,7 +74,12 @@ pub struct BulkResult {
 impl BulkChange {
     /// Whether the change would do anything.
     pub fn is_empty(&self) -> bool {
-        !self.delete && self.condition.is_none() && self.finish.is_none() && self.price_paid.is_none() && self.acquired_date.is_none()
+        !self.delete
+            && self.condition.is_none()
+            && self.finish.is_none()
+            && self.price_paid.is_none()
+            && self.acquired_date.is_none()
+            && self.note.is_none()
     }
 
     /// Returns `c` with the change made (except delete), and why the finish change
@@ -101,6 +108,9 @@ impl BulkChange {
             }
             if let Some(date) = &self.acquired_date {
                 r.purchase.acquired_date = date.clone();
+            }
+            if let Some(note) = &self.note {
+                r.purchase.note = note.trim().to_string();
             }
             out.add_purchase(&r.finish, r.condition, r.purchase); // groups that end up the same merge
         }
@@ -141,6 +151,17 @@ mod tests {
 
         let (out, _) = BulkChange { finish: Some("foil".into()), ..Default::default() }.apply(&c);
         assert_eq!(out.finish_copy_count("foil"), 3);
+    }
+
+    #[test]
+    fn bulk_note_set_and_clear() {
+        let c = card("a", "1", &["nonfoil"]);
+        let (noted, _) = BulkChange { note: Some(" binder 2 ".into()), ..Default::default() }.apply(&c);
+        assert!(noted.purchase_rows().iter().all(|r| r.purchase.note == "binder 2"));
+        assert_eq!(noted.copy_count(), 3);
+        let (cleared, _) = BulkChange { note: Some(String::new()), ..Default::default() }.apply(&noted);
+        assert_eq!(cleared.copies, c.copies);
+        assert!(!BulkChange { note: Some(String::new()), ..Default::default() }.is_empty());
     }
 
     #[test]

@@ -63,6 +63,10 @@ const gameInfo = () => state.info.games.find((g) => g.ID === state.game) || stat
 const shortName = (name) => name.split(":")[0];
 const finishRank = (f) => { const i = state.filters.finishes.indexOf(f); return i < 0 ? 99 : i; };
 const anyPrice = (c) => (c.each ? c.each : Object.values(c.market || {})[0] || 0);
+// languageName shows a language code as its name, e.g. "ja" → "Japanese".
+const languageName = (code) => ((state.filters && state.filters.languages) || []).find((l) => l.code === code)?.name || (code || "").toUpperCase();
+// noted marks a card with a note on any of its purchases.
+const noted = (c) => ((c.purchases || []).some((p) => p.note) ? "has a note" : null);
 // englishPrice marks a card valued at its English printing's price (the catalog has
 // none for its own language).
 const englishPrice = (c) => (c.price_from === "en" ? "English price" : null);
@@ -433,7 +437,7 @@ async function viewCollection(params) {
       onchange: (e) => { e.target.checked ? ticked.set(c.key, tickInfo(c)) : ticked.delete(c.key); updateBar(); } });
     boxes.set(c.key, box);
     return h("div.card" + (c.key === q.get("key") ? ".sel" : ""), { onclick: () => openCard(c.key) },
-      box, h("div.text", h("span.name", c.name), h("span.meta", [sn(c), copiesSummary(c), englishPrice(c)].filter(Boolean).join(" · "))));
+      box, h("div.text", h("span.name", c.name), h("span.meta", [sn(c), copiesSummary(c), englishPrice(c), noted(c)].filter(Boolean).join(" · "))));
   };
   const list = h("div.list", data.cards.length ? data.cards.map(row) : h("p.muted.empty", "No cards match."));
 
@@ -498,6 +502,9 @@ function showBulkEdit() {
   const fin = h("select", h("option", { value: "" }, "Unchanged"), f.finishes.map((x) => h("option", { value: x }, fname(x))));
   const price = h("input", { type: "number", min: 0, step: "0.01", placeholder: "Unchanged" });
   const date = h("input", { type: "date", "aria-label": "Acquired date" });
+  const noteText = h("input", { type: "text", placeholder: "The note", "aria-label": "Note", hidden: true });
+  const noteMode = h("select", { "aria-label": "Note", onchange: () => { noteText.hidden = noteMode.value !== "set"; if (!noteText.hidden) noteText.focus(); } },
+    h("option", { value: "" }, "Unchanged"), h("option", { value: "set" }, "Set to…"), h("option", { value: "clear" }, "Remove notes"));
   const del = h("input", { type: "checkbox" });
   const err = h("p.error");
   const apply = async () => {
@@ -505,7 +512,12 @@ function showBulkEdit() {
     if (!chosen.size) { err.textContent = "Tick at least one card."; return; }
     const body = { keys: [...chosen.keys()], condition: cond.value, finish: fin.value, acquired_date: date.value, delete: del.checked };
     if (price.value !== "") body.price_paid = parseFloat(price.value);
-    if (!body.delete && !body.condition && !body.finish && !body.acquired_date && body.price_paid === undefined) { err.textContent = "Choose at least one change."; return; }
+    if (noteMode.value === "clear") body.note = "";
+    if (noteMode.value === "set") {
+      if (!noteText.value.trim()) { err.textContent = "Type the note, or choose Unchanged."; noteText.focus(); return; }
+      body.note = noteText.value.trim();
+    }
+    if (!body.delete && !body.condition && !body.finish && !body.acquired_date && body.price_paid === undefined && body.note === undefined) { err.textContent = "Choose at least one change."; return; }
     const n = plural(chosen.size, "card", "cards");
     if (!(body.delete ? ask(`Delete every copy of ${n}? You can undo it right after, or restore a backup from Tools.`) : confirm(`Apply the changes to every copy of ${n}?`))) return;
     try {
@@ -524,6 +536,7 @@ function showBulkEdit() {
       list,
       h("div.form",
         h("label", "Condition"), cond, h("label", "Finish"), fin, h("label", "Price paid (each)"), price, h("label", "Acquired"), date,
+        h("label", "Note"), h("div.stack", noteMode, noteText),
         h("label", ""), h("label.check", { style: "display:flex;gap:8px;align-items:center;color:var(--red);text-align:left" }, del, "Delete these cards")),
       h("p.note", "Changes apply to every copy of each card above. Finish changes skip printings that don't come in that finish; purchases that end up the same combine."),
       err),
@@ -620,11 +633,19 @@ async function renderCard(container, key) {
       qty: h("input", { type: "number", min: 0, step: 1, value: l.quantity ?? 1, "aria-label": "Quantity", oninput: update }),
       price: h("input", { type: "number", min: 0, step: "0.01", placeholder: "Paid each", value: l.price_paid || "", "aria-label": "Price paid each" }),
       date: h("input", { type: "date", value: l.acquired_date || "", "aria-label": "Acquired" }),
+      note: h("input", { type: "text", value: l.note || "", placeholder: "Note: where they're kept, who they're for…", "aria-label": "Note" }),
     };
-    r.el = h("div.purchase", r.finish, r.cond, r.qty, r.price, r.date,
-      h("button", { type: "button", title: "Remove this purchase", "aria-label": "Remove this purchase", onclick: () => {
-        rows.splice(rows.indexOf(r), 1); r.el.remove(); update();
-      } }, "✕"));
+    // The note sits on its own line, folded away as "Add a note" until used.
+    const noteBox = h("div.purchase-note");
+    const showNote = () => { fill(noteBox, r.note); r.note.focus(); };
+    if (l.note) fill(noteBox, r.note);
+    else fill(noteBox, h("button.link", { type: "button", onclick: showNote }, "Add a note"));
+    r.el = h("div.purchase-row",
+      h("div.purchase", r.finish, r.cond, r.qty, r.price, r.date,
+        h("button", { type: "button", title: "Remove this purchase", "aria-label": "Remove this purchase", onclick: () => {
+          rows.splice(rows.indexOf(r), 1); r.el.remove(); update();
+        } }, "✕")),
+      noteBox);
     rows.push(r);
     rowsBox.append(r.el);
     update();
@@ -644,7 +665,7 @@ async function renderCard(container, key) {
       const quantity = parseInt(r.qty.value, 10);
       if (!Number.isInteger(quantity) || quantity < 0) { err.textContent = "Quantities must be whole numbers (0 or more)."; r.qty.focus(); return; }
       if (quantity === 0) continue;
-      purchases.push({ finish: r.finish.value, condition: r.cond.value, quantity, price_paid: r.price.value ? parseFloat(r.price.value) : 0, acquired_date: r.date.value });
+      purchases.push({ finish: r.finish.value, condition: r.cond.value, quantity, price_paid: r.price.value ? parseFloat(r.price.value) : 0, acquired_date: r.date.value, note: r.note.value.trim() });
     }
     if (!purchases.length && !ask(`Remove all of ${c.name} from your collection?`)) return;
     try {
@@ -673,7 +694,7 @@ async function renderCard(container, key) {
     + (englishPrice(c) ? " — the English printing's price: the catalog has none for this language" : "");
   const kv = [["Set", `${c.set_name} (${c.set})`], ["Collector number", c.collector_number], ["Rarity", title(c.rarity)],
     ...(d.details || []).map((r) => [r.Label, r.Value]),
-    c.lang && c.lang !== "en" ? ["Language", c.lang.toUpperCase()] : null,
+    ["Language", languageName(c.lang || "en")],
     c.released_at ? ["Released", c.released_at] : null,
     ["Printed in", (c.finishes || []).map(fname).join(", ")], ["Market prices", marketText || "not available yet"]].filter(Boolean);
   const valueDet = [plural(c.copy_count, "copy", "copies"), unpriced ? `${unpriced} unpriced` : null].filter(Boolean).join(" · ");
@@ -692,7 +713,7 @@ async function renderCard(container, key) {
           tile("PRICE PAID", c.price_paid ? usd(c.price_paid) : "—", c.price_paid ? paidDet : "price paid not recorded"),
           tile("GAIN / LOSS", g ? g.text : "—", g ? g.pct : "needs both prices", g ? g.color : null)),
         h("h2", "Your Copies"),
-        h("p.note", "One row per purchase, by finish and condition, with the price paid for each copy."),
+        h("p.note", "One row per purchase, by finish and condition, with the price paid for each copy and an optional note. Copies with a different note stay a separate purchase."),
         h("div.purchase.heads", h("span", "Finish"), h("span", "Condition"), h("span", "Qty"), h("span", "Paid each"), h("span", "Acquired"), h("span")),
         rowsBox,
         h("p", addPurchase),
@@ -715,26 +736,33 @@ async function renderCard(container, key) {
 
 // showPrintings lists every printing of the card; picking one moves every copy there,
 // keeping each purchase's finish, condition, quantity, price paid and date.
-async function showPrintings(box, key, c) {
+async function showPrintings(box, key, c, lang) {
+  const language = lang || c.lang || "en";
   fill(box, h("p.muted", "Finding every printing…"));
+  const languages = (state.filters.languages || []);
+  const langMenu = languages.length ? h("label.inline", "Language ",
+    h("select", { "aria-label": "Language", onchange: (e) => showPrintings(box, key, c, e.target.value) },
+      languages.map((l) => h("option", { value: l.code, selected: l.code === language }, l.name)))) : null;
   try {
-    const r = await api("GET", gameAPI(`/printings?key=${encodeURIComponent(key)}`));
+    const r = await api("GET", gameAPI(`/printings?key=${encodeURIComponent(key)}&lang=${encodeURIComponent(language)}`));
     fill(box, h("h2", "Change printing"),
-      h("p.note", "Pick the printing you own; every purchase moves with its condition, price paid and date."),
+      h("p.note", "Pick the printing you own; every purchase moves with its condition, price paid, date and note. A card's language belongs to its printing, so choose a language to see its printings."),
+      langMenu,
+      r.printings.length ? null : h("p.muted", `No printings in ${languageName(language)}.`),
       h("div.list.results", r.printings.map((p) => h("div.card" + (p.id === r.current ? ".sel" : ""), {
         onclick: async () => {
           if (p.id === r.current) return;
           try {
-            const res = await api("PUT", gameAPI(`/card/printing?key=${encodeURIComponent(key)}`), { id: p.id });
+            const res = await api("PUT", gameAPI(`/card/printing?key=${encodeURIComponent(key)}`), { id: p.id, lang: language });
             if (ticks().has(key)) { ticks().delete(key); ticks().set(res.key, tickInfo(p)); }
-            status(`Moved ${c.name} to ${sn(p)}${res.finishChanged ? ` (now ${res.finishes.map(fname).join(", ")}: the new printing doesn't come in every finish you had)` : ""}${res.merged ? ", merged with the copies you already had" : ""}`);
+            status(`Moved ${c.name} to ${sn(p)}${language !== (c.lang || "en") ? ` (${languageName(language)})` : ""}${res.finishChanged ? ` (now ${res.finishes.map(fname).join(", ")}: the new printing doesn't come in every finish you had)` : ""}${res.merged ? ", merged with the copies you already had" : ""}`);
             await loadFilters();
             openCard(res.key);
           } catch (e) { status(e.message, true); }
         } },
         h("div.text", h("strong", `${p.set_name}${p.id === r.current ? "  (current)" : ""}`),
           h("span.meta", [sn(p), title(p.rarity), (p.released_at || "").slice(0, 4), (p.finishes || []).map(fname).join("/")].filter(Boolean).join(" · ")))))));
-  } catch (e) { fill(box, h("p.error", e.message)); }
+  } catch (e) { fill(box, langMenu, h("p.error", e.message)); }
 }
 
 // --- Add and Scan ------------------------------------------------------------

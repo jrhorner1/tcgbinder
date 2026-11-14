@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::{Card, Condition};
 
 /// One purchase: copies of a printing in one finish and condition, bought for the same
-/// price on the same date.
+/// price on the same date, with the same note.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Purchase {
@@ -17,6 +17,17 @@ pub struct Purchase {
     /// `YYYY-MM-DD`, or "" when not recorded.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub acquired_date: String,
+    /// The owner's note on these copies (where they're kept, who they're for, ...).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub note: String,
+}
+
+impl Purchase {
+    /// Whether `other` is the same purchase apart from its quantity, so the two can
+    /// be one: same price paid, acquired date and note.
+    pub fn same_as(&self, other: &Purchase) -> bool {
+        self.price_paid == other.price_paid && self.acquired_date == other.acquired_date && self.note == other.note
+    }
 }
 
 fn is_zero(v: &f64) -> bool {
@@ -47,14 +58,14 @@ impl Copies {
         self.0.is_empty()
     }
 
-    /// Adds a purchase. Copies bought for the same price on the same date are one
-    /// purchase, so a matching one grows instead.
+    /// Adds a purchase. Copies bought for the same price on the same date, with the
+    /// same note, are one purchase, so a matching one grows instead.
     pub fn add(&mut self, finish: &str, cond: Condition, p: Purchase) {
         if p.quantity <= 0 {
             return;
         }
         let list = self.0.entry(norm_finish(finish)).or_default().entry(cond).or_default();
-        match list.iter_mut().find(|cur| cur.price_paid == p.price_paid && cur.acquired_date == p.acquired_date) {
+        match list.iter_mut().find(|cur| cur.same_as(&p)) {
             Some(cur) => cur.quantity += p.quantity,
             None => list.push(p),
         }
@@ -77,12 +88,12 @@ fn purchase_order(a: &Purchase, b: &Purchase) -> Ordering {
         }
         return a.acquired_date.cmp(&b.acquired_date);
     }
-    a.price_paid.total_cmp(&b.price_paid)
+    a.price_paid.total_cmp(&b.price_paid).then_with(|| a.note.cmp(&b.note))
 }
 
 impl Card {
     /// Adds a purchase. It joins an existing purchase in the same finish and condition
-    /// when the price paid and acquired date match.
+    /// when the price paid, acquired date and note match.
     pub fn add_purchase(&mut self, finish: &str, cond: Condition, p: Purchase) {
         self.copies.add(finish, cond, p);
     }
@@ -166,7 +177,20 @@ mod tests {
     use super::*;
 
     fn p(q: i64, price: f64, date: &str) -> Purchase {
-        Purchase { quantity: q, price_paid: price, acquired_date: date.into() }
+        Purchase { quantity: q, price_paid: price, acquired_date: date.into(), ..Default::default() }
+    }
+
+    #[test]
+    fn notes_keep_purchases_apart() {
+        let mut c = Card::default();
+        let noted = |q, note: &str| Purchase { note: note.into(), ..p(q, 1.0, "2024-01-01") };
+        c.add_purchase("nonfoil", Condition::NearMint, noted(1, "binder A"));
+        c.add_purchase("nonfoil", Condition::NearMint, noted(2, ""));
+        c.add_purchase("nonfoil", Condition::NearMint, noted(3, "binder A"));
+        assert_eq!(c.purchases("nonfoil", Condition::NearMint), [noted(2, ""), noted(4, "binder A")]);
+        let json = serde_json::to_value(&c.copies).unwrap();
+        assert_eq!(json["nonfoil"]["NM"][0]["note"], "binder A");
+        assert_eq!(json["nonfoil"]["NM"][1].get("note"), None, "an empty note isn't stored");
     }
 
     #[test]

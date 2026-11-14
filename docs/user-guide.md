@@ -38,7 +38,7 @@ as soon as the import finishes.
 
 - **Browse:** every card is listed with its set, number and copies, in name order, by
   set, or most valuable first, as **Settings → Card order** says.
-- **Filter:** search by name, set or collector number, and filter by set, color,
+- **Filter:** search by name, set, collector number or a purchase's note, and filter by set, color,
   rarity and finish. The line under the filters counts unique cards, cards and sets;
   **Clear filters** shows everything again.
 - **Set pages:** choose a set in the **Set** filter, or click a set on Home. They show
@@ -47,26 +47,34 @@ as soon as the import finishes.
   it.
 
 On a wide screen the selected card or set shows beside the list. On a phone (or a
-narrow window) a card replaces the list, with a **Back** button.
+narrow window) a card replaces the list, with a **Back** button. When the card has
+little room, its picture sits above the details and each purchase takes two lines.
 
 ### Editing a card
 
 Each printing you own appears once. Its copies are grouped by **finish**, then
 **condition**, and each condition keeps a list of **purchases**: how many copies,
-the price paid for each, and the date acquired. For example, two near-mint normal
+the price paid for each, the date acquired, and an optional note. For example, two near-mint normal
 copies bought for $0.10 and $0.12 are two purchases, so price paid and value over
 time stay exact.
 
 - **Your Copies** lists one row per purchase: finish, condition, quantity, price
-  paid (each) and acquired date. **Add purchase** adds a row; ✕ removes one. Setting
-  every quantity to 0 removes the card when you save.
+  paid (each) and acquired date, with **Add a note** beneath for where the copies are
+  kept, who they're for, or anything else. **Add purchase** adds a row; ✕ removes
+  one. Setting every quantity to 0 removes the card when you save.
   - The finish menu lists only the finishes that printing comes in ("Normal",
     "Foil", "Etched").
-  - Purchases with the same finish, condition, price and date are combined.
+  - Purchases with the same finish, condition, price, date and note are combined;
+    a different note keeps them apart.
+  - Cards with a note say "has a note" in the collection list, and the search box
+    finds them by their note.
+- **Language** is shown on every card. It belongs to the printing, so to change it,
+  use **Change printing…**.
 - **Change printing…** moves every copy to another printing of the same card (for
-  example, a different set) without deleting and re-adding it. Each purchase keeps
-  its condition, price paid and date; a finish the new printing doesn't come in
-  becomes its first finish.
+  example, a different set or language) without deleting and re-adding it. The
+  **Language** menu shows the printings in that language (the card's own at
+  first). Each purchase keeps its condition, price paid, date and note; a finish the
+  new printing doesn't come in becomes its first finish.
 - **Raw data** shows the card exactly as stored, as JSON.
 - **Delete** removes every copy, after asking.
 
@@ -80,7 +88,8 @@ Every card in the collection list has a tick box:
    several searches; the bar below the list says how many are ticked and how many
    the filters hide. **Clear** unticks everything.
 3. **Bulk edit…** opens the changes for the ticked cards: condition, finish, price
-   paid or acquired date for every copy, or delete them. You can still untick cards
+   paid, acquired date or note for every copy (**Set to…** a note, or **Remove
+   notes**), or delete them. You can still untick cards
    there. Finish changes skip printings that don't come in that finish, and copies
    that end up identical join one purchase.
 

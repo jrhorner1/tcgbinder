@@ -224,8 +224,8 @@ impl Store {
     /// Merges the cards of a conflict copy of this collection (the same file, saved by
     /// another device at the same time), without counting anything twice: the union of
     /// both files' cards; for a card in both, the union of their purchases, taking the
-    /// larger quantity where both have the same purchase (finish, condition, price paid
-    /// and acquired date). A card or purchase deleted on one side comes back. Returns
+    /// larger quantity where both have the same purchase (finish, condition, price paid,
+    /// acquired date and note). A card or purchase deleted on one side comes back. Returns
     /// the number of cards that changed or were added.
     pub fn merge_copy(&self, cards: Vec<Card>) -> Result<usize> {
         self.file.mutate(|data| {
@@ -240,9 +240,8 @@ impl Store {
                 };
                 let before = ours.copies.clone();
                 for (finish, cond, p) in theirs.copies.each() {
-                    let same = |q: &super::Purchase| q.price_paid == p.price_paid && q.acquired_date == p.acquired_date;
                     let list = ours.copies.0.entry(finish.to_string()).or_default().entry(cond).or_default();
-                    match list.iter_mut().find(|q| same(q)) {
+                    match list.iter_mut().find(|q| q.same_as(p)) {
                         Some(q) => q.quantity = q.quantity.max(p.quantity),
                         None => list.push(p.clone()),
                     }

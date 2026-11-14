@@ -278,7 +278,7 @@ impl Api {
                     ("GET", ["card"]) => self.card(g, key),
                     ("PUT", ["card"]) => self.update_card(g, key, body),
                     ("DELETE", ["card"]) => self.delete_card(g, key),
-                    ("GET", ["printings"]) => self.printings(g, key),
+                    ("GET", ["printings"]) => self.printings(g, key, q.get("lang").map_or("", String::as_str)),
                     ("PUT", ["card", "printing"]) => self.change_printing(g, key, body),
                     ("POST", ["bulk"]) => self.bulk_edit(g, body),
                     ("GET", ["backups"]) => Ok(Reply::Json(json!(g.store.backups().map_err(internal)?))),
@@ -388,6 +388,7 @@ impl Api {
         Reply::Json(json!({
             "sets": sets, "rarities": g.game.rarities(), "finishes": g.game.finishes(), "finishNames": finish_names(g.game.as_ref()),
             "filters": extra, "conditions": choices::CONDITIONS, "searchHints": [text, set],
+            "languages": g.game.languages().iter().map(|(code, name)| json!({ "code": code, "name": name })).collect::<Vec<_>>(),
         }))
     }
 
@@ -457,9 +458,11 @@ impl Api {
         Ok(Reply::Json(json!({ "set": code, "total": set_cards.len(), "missing": views(&missing) })))
     }
 
-    fn printings(&self, g: &GameService, key: &str) -> Result {
+    /// Every printing of the card in a language (the card's own when `lang` is "").
+    fn printings(&self, g: &GameService, key: &str, lang: &str) -> Result {
         let c = self.find(g, key)?;
-        let found = g.game.printings(&c).map_err(upstream)?;
+        let lang = if lang.is_empty() { c.language.as_str() } else { lang };
+        let found = g.game.printings(&c, lang).map_err(upstream)?;
         Ok(Reply::Json(json!({ "current": c.id, "printings": views(&found) })))
     }
 
@@ -534,16 +537,19 @@ impl Api {
     /// again rather than trusted from the request.
     fn change_printing(&self, g: &GameService, key: &str, body: &[u8]) -> Result {
         let c = self.find(g, key)?;
-        #[derive(Deserialize)]
+        #[derive(Deserialize, Default)]
+        #[serde(default)]
         struct Req {
-            #[serde(default)]
             id: String,
+            /// The language the printing was chosen in ("" for the card's own).
+            lang: String,
         }
         let req: Req = decode(body).map_err(|_| bad("the printing's id is required"))?;
         if req.id.is_empty() {
             return Err(bad("the printing's id is required"));
         }
-        let found = g.game.printings(&c).map_err(upstream)?;
+        let lang = if req.lang.is_empty() { c.language.clone() } else { req.lang };
+        let found = g.game.printings(&c, &lang).map_err(upstream)?;
         let p = found.iter().find(|p| p.id == req.id).ok_or_else(|| bad("that isn't a printing of this card"))?;
         let moved = with_printing(&c, p);
         let finishes = moved.owned_finishes(g.game.finishes());
@@ -568,6 +574,8 @@ impl Api {
             finish: String,
             price_paid: Option<f64>,
             acquired_date: String,
+            /// `null` leaves notes as they are; "" clears them.
+            note: Option<String>,
             delete: bool,
         }
         let req: Req = decode(body).map_err(|_| bad("choose at least one card"))?;
@@ -583,6 +591,7 @@ impl Api {
             finish: (!req.finish.is_empty()).then_some(req.finish),
             price_paid: req.price_paid,
             acquired_date: (!req.acquired_date.is_empty()).then_some(req.acquired_date),
+            note: req.note,
             delete: req.delete,
         };
         if change.is_empty() {
@@ -754,6 +763,7 @@ struct PurchaseForm {
     /// Per copy.
     price_paid: f64,
     acquired_date: String,
+    note: String,
 }
 
 impl PurchaseForm {
@@ -773,7 +783,12 @@ impl PurchaseForm {
     /// Adds the purchase to `c` (in the printing's first finish if none is given).
     fn add(&self, c: &mut Card) {
         let finish = if self.finish.is_empty() { c.finishes.first().cloned().unwrap_or_default() } else { self.finish.clone() };
-        let p = Purchase { quantity: self.quantity, price_paid: self.price_paid, acquired_date: self.acquired_date.clone() };
+        let p = Purchase {
+            quantity: self.quantity,
+            price_paid: self.price_paid,
+            acquired_date: self.acquired_date.clone(),
+            note: self.note.trim().to_string(),
+        };
         c.add_purchase(&finish, Condition::parse(&self.condition), p);
     }
 }

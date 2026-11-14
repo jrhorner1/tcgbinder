@@ -52,7 +52,7 @@ fn fixture() -> Fixture {
         },
         "nonfoil",
         Condition::NearMint,
-        Purchase { quantity: 2, price_paid: 0.25, acquired_date: "2018-08-08".into() },
+        Purchase { quantity: 2, price_paid: 0.25, acquired_date: "2018-08-08".into(), ..Default::default() },
     );
     shock.set_attr("colors", vec!["R"]);
     shock.set_attr("mana_cost", "{R}");
@@ -591,4 +591,37 @@ fn merge_or_discard_conflict_copies() {
         assert_eq!(call(&f.api, "POST", "/api/games/mtg/conflicts/discard", Some(json!({ "name": name }))).0, 404, "{name}");
     }
     assert!(game_dir.join("collection.json").exists());
+}
+
+#[test]
+fn notes_on_purchases() {
+    let f = fixture();
+    let rows = json!([
+        { "finish": "nonfoil", "condition": "NM", "quantity": 1, "price_paid": 0.25, "acquired_date": "2018-08-08", "note": "  Binder A  " },
+        { "finish": "nonfoil", "condition": "NM", "quantity": 1, "price_paid": 0.25, "acquired_date": "2018-08-08", "note": "" },
+    ]);
+    let (status, _) = call(&f.api, "PUT", &format!("/api/games/mtg/card?key={SHOCK}"), Some(json!({ "purchases": rows })));
+    assert_eq!(status, 200);
+    let card = &get(&f.api, &format!("/api/games/mtg/card?key={SHOCK}"))["card"];
+    let notes: Vec<&str> = card["purchases"].as_array().unwrap().iter().map(|p| p["note"].as_str().unwrap()).collect();
+    assert_eq!(notes.len(), 2, "different notes keep purchases apart");
+    assert!(notes.contains(&"Binder A"));
+    assert_eq!(get(&f.api, "/api/games/mtg/cards?q=binder")["cards"][0]["name"], "Shock");
+
+    let (status, _) = call(&f.api, "POST", "/api/games/mtg/bulk", Some(json!({ "keys": [SHOCK], "note": "" })));
+    assert_eq!(status, 200);
+    let card = &get(&f.api, &format!("/api/games/mtg/card?key={SHOCK}"))["card"];
+    assert_eq!(card["purchases"].as_array().unwrap().len(), 1, "cleared notes join up again");
+    assert_eq!(get(&f.api, "/api/games/mtg/cards?q=binder")["cards"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn printings_in_a_language() {
+    let f = fixture();
+    let (status, _) = call(&f.api, "GET", &format!("/api/games/mtg/printings?key={SHOCK}&lang=ja"), None);
+    assert_eq!(status, 200);
+    let calls = f._scryfall.calls.lock().unwrap().clone();
+    assert!(calls.iter().any(|c| c.contains("lang%3Aja")), "{calls:?}");
+    let langs = get(&f.api, "/api/games/mtg/filters")["languages"].clone();
+    assert_eq!((langs[0]["code"].as_str(), langs[0]["name"].as_str()), (Some("en"), Some("English")));
 }

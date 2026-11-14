@@ -40,8 +40,9 @@ pub trait Game: Send + Sync {
     fn import(&self, data: &[u8], progress: Progress) -> Result<(Vec<Card>, ImportReport)>;
 
     /// Every printing of the same card (e.g. for moving a card to a different set),
-    /// newest first.
-    fn printings(&self, c: &Card) -> Result<Vec<Card>>;
+    /// newest first, in `language` (one of [`Game::languages`]'s codes; "" for the
+    /// catalog's usual choice).
+    fn printings(&self, c: &Card, language: &str) -> Result<Vec<Card>>;
     /// Every card in a set (by uppercase code), in collector-number order.
     fn set_cards(&self, code: &str) -> Result<Vec<Card>>;
 
@@ -53,6 +54,11 @@ pub trait Game: Send + Sync {
     fn finish_name(&self, finish: &str) -> String;
     /// The rarity filter options, lowest first.
     fn rarities(&self) -> &'static [&'static str];
+    /// The languages cards are printed in: code (as stored in `Card::language`) and
+    /// name, the usual one first.
+    fn languages(&self) -> &'static [(&'static str, &'static str)] {
+        &[]
+    }
     /// Extra filters shown with set, rarity and finish.
     fn filters(&self) -> Vec<Filter>;
     /// Extra rows in the card editor.

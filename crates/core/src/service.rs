@@ -472,7 +472,11 @@ mod tests {
     #[test]
     fn chart_estimates_before_history() {
         let mut c = Card { id: "a".into(), ..Card::default() };
-        c.add_purchase("nonfoil", Condition::NearMint, Purchase { quantity: 1, price_paid: 2.0, acquired_date: "2024-01-01".into() });
+        c.add_purchase(
+            "nonfoil",
+            Condition::NearMint,
+            Purchase { quantity: 1, price_paid: 2.0, acquired_date: "2024-01-01".into(), ..Default::default() },
+        );
         c.market.insert("nonfoil".into(), 5.0);
         let cards = vec![c];
         let today = day("2024-03-01");

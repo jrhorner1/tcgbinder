@@ -68,7 +68,8 @@ To add a game: create a crate like `crates/mtg`, implement the trait, and add it
 Per game, in `<data>/<game>/`:
 - `collection.json`: one card per printing (keyed by its catalog ID), holding the
   copies owned as `copies`: finish → condition → list of purchases (`quantity`,
-  `price_paid`, `acquired_date`), the card editor's "Your Copies". Also the game's
+  `price_paid`, `acquired_date`, `note`), the card editor's "Your Copies". Two
+  purchases are one (`Purchase::same_as`) when price paid, date and note match. Also the game's
   ID. A card's `price_from` is `"en"` when its prices are borrowed from the English
   printing (Magic's `borrow_english_prices`: Scryfall prices no other language). Kept
   in a `core::jsonfile::JsonFile` (see below).

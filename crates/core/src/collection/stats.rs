@@ -225,7 +225,11 @@ mod tests {
             ..Card::default()
         };
         for (q, paid, date) in buys {
-            c.add_purchase("nonfoil", Condition::NearMint, Purchase { quantity: *q, price_paid: *paid, acquired_date: date.to_string() });
+            c.add_purchase(
+                "nonfoil",
+                Condition::NearMint,
+                Purchase { quantity: *q, price_paid: *paid, acquired_date: date.to_string(), ..Default::default() },
+            );
         }
         if let Some(m) = market {
             c.market.insert("nonfoil".into(), m);
