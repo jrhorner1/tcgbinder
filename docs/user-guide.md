@@ -221,12 +221,25 @@ with the same search.
 
 The Tools page works on the selected game:
 - **Import…:** CSV exports from EchoMTG, ManaBox, Moxfield, Deckbox, TCGplayer,
-  Dragon Shield, Archidekt and others, or a collection `.json` exported from this app.
+  Dragon Shield, Archidekt and others, this app's own CSV, or a collection `.json`
+  exported from this app.
   Cards you already own gain the imported purchases. See **Importing** below.
 - **Export collection:** saves the collection file, which Import accepts. Use it for
   backups and moving to another device. The desktop app saves it to your Downloads
   folder; the iPhone app saves it to its folder in the Files app; the web app
-  downloads it.
+  downloads it. The other exports go to the same place.
+- **Export CSV:** every card as a CSV file for spreadsheets and other collection
+  apps, one row per purchase: name, set code and name, collector number, language,
+  finish, condition, quantity, price paid, acquired date, note, rarity, market price
+  and Scryfall ID. Other apps can match the cards on the Scryfall ID, or on set code
+  and collector number. Import reads it back.
+- **Valuation report:** a page listing every card by set, newest set first, with
+  finish, condition, quantity, the price of one copy and the value, a total for each
+  set, and the collection's totals at the top. Open it in a browser and print it, or
+  save it as a PDF, for insurance or your records. When printed, each set starts a
+  new page and long tables repeat their headings.
+- **Export…** under the collection list's filters exports just the cards the list
+  shows, in its order, as CSV or a valuation report.
 - **Bulk edit…** (see above) and **Scan a card…**.
 - **Restore a backup…:** a copy of the collection is saved before every import,
   bulk edit, bulk delete and restore, and the last 10 are kept. The list shows when

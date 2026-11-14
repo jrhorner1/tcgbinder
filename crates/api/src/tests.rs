@@ -294,6 +294,110 @@ fn export_import_round_trip() {
     assert_eq!(get(&api, "/api/info")["saveExports"], true);
 }
 
+/// Downloads an export, returning its file name and body.
+fn download(api: &Api, path: &str) -> (String, String) {
+    let resp = api.handle(&request("GET", path, Vec::new()));
+    assert_eq!(resp.status(), 200, "{path}");
+    let disposition = resp.headers()[header::CONTENT_DISPOSITION].to_str().unwrap().to_string();
+    (disposition, String::from_utf8(resp.body().clone()).unwrap())
+}
+
+#[test]
+fn csv_export_reads_back() {
+    let f = fixture();
+    let mut shock = f.svc.store.get(SHOCK).unwrap();
+    shock.add_purchase("foil", Condition::LightPlay, Purchase { quantity: 1, note: "trade, \"binder\"".into(), ..Default::default() });
+    f.svc.store.save_card(SHOCK, shock).unwrap();
+
+    let (name, csv) = download(&f.api, "/api/games/mtg/export?format=csv");
+    assert!(name.contains(".csv"), "{name}");
+    let lines: Vec<&str> = csv.lines().collect();
+    assert_eq!(lines[0], format!("{},Scryfall ID", tcgbinder_core::collection::CSV_COLUMNS.join(",")));
+    assert_eq!(lines.len(), 4, "a row per purchase: {csv}");
+    assert!(lines.contains(&format!("Shock,M19,Core Set 2019,156,en,nonfoil,NM,2,0.25,2018-08-08,,common,0.2,{SHOCK}").as_str()), "{csv}");
+
+    // The list's filters and sort apply.
+    let (_, red) = download(&f.api, "/api/games/mtg/export?format=csv&f.Color=R&sort=name");
+    assert!(red.lines().skip(1).all(|l| l.starts_with("Shock,")), "{red}");
+    let (_, blue) = download(&f.api, "/api/games/mtg/export?format=csv&f.Color=U");
+    assert_eq!(blue.lines().count(), 2);
+
+    // Imported into an empty collection, the same purchases come back.
+    let (scryfall, _fake) = testing::search_server();
+    let g = Magic::with_clients(scryfall, mtgjson::Client::new(&_fake.url));
+    let dir = tempfile::tempdir().unwrap();
+    let empty = GameService::from_store(Box::new(g), Store::open(dir.path().join("collection.json"), ID).unwrap()).unwrap();
+    let res = empty.import(csv.as_bytes(), &mut |_, _| {}).unwrap();
+    assert_eq!(res.report.format, "TCG Binder CSV");
+    let rows = |cards: Vec<Card>| {
+        let mut out: Vec<String> = cards
+            .iter()
+            .flat_map(|c| {
+                c.purchase_rows().into_iter().map(move |r| {
+                    let p = r.purchase;
+                    format!(
+                        "{}|{}|{}|{}|{}|{:?}|{}|{}|{}|{}",
+                        c.name,
+                        c.set.to_uppercase(),
+                        c.collector_number,
+                        c.language,
+                        r.finish,
+                        r.condition,
+                        p.quantity,
+                        p.price_paid,
+                        p.acquired_date,
+                        p.note
+                    )
+                })
+            })
+            .collect();
+        out.sort();
+        out
+    };
+    assert_eq!(rows(empty.store.cards()), rows(f.svc.store.cards()));
+}
+
+#[test]
+fn valuation_report() {
+    let f = fixture();
+    let mut odd = f.svc.store.get(OPT).unwrap();
+    odd.id = "zzzzzzzz-0000-4000-8000-000000000009".into();
+    odd.name = "<script>alert('x')</script>".into();
+    odd.set = "XYZ".into();
+    odd.set_name = "<b>Set</b>".into();
+    odd.released_at = String::new();
+    f.svc.store.add_cards(vec![odd]).unwrap();
+
+    let (name, html) = download(&f.api, "/api/games/mtg/export?format=report");
+    assert!(name.contains("mtg-valuation-") && name.contains(".html"), "{name}");
+    assert!(html.starts_with("<!DOCTYPE html>"));
+    assert!(!html.contains("<script>") && !html.contains("<b>Set"), "card text is escaped");
+    assert!(html.contains("&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;"));
+    assert!(html.contains("Market value<b>$0.40</b>") && html.contains("Price paid<b>$0.50</b>"), "{html}");
+    // Newest set first; per set a table with a total.
+    let (m19, dom) = (html.find("Core Set 2019").unwrap(), html.find("Dominaria").unwrap());
+    assert!(m19 < dom && dom < html.find("&lt;b&gt;Set&lt;/b&gt;").unwrap());
+    assert!(html.contains("<td>Shock</td><td>156</td><td>Normal</td><td>Near Mint</td><td class=\"n\">2</td><td class=\"n\">$0.20</td><td class=\"n\">$0.40</td>"));
+    assert!(html.contains("M19 total"));
+    assert!(!html.contains("only the cards that matched"));
+
+    let (_, red) = download(&f.api, "/api/games/mtg/export?format=report&f.Color=R");
+    assert!(red.contains("only the cards that matched") && !red.contains("Dominaria"));
+
+    assert_eq!(call(&f.api, "GET", "/api/games/mtg/export?format=pdf", None).0, 400);
+    assert_eq!(call(&f.api, "GET", "/api/games/mtg/export?format=csv&sort=nope", None).0, 400);
+
+    // Apps that save exports save these too.
+    let out = tempfile::tempdir().unwrap();
+    let api = Api::new("TCG Binder", "test", Client::Phone, Arc::new(SettingsStore::memory()), vec![f.svc.clone()])
+        .with_export_dir(out.path().to_path_buf());
+    let (status, saved) = call(&api, "POST", "/api/games/mtg/export?format=csv&set=m19", None);
+    assert_eq!(status, 200, "{saved}");
+    let path = saved["path"].as_str().unwrap();
+    assert!(path.ends_with(".csv"));
+    assert!(std::fs::read_to_string(path).unwrap().contains("Shock,M19"));
+}
+
 #[test]
 fn changes_need_the_client_header() {
     let f = fixture();

@@ -135,6 +135,8 @@ const PROFILES: &[Profile] = &[
         rows_are_copies: true,
         ..Profile::new("EchoMTG", |h| h.contains("emid") || h.contains("inventory id") && h.contains("price acquired"))
     },
+    // This app's own CSV export.
+    Profile::new("TCG Binder CSV", |h| h.contains("scryfall id") && h.contains("finish") && h.contains("price paid")),
     Profile::new("ManaBox", |h| h.contains("manabox id")),
     Profile::new("Dragon Shield", |h| h.contains("folder name") && h.contains("price bought")),
     Profile::new("Deckbox", |h| h.contains("tradelist count") && h.contains("edition code")),
@@ -362,6 +364,26 @@ mod tests {
     #[test]
     fn formats() {
         let cases: &[(&str, &str, Row)] = &[
+            (
+                "TCG Binder CSV",
+                "Name,Set Code,Set Name,Collector Number,Language,Finish,Condition,Quantity,Price Paid,Acquired Date,Note,Rarity,Market Price,Scryfall ID\n\
+                 Opt,DOM,Dominaria,60,ja,etched,LP,2,0.1234,2024-03-15,\"trade, binder\",common,1.5,AAAAAAAA-0000-4000-8000-000000000060\n",
+                Row {
+                    name: "Opt".into(),
+                    set_code: "dom".into(),
+                    set_name: "Dominaria".into(),
+                    number: "60".into(),
+                    scryfall_id: "aaaaaaaa-0000-4000-8000-000000000060".into(),
+                    quantity: 2,
+                    finish: "etched".into(),
+                    condition: Condition::LightPlay,
+                    language: "ja".into(),
+                    price_paid: 0.1234,
+                    acquired_date: "2024-03-15".into(),
+                    note: "trade, binder".into(),
+                    ..Row::default()
+                },
+            ),
             (
                 "EchoMTG",
                 "inventory_id,user_id,emid,foil,condition,lang,price_acquired,date_acquired,name,set_code,expansion,collector_number,tcgplayer_id,mid,foil_price,price_change,price_updated\n\

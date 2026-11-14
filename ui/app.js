@@ -590,6 +590,7 @@ async function viewCollection(params) {
     const keep = new URLSearchParams([...q.entries()].filter(([k]) => LIST_KEYS.includes(k) && k !== "key"));
     go("collection", keep);
   } }, "Clear filters") : null;
+  const exportButton = data.cards.length ? h("button.link", { type: "button", onclick: () => exportListed(q, data.cards.length) }, "Export…") : null;
 
   // The selection bar: how many are ticked, and the bulk edit actions.
   const count = h("span.count");
@@ -609,7 +610,7 @@ async function viewCollection(params) {
 
   const detail = h("div.pane-detail");
   const split = h("div.split", h("div.pane-list", filters,
-    h("p.counts.muted", h("span", filtering ? `Matching: ${counts}` : counts, h("span.money-line", ` · ${money}`)), clear),
+    h("p.counts.muted", h("span", filtering ? `Matching: ${counts}` : counts, h("span.money-line", ` · ${money}`)), h("span.count-actions", clear, exportButton)),
     listbar, list, bar), detail);
   fill($("#main"), split);
   if (q.get("key")) {
@@ -1590,14 +1591,30 @@ async function viewLot(id) {
 // toolRow is one action on the Tools page with what it does.
 const toolRow = (button, about) => h("div.tool", button, h("p.muted", about));
 
-async function exportCollection(button) {
-  if (!state.info.saveExports) { location.href = gameAPI("/export"); return; }
-  button.disabled = true;
+// exportCollection downloads (or, in apps that can't download, saves) an export:
+// format "json" (the collection file), "csv" or "report", for the cards `params`
+// filters (the collection list's parameters), or every card.
+async function exportCollection(button, format = "json", params) {
+  const qs = new URLSearchParams(params || []);
+  for (const k of ["key", "view"]) qs.delete(k);
+  qs.set("format", format);
+  if (!state.info.saveExports) { location.href = gameAPI(`/export?${qs}`); return; }
+  const what = { json: "the collection", csv: "the CSV", report: "the valuation report" }[format];
+  if (button) button.disabled = true;
   try {
-    const r = await api("POST", gameAPI("/export"));
-    status(`Saved the collection to ${r.path}`);
+    const r = await api("POST", gameAPI(`/export?${qs}`));
+    status(`Saved ${what} to ${r.path}`);
   } catch (e) { status(e.message, true); }
-  button.disabled = false;
+  if (button) button.disabled = false;
+}
+
+// exportListed offers the collection list's cards as CSV or a valuation report.
+async function exportListed(params, count) {
+  const format = await askDialog("Export these cards", [
+    `The ${plural(count, "card", "cards")} the list shows, in its order.`,
+    "CSV opens in spreadsheets and other collection apps, and Import here reads it back. The valuation report is a page to print or save as PDF, with every card's value by set.",
+  ], [{ label: "Valuation report", value: "report" }, { label: "CSV", value: "csv", primary: true }]);
+  if (format) exportCollection(null, format, params);
 }
 
 async function viewTools() {
@@ -1613,6 +1630,8 @@ async function viewTools() {
     h("div.card-box",
       toolRow(h("a.button", { href: "#/import" }, "Import…"), "Add cards from another app's CSV export (EchoMTG, ManaBox, Moxfield, Deckbox, TCGplayer and others) or from a collection file exported here."),
       toolRow(h("button", { type: "button", onclick: (e) => exportCollection(e.currentTarget) }, "Export collection"), `Save the collection file to ${where}, for a backup or to move to another device. Import reads it back.`),
+      toolRow(h("button", { type: "button", onclick: (e) => exportCollection(e.currentTarget, "csv") }, "Export CSV"), `Save every card as a CSV file to ${where}, for spreadsheets and other collection apps: a row per purchase, with its price paid, date, note and market price. Import reads it back. To export only some cards, filter the collection list and choose Export there.`),
+      toolRow(h("button", { type: "button", onclick: (e) => exportCollection(e.currentTarget, "report") }, "Valuation report"), `Save a page listing every card by set with its value, to ${where}. Open it in a browser to print it or save it as a PDF, for insurance or your records.`),
       toolRow(h("button", { type: "button", onclick: () => { go("collection"); setTimeout(showBulkEdit, 50); } }, "Bulk edit…"),
         "Change the condition, finish, price paid or date of many cards at once, or delete them. Tick the cards in the collection list (filter it, then Select all shown); Bulk edit is also below the list."),
       toolRow(h("a.button", { href: "#/lots" }, "Lots…"), "Cards bought together for one price, such as a bulk lot or a bundle: what each lot cost and what its cards are worth now."),

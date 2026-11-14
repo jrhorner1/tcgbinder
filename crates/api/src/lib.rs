@@ -7,6 +7,7 @@
 
 mod folders;
 mod lots;
+mod report;
 mod views;
 
 pub use folders::{Folders, PickFolder, Restart};
@@ -23,7 +24,7 @@ use serde_json::{Value, json};
 
 use tcgbinder_core::collection::{
     self, BulkChange, Card, Condition, Query, SortKey, card_key, compute_stats, is_any, round_cents, set_options, sort_cards, top_by_each,
-    unique_cards, with_printing,
+    unique_cards, with_printing, write_csv,
 };
 use tcgbinder_core::game::finish_names;
 use tcgbinder_core::scan::Reading;
@@ -339,8 +340,8 @@ impl Api {
                         let n = g.load_price_history(&mut |msg| r.report(0, 0, msg))?;
                         Ok(json!({ "printings": n }))
                     }),
-                    ("GET", ["export"]) => self.export(g),
-                    ("POST", ["export"]) => self.save_export(g),
+                    ("GET", ["export"]) => self.export(g, &q),
+                    ("POST", ["export"]) => self.save_export(g, &q),
                     ("POST", ["scan"]) => self.scan(g, body),
                     ("POST", ["scan", "frame"]) => self.scan_frame(g, body),
                     _ => Err(not_found(format!("no {m} /api/{path}"))),
@@ -457,6 +458,23 @@ impl Api {
     /// one per game filter, named f.<filter name>. Sorting: sort (a [`SortKey`] name)
     /// and dir (asc or desc); without sort, the Card order setting.
     fn cards(&self, g: &GameService, params: &HashMap<String, String>) -> Result {
+        let (filtered, key, descending) = self.filtered_cards(g, params)?;
+        let card_count: i64 = filtered.iter().map(Card::copy_count).sum();
+        let sets: HashSet<String> = filtered.iter().map(|c| c.set.to_uppercase()).collect();
+        let market: f64 = filtered.iter().map(|c| c.market_value().0).sum();
+        let paid: f64 = filtered.iter().map(|c| c.price_paid().0).sum();
+        let sort_name = SortKey::ALL.iter().find(|(_, k)| *k == key).map_or("name", |(n, _)| *n);
+        Ok(Reply::Json(json!({
+            "total": g.store.len(), "matched": filtered.len(), "cardCount": card_count,
+            "uniqueCards": unique_cards(&filtered), "sets": sets.len(),
+            "marketValue": round_cents(market), "pricePaid": round_cents(paid),
+            "sort": sort_name, "dir": if descending { "desc" } else { "asc" },
+            "cards": views(&filtered),
+        })))
+    }
+
+    /// The cards `GET /cards` would list for these parameters, and the order used.
+    fn filtered_cards(&self, g: &GameService, params: &HashMap<String, String>) -> Result<(Vec<Card>, SortKey, bool)> {
         let filters = g.game.filters();
         let get = |k: &str| params.get(k).map(|v| v.trim().to_string()).unwrap_or_default();
         let flag = |k: &str| matches!(get(k).as_str(), "1" | "true" | "yes");
@@ -510,19 +528,7 @@ impl Api {
                 (key, descending)
             }
         };
-        let filtered = sort_cards(g.store.cards_where(q.matcher()), key, descending, g.game.rarities());
-        let card_count: i64 = filtered.iter().map(Card::copy_count).sum();
-        let sets: HashSet<String> = filtered.iter().map(|c| c.set.to_uppercase()).collect();
-        let market: f64 = filtered.iter().map(|c| c.market_value().0).sum();
-        let paid: f64 = filtered.iter().map(|c| c.price_paid().0).sum();
-        let sort_name = SortKey::ALL.iter().find(|(_, k)| *k == key).map_or("name", |(n, _)| *n);
-        Ok(Reply::Json(json!({
-            "total": g.store.len(), "matched": filtered.len(), "cardCount": card_count,
-            "uniqueCards": unique_cards(&filtered), "sets": sets.len(),
-            "marketValue": round_cents(market), "pricePaid": round_cents(paid),
-            "sort": sort_name, "dir": if descending { "desc" } else { "asc" },
-            "cards": views(&filtered),
-        })))
+        Ok((sort_cards(g.store.cards_where(q.matcher()), key, descending, g.game.rarities()), key, descending))
     }
 
     fn find(&self, g: &GameService, key: &str) -> Result<Card> {
@@ -831,21 +837,43 @@ impl Api {
         })
     }
 
-    fn export_name(g: &GameService) -> String {
-        format!("{}-collection-{}.json", g.game.id(), dates::today_string())
+    /// An export for `GET`/`POST /export`: `format=json` (the default) is the whole
+    /// collection file, which import reads back; `csv` and `report` (a printable HTML
+    /// valuation) take the same filter and sort parameters as `GET /cards`.
+    fn export_file(&self, g: &GameService, params: &HashMap<String, String>) -> Result<(String, &'static str, Vec<u8>)> {
+        let stem = format!("{}-collection-{}", g.game.id(), dates::today_string());
+        match params.get("format").map_or("json", |f| f.as_str()) {
+            "json" => {
+                let data = std::fs::read(g.store.file_path()).map_err(|e| internal(e.into()))?;
+                Ok((format!("{stem}.json"), "application/json", data))
+            }
+            "csv" => {
+                let (cards, _, _) = self.filtered_cards(g, params)?;
+                let data = write_csv(&cards, g.game.catalog_id_label()).map_err(internal)?;
+                Ok((format!("{stem}.csv"), "text/csv; charset=utf-8", data))
+            }
+            "report" => {
+                let (cards, _, _) = self.filtered_cards(g, params)?;
+                let filtered = params.keys().any(|k| !matches!(k.as_str(), "format" | "sort" | "dir"));
+                let html = report::valuation(g, &cards, filtered);
+                Ok((format!("{}-valuation-{}.html", g.game.id(), dates::today_string()), "text/html; charset=utf-8", html.into_bytes()))
+            }
+            _ => Err(bad("format must be json, csv or report")),
+        }
     }
 
-    /// Downloads the game's collection file, which import reads back.
-    fn export(&self, g: &GameService) -> Result {
-        let data = std::fs::read(g.store.file_path()).map_err(|e| internal(e.into()))?;
-        Ok(Reply::File { name: Self::export_name(g), content_type: "application/json", data })
+    /// Downloads an export (see `export_file`).
+    fn export(&self, g: &GameService, params: &HashMap<String, String>) -> Result {
+        let (name, content_type, data) = self.export_file(g, params)?;
+        Ok(Reply::File { name, content_type, data })
     }
 
-    /// Saves a copy of the collection file to the export folder.
-    fn save_export(&self, g: &GameService) -> Result {
+    /// Saves an export (see `export_file`) to the export folder.
+    fn save_export(&self, g: &GameService, params: &HashMap<String, String>) -> Result {
         let dir = self.export_dir.as_ref().ok_or_else(|| not_found("this app downloads exports instead (GET)"))?;
-        let path = dir.join(Self::export_name(g));
-        std::fs::create_dir_all(dir).and_then(|_| std::fs::copy(g.store.file_path(), &path)).map_err(|e| internal(e.into()))?;
+        let (name, _, data) = self.export_file(g, params)?;
+        let path = dir.join(name);
+        std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&path, data)).map_err(|e| internal(e.into()))?;
         tracing::info!(game = g.game.id(), path = %path.display(), "collection exported");
         Ok(Reply::Json(json!({ "path": path.display().to_string() })))
     }

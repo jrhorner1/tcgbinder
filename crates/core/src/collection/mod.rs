@@ -3,6 +3,7 @@
 
 mod card;
 mod copies;
+mod csv_export;
 mod edit;
 mod filter;
 mod price_history;
@@ -11,6 +12,7 @@ mod store;
 
 pub use card::{Card, CatalogUpdate, Condition, SetInfo};
 pub use copies::{Copies, Purchase, PurchaseRow};
+pub use csv_export::{CSV_COLUMNS, write_csv};
 pub use edit::{BulkChange, BulkResult, missing, top_by_each, unique_cards, with_printing};
 pub use filter::{
     CardMatch, FILTER_ANY, Query, SetOption, SortKey, compare_collector_number, default_order, is_any, set_options, sort_cards,

@@ -355,6 +355,10 @@ impl Game for Magic {
         if mana.is_empty() { Vec::new() } else { vec![Row { label: "Mana cost".into(), value: mana.into() }] }
     }
 
+    fn catalog_id_label(&self) -> &'static str {
+        "Scryfall ID"
+    }
+
     fn card_link(&self, c: &Card) -> Option<(String, String)> {
         let seg = scryfall::escape;
         Some(("View on Scryfall".into(), format!("https://scryfall.com/card/{}/{}", seg(&c.set.to_lowercase()), seg(&c.collector_number))))

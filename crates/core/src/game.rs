@@ -72,6 +72,10 @@ pub trait Game: Send + Sync {
     fn filters(&self) -> Vec<Filter>;
     /// Extra rows in the card editor.
     fn details(&self, c: &Card) -> Vec<Row>;
+    /// The header of the catalog ID column in CSV exports, e.g. "Scryfall ID".
+    fn catalog_id_label(&self) -> &'static str {
+        "ID"
+    }
     /// A link to the card on the catalog's website: (label, URL).
     fn card_link(&self, c: &Card) -> Option<(String, String)>;
 
