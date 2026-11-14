@@ -8,6 +8,7 @@
 mod folders;
 mod lots;
 mod report;
+mod sales;
 mod views;
 
 pub use folders::{Folders, PickFolder, Restart};
@@ -307,6 +308,9 @@ impl Api {
                     ("DELETE", ["card"]) => self.delete_card(g, key),
                     ("GET", ["printings"]) => self.printings(g, key, q.get("lang").map_or("", String::as_str)),
                     ("PUT", ["card", "printing"]) => self.change_printing(g, key, body),
+                    ("POST", ["card", "sell"]) => self.sell(g, key, body),
+                    ("GET", ["sales"]) => self.sales(g, &q),
+                    ("DELETE", ["sales"]) => self.delete_sale(g, &q),
                     ("POST", ["bulk"]) => self.bulk_edit(g, body),
                     ("GET", ["lots"]) => match q.get("id") {
                         Some(id) => self.lot(g, id),
@@ -430,6 +434,7 @@ impl Api {
             "cards": st.cards, "uniqueCards": st.unique_cards, "sets": st.sets,
             "pricePaid": round_cents(st.price_paid), "pricePaidUnknown": st.price_paid_unknown,
             "marketValue": round_cents(st.market_value), "unpriced": st.unpriced, "pricesAsOf": st.prices_as_of,
+            "realisedThisYear": round_cents(sales::realised_this_year(g)), "hasSales": !g.sales.all().is_empty(),
             "bySet": sets, "topCards": top,
             "chart": {
                 "range": range, "from": date_or_empty(vc.from), "to": dates::format(vc.to),

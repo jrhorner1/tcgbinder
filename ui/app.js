@@ -246,14 +246,19 @@ function dataNotices(df, home) {
       if (what === "discard" && !(await confirmDialog(`Delete ${c.name}? Its changes are lost.`, { danger: true, action: "Discard it" }))) return;
       try {
         const r = await api("POST", gameAPI(`/conflicts/${what}`), { name: c.name });
-        status(what === "merge" ? `Merged ${c.name}: ${plural(r.changed, "card", "cards")} changed.` : `Discarded ${c.name}.`, false, r.undo);
+        const unit = { lots: ["lot", "lots"], sales: ["sale", "sales"] }[c.kind] || ["card", "cards"];
+        status(what === "merge" ? `Merged ${c.name}: ${plural(r.changed, ...unit)} changed.` : `Discarded ${c.name}.`, false, r.undo);
         await loadFilters();
         route();
       } catch (e) { status(e.message, true); }
     };
+    const about = {
+      lots: ["your lots", "Merging adds the lots only it has; where both have a lot, the newer one is kept."],
+      sales: ["your sales", "Merging adds the sales only it has; none is counted twice."],
+    }[c.kind] || ["your collection", "Merging adds its cards and copies to yours without counting any twice; a card deleted on one device comes back."];
     out.push(h("div.card-box.notice",
-      h("h2", "Another device saved a different version of your collection"),
-      h("p", `${c.name}${c.cards !== null ? ` (${plural(c.cards, "unique card", "unique cards")})` : ""} was saved by another device at the same time as this one. Merging adds its cards and copies to yours without counting any twice; a card deleted on one device comes back. Discarding deletes that file.`),
+      h("h2", `Another device saved a different version of ${about[0]}`),
+      h("p", `${c.name}${c.kind === "collection" && c.cards !== null ? ` (${plural(c.cards, "unique card", "unique cards")})` : ""} was saved by another device at the same time as this one. ${about[1]} Discarding deletes that file.`),
       h("div.buttons", h("div.right",
         h("button", { type: "button", onclick: () => act("discard") }, "Discard it"),
         h("button.primary", { type: "button", onclick: () => act("merge") }, "Merge it")))));
@@ -391,7 +396,7 @@ async function viewHome() {
       tile("CARDS", o.cards.toLocaleString(), `${plural(o.uniqueCards, "unique card", "unique cards")} · ${plural(o.sets, "set", "sets")}`),
       tile("PRICE PAID", usd(o.pricePaid), o.pricePaidUnknown ? `${plural(o.pricePaidUnknown, "card", "cards")} without a price paid` : "every card has a price paid"),
       tile("MARKET VALUE", usd(o.marketValue), `prices as of ${o.pricesAsOf || "never"}${o.unpriced ? ` · ${o.unpriced} unpriced` : ""}`, "var(--blue)"),
-      tile("GAIN / LOSS", g.text, g.pct, g.color)),
+      tile("GAIN / LOSS", g.text, [g.pct, o.hasSales ? `realised: ${signedUsd(o.realisedThisYear)} this year` : ""].filter(Boolean).join(" · "), g.color)),
     h("div.section-head", h("h2", "Value Over Time"),
       h("div.ranges", state.info.ranges.map((r) => h("button" + (r === range ? ".on" : ""), {
         type: "button", onclick: async () => { state.range = r; await saveSettings({ chart_range: r }, "chart range"); route(); } }, r)))),
@@ -734,6 +739,109 @@ async function renderSet(container, code) {
     showMissing, missingBox));
 }
 
+// signedUsd shows a gain with its sign: "+$1.05", "-$0.60".
+const signedUsd = (v) => (v > 0 ? "+" : "") + usd(v);
+
+// showSell sells copies from one of a card's saved purchases `l`.
+function showSell(c, key, l) {
+  const dlg = $("#dialog");
+  const qty = h("input", { type: "number", min: 1, max: l.quantity, step: 1, value: 1, "aria-label": "Copies sold" });
+  const each = h("input", { type: "number", min: 0, step: "0.01", value: l.market ? l.market.toFixed(2) : "", placeholder: "0.00", "aria-label": "Sold for, each" });
+  const date = h("input", { type: "date", value: today(), "aria-label": "Date sold" });
+  const fees = h("input", { type: "number", min: 0, step: "0.01", placeholder: "0.00", "aria-label": "Fees, in all" });
+  const note = h("input", { type: "text", placeholder: "Where or to whom", "aria-label": "Note on the sale" });
+  const outcome = h("p.note");
+  const err = h("p.error");
+  const recount = () => {
+    const q = parseInt(qty.value, 10) || 0;
+    const proceeds = q * (parseFloat(each.value) || 0) - (parseFloat(fees.value) || 0);
+    outcome.textContent = l.price_paid
+      ? `Paid ${usd(l.price_paid)} each. After fees: ${usd(proceeds)}, a gain of ${signedUsd(proceeds - q * l.price_paid)}.`
+      : `After fees: ${usd(proceeds)}. These copies have no price paid, so the sale's gain is unknown and left out of the totals.`;
+  };
+  [qty, each, fees].forEach((x) => x.addEventListener("input", recount));
+  recount();
+  const sell = async () => {
+    err.textContent = "";
+    const q = parseInt(qty.value, 10);
+    if (!Number.isInteger(q) || q < 1 || q > l.quantity) { err.textContent = `Sell 1 to ${l.quantity} copies.`; qty.focus(); return; }
+    if (each.value === "") { err.textContent = "Type what each copy sold for."; each.focus(); return; }
+    try {
+      const r = await api("POST", gameAPI(`/card/sell?key=${encodeURIComponent(key)}`), {
+        finish: l.finish, condition: l.condition, price_paid: l.price_paid || 0, acquired_date: l.acquired_date || "", note: l.note || "",
+        quantity: q, sale_each: parseFloat(each.value), date: date.value, fees: parseFloat(fees.value) || 0, sale_note: note.value.trim(),
+      });
+      dlg.close();
+      status(`Sold ${plural(q, "copy", "copies")} of ${c.name}${r.gain !== null ? `: ${signedUsd(r.gain)}` : ""}. See Tools → Earnings.`);
+      await loadFilters();
+      if (q >= c.copy_count) closeCard(); else openCard(key);
+    } catch (e) { err.textContent = e.message; }
+  };
+  fill(dlg, h("div.dlg",
+    h("header", h("h2", `Sell ${c.name}`), h("p.muted", { style: "margin:4px 0 0" },
+      [sn(c), fname(l.finish), l.condition, plural(l.quantity, "copy", "copies"), l.acquired_date ? `acquired ${l.acquired_date}` : ""].filter(Boolean).join(" · "))),
+    h("div.body",
+      h("div.form",
+        h("label", "Copies"), qty, h("label", "Sold for (each)"), each, h("label", "Date sold"), date,
+        h("label", "Fees (in all)"), fees, h("label", "Note"), note),
+      outcome,
+      h("p.note", "The copies leave your collection and the sale is kept under Tools → Earnings, where it can be undone. Unsaved changes on the card page are discarded."),
+      err),
+    h("footer", h("button", { type: "button", onclick: () => dlg.close() }, "Cancel"), h("button.primary", { type: "button", onclick: sell }, "Sell"))));
+  dlg.showModal();
+  each.focus();
+}
+
+// viewEarnings lists sold cards with totals, for one year or all of them.
+async function viewEarnings(qs) {
+  const q = new URLSearchParams(qs);
+  const year = q.get("year") || "";
+  const d = await api("GET", gameAPI(`/sales?year=${encodeURIComponent(year)}`));
+  const t = d.totals;
+  const years = h("select", { "aria-label": "Year", onchange: (e) => go("earnings", new URLSearchParams(e.target.value ? { year: e.target.value } : {})) },
+    h("option", { value: "" }, "All years"),
+    [...new Set([...d.years, year].filter(Boolean))].map((y) => h("option", { value: y, selected: y === year }, y)));
+  const undo = async (s) => {
+    const what = `${plural(s.quantity, "copy", "copies")} of ${s.card.name}`;
+    const choice = await askDialog("Undo this sale?", [
+      `${what}, sold ${s.date} for ${usd(s.proceeds)}.`,
+      "Putting the copies back returns them to your collection as the purchase they were, and deletes the sale. Deleting the record only leaves them sold.",
+    ], [{ label: "Delete the record only", value: "delete", danger: true }, { label: "Put the copies back", value: "restore", primary: true }]);
+    if (!choice) return;
+    try {
+      await api("DELETE", gameAPI(`/sales?id=${encodeURIComponent(s.id)}${choice === "restore" ? "&restore=1" : ""}`));
+      status(choice === "restore" ? `Put ${what} back in your collection.` : `Deleted the sale of ${what}.`);
+      await loadFilters();
+      route();
+    } catch (e) { status(e.message, true); }
+  };
+  const gainText = (v) => (v === null ? "gain unknown" : signedUsd(v));
+  const gainColor = (v) => (v === null ? null : v >= 0 ? "var(--green)" : "var(--red)");
+  const sale = (s) => h("div.sale",
+    h("div.sale-main",
+      h("span.name", s.card.name),
+      h("span.meta", [s.date, sn(s.card), `${fname(s.finish)} ${s.condition}`, `×${s.quantity} at ${usd(s.sale_each)}`,
+        s.fees ? `fees ${usd(s.fees)}` : "", s.cost_each ? `paid ${usd(s.cost_each)} each` : "no price paid", s.note].filter(Boolean).join(" · "))),
+    h("span.sale-amt", h("b", usd(s.proceeds)), h("small", { style: gainColor(s.gain) ? `color:${gainColor(s.gain)}` : null }, gainText(s.gain)),
+      h("button.link", { type: "button", onclick: () => undo(s) }, "Undo…")));
+  const months = d.months.length ? h("div.card-box.wide", h("table.months",
+    h("thead", h("tr", h("th", "Month"), h("th.n", "Copies"), h("th.n", "Sold for"), h("th.n", "Fees"), h("th.n", "Gain"))),
+    h("tbody", [...d.months].reverse().map((m) => h("tr", h("td", m.month), h("td.n", m.copies), h("td.n", usd(m.proceeds)), h("td.n", usd(m.fees)),
+      // A month whose sales all lack a price paid has no gain to show.
+      m.unknownCostCopies === m.copies ? h("td.n.muted", "unknown") : h("td.n", { style: `color:${gainColor(m.gain)}` }, signedUsd(m.gain))))))) : null;
+  fill($("#main"),
+    h("div.section-head", h("h1", "Earnings"), years),
+    h("div.tiles",
+      tile("SOLD FOR", usd(t.proceeds), `${plural(t.copies, "copy", "copies")} in ${plural(t.sales, "sale", "sales")}`),
+      tile("FEES", usd(t.fees), ""),
+      tile("COST", usd(t.cost), t.unknownCostCopies ? `${plural(t.unknownCostCopies, "copy", "copies")} without a price paid` : "what the sold copies cost"),
+      tile("GAIN", t.unknownCostCopies === t.copies && t.copies ? "—" : signedUsd(t.gain), t.unknownCostCopies ? "sales without a price paid are left out" : "sold for, less fees and cost", gainColor(t.gain))),
+    months ? h("h2", "By Month") : null, months,
+    h("h2", "Sales"),
+    d.sales.length ? h("div.card-box", d.sales.map(sale))
+      : h("p.muted", year ? `No sales in ${year}.` : "No sales yet. To sell copies, open a card and choose Sell… on the purchase they came from."));
+}
+
 // addInDialog shows a catalog card's add form in the dialog, leaving the page as it is.
 function addInDialog(c, added) {
   const dlg = $("#dialog");
@@ -804,13 +912,15 @@ async function renderCard(container, key) {
     r.lot = l.lot || "";
     // The note sits on its own line, folded away as "Add a note" until used.
     const noteBox = h("div.purchase-note");
-    const showNote = () => { fill(noteBox, r.note, lotLine); r.note.focus(); };
     // A purchase from a lot names it; the lot sets its price.
     const lotName = r.lot ? ((state.lots || []).find((x) => x.id === r.lot) || {}).name || "a lot" : "";
     const lotLine = r.lot ? h("p.note", "From ", h("a", { href: `#/lots?id=${encodeURIComponent(r.lot)}` }, lotName),
       ". The lot sets the price paid; a price typed here is replaced the next time the lot is repriced.") : null;
-    if (l.note) fill(noteBox, r.note, lotLine);
-    else fill(noteBox, h("button.link", { type: "button", onclick: showNote }, "Add a note"), lotLine);
+    // A saved purchase can be sold (as saved: unsaved edits to the row don't count).
+    const sellButton = l.saved ? h("button.link", { type: "button", onclick: () => showSell(c, key, l) }, "Sell…") : null;
+    const showNote = () => { fill(noteBox, r.note, sellButton, lotLine); r.note.focus(); };
+    if (l.note) fill(noteBox, r.note, sellButton, lotLine);
+    else fill(noteBox, h("button.link", { type: "button", onclick: showNote }, "Add a note"), sellButton, lotLine);
     r.el = h("div.purchase-row",
       h("div.purchase", r.finish, r.cond, r.qty, r.price, r.date,
         h("button", { type: "button", title: "Remove this purchase", "aria-label": "Remove this purchase", onclick: () => {
@@ -821,7 +931,7 @@ async function renderCard(container, key) {
     rowsBox.append(r.el);
     update();
   };
-  c.purchases.forEach(addRow);
+  c.purchases.forEach((l) => addRow({ ...l, saved: true }));
   if (!c.purchases.length) addRow({ finish: finishes[0] });
   const addPurchase = h("button", { type: "button", onclick: () => {
     const last = rows[rows.length - 1];
@@ -1634,6 +1744,7 @@ async function viewTools() {
       toolRow(h("button", { type: "button", onclick: (e) => exportCollection(e.currentTarget, "report") }, "Valuation report"), `Save a page listing every card by set with its value, to ${where}. Open it in a browser to print it or save it as a PDF, for insurance or your records.`),
       toolRow(h("button", { type: "button", onclick: () => { go("collection"); setTimeout(showBulkEdit, 50); } }, "Bulk edit…"),
         "Change the condition, finish, price paid or date of many cards at once, or delete them. Tick the cards in the collection list (filter it, then Select all shown); Bulk edit is also below the list."),
+      toolRow(h("a.button", { href: "#/earnings" }, "Earnings…"), "Cards you've sold: what they sold for, what they cost, fees, and the gain, by month and year. Sell copies with Sell… on a card's purchase."),
       toolRow(h("a.button", { href: "#/lots" }, "Lots…"), "Cards bought together for one price, such as a bulk lot or a bundle: what each lot cost and what its cards are worth now."),
       toolRow(h("a.button", { href: "#/backups" }, "Restore a backup…"), "Go back to the collection as it was before a recent import, bulk edit or bulk delete. The last 10 backups are kept."),
       gameInfo().Scan ? toolRow(h("a.button", { href: "#/scan" }, "Scan a card…"), "Identify a card from the camera or a photo, then add it.") : null),
@@ -1733,7 +1844,7 @@ async function route() {
   const [path, qs] = location.hash.replace(/^#\/?/, "").split("?");
   const view = path || "home";
   if (state.scanStop && view !== "scan") { state.scanStop(); state.scanStop = null; }
-  const active = ["import", "backups", "lots"].includes(view) ? "tools" : view === "scan" ? "add" : view;
+  const active = ["import", "backups", "lots", "earnings"].includes(view) ? "tools" : view === "scan" ? "add" : view;
   document.querySelectorAll("#nav a, .tabbar a").forEach((a) => a.classList.toggle("active", a.dataset.view === active));
   try {
     if (view === "collection") await viewCollection(qs || "");
@@ -1743,6 +1854,7 @@ async function route() {
     else if (view === "import") viewImport();
     else if (view === "backups") await viewBackups();
     else if (view === "lots") await viewLots(qs || "");
+    else if (view === "earnings") await viewEarnings(qs || "");
     else if (view === "tools") await viewTools();
     else if (view === "settings") await viewSettings();
     else await viewHome();

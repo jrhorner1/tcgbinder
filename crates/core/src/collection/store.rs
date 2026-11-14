@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
-use super::{BulkChange, BulkResult, Card, CatalogUpdate};
+use super::{BulkChange, BulkResult, Card, CatalogUpdate, Condition, Purchase};
 use crate::dates;
 use crate::jsonfile::JsonFile;
 use crate::lots::{LotCopy, LotPrices};
@@ -393,6 +393,39 @@ impl Store {
         self.file.mutate(|data| {
             data.cards.remove(key);
             Ok(())
+        })
+    }
+
+    /// Takes `quantity` copies out of one purchase of the card stored under `key`: the
+    /// one in `finish` and `cond` with `purchase`'s price paid, acquired date and note.
+    /// A card left with no copies is deleted. Returns the purchase as it was.
+    pub fn take_copies(&self, key: &str, finish: &str, cond: Condition, purchase: &Purchase, quantity: i64) -> Result<Purchase> {
+        if quantity <= 0 {
+            bail!("take at least one copy");
+        }
+        let finish = super::copies::norm_finish(finish);
+        self.file.mutate(|data| {
+            let Some(card) = data.cards.get_mut(key) else { bail!("that card isn't in the collection") };
+            let list = card.copies.0.get_mut(&finish).and_then(|m| m.get_mut(&cond));
+            let found = list.and_then(|l| {
+                l.iter_mut().find(|p| {
+                    p.price_paid == purchase.price_paid
+                        && p.acquired_date == purchase.acquired_date
+                        && p.note == purchase.note
+                        && p.quantity > 0
+                })
+            });
+            let Some(p) = found else { bail!("that purchase isn't in the collection any more") };
+            if quantity > p.quantity {
+                bail!("there are only {} copies in that purchase", p.quantity);
+            }
+            let before = p.clone();
+            p.quantity -= quantity;
+            normalize_card(card);
+            if card.copy_count() == 0 {
+                data.cards.remove(key);
+            }
+            Ok(before)
         })
     }
 

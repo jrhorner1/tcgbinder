@@ -11,9 +11,11 @@ use std::time::Duration;
 use anyhow::{Result, anyhow, bail};
 use chrono::{Months, NaiveDate};
 
+use crate::collection::Purchase;
 use crate::collection::{Card, PriceHistory, SetInfo, Stats, Store, TimePoint, read_export};
 use crate::game::{Game, ImportReport};
 use crate::lots::{Lot, LotCopy, LotPrices, LotSplit, LotsStore, lot_prices};
+use crate::sales::{CardRef, Sale, SalesStore};
 use crate::settings::{Settings, SettingsStore};
 use crate::{datadir, dates};
 
@@ -31,6 +33,8 @@ pub struct GameService {
     pub prices: PriceHistory,
     /// Lots: cards bought together for one price.
     pub lots: LotsStore,
+    /// Sold cards.
+    pub sales: SalesStore,
     /// The app settings (price refresh frequency, automatic price history). Without
     /// them, prices refresh daily and price history loads automatically.
     pub settings: Option<Arc<SettingsStore>>,
@@ -53,7 +57,9 @@ impl GameService {
 
     /// Wraps an open store, loading the price history and lots kept next to it.
     pub fn from_store(game: Box<dyn Game>, store: Store) -> Result<GameService> {
-        let lots = LotsStore::open(store.file_path().parent().unwrap_or(Path::new(".")))?;
+        let dir = store.file_path().parent().unwrap_or(Path::new(".")).to_path_buf();
+        let lots = LotsStore::open(&dir)?;
+        let sales = SalesStore::open(&dir)?;
         let path = store.file_path().with_file_name(datadir::PRICE_HISTORY_FILE);
         let prices = match PriceHistory::open(&path) {
             Ok((prices, warning)) => {
@@ -69,7 +75,7 @@ impl GameService {
                 PriceHistory::in_memory()
             }
         };
-        Ok(GameService { game, store, prices, lots, settings: None, auto_history: true, sets: Mutex::default() })
+        Ok(GameService { game, store, prices, lots, sales, settings: None, auto_history: true, sets: Mutex::default() })
     }
 
     /// A lot's copies, for working out its prices.
@@ -111,6 +117,83 @@ impl GameService {
         Ok((lot, prices))
     }
 
+    /// Sells copies from one purchase of the card stored under `key` (the purchase is
+    /// `sale`'s finish and condition with `purchase`'s price paid, acquired date and
+    /// note). The sale is recorded first, then the copies leave the collection: if
+    /// the second step fails, the sale exists and the copies remain, both visible.
+    pub fn sell(&self, key: &str, purchase: &Purchase, mut sale: Sale) -> Result<Sale> {
+        let Some(card) = self.store.get(key) else { bail!("that card isn't in the collection") };
+        let found = card
+            .purchases(&sale.finish, sale.condition)
+            .into_iter()
+            .find(|p| p.price_paid == purchase.price_paid && p.acquired_date == purchase.acquired_date && p.note == purchase.note);
+        let Some(p) = found else { bail!("that purchase isn't in the collection any more") };
+        if sale.quantity > p.quantity {
+            bail!("there are only {} copies in that purchase", p.quantity);
+        }
+        sale.card = CardRef::from(&card);
+        sale.cost_each = p.price_paid;
+        sale.acquired_date = p.acquired_date.clone();
+        sale.purchase_note = p.note.clone();
+        sale.lot = p.lot.clone();
+        let sale = self.sales.add(sale)?;
+        if let Err(e) = self.store.take_copies(key, &sale.finish, sale.condition, &p, sale.quantity) {
+            tracing::warn!(game = self.game.id(), sale = sale.id, error = %e, "sale recorded, but the copies stayed in the collection");
+            bail!("the sale was recorded, but the copies couldn't be taken out of the collection: {e:#}");
+        }
+        tracing::info!(game = self.game.id(), card = sale.card.name, quantity = sale.quantity, "copies sold");
+        Ok(sale)
+    }
+
+    /// Deletes a sale. With `restore`, its copies go back into the collection as the
+    /// purchase they were (rebuilding the card from the sale if it has left, with its
+    /// catalog data refreshed when the catalog can be reached).
+    pub fn delete_sale(&self, id: &str, restore: bool) -> Result<Sale> {
+        let Some(sale) = self.sales.get(id) else { bail!("there is no sale {id:?}") };
+        if restore {
+            let purchase = Purchase {
+                quantity: sale.quantity,
+                price_paid: sale.cost_each,
+                acquired_date: sale.acquired_date.clone(),
+                note: sale.purchase_note.clone(),
+                lot: sale.lot.clone(),
+            };
+            let existing = self.store.cards_where(|c| c.id == sale.card.id);
+            let mut card = match existing.into_iter().next() {
+                Some(c) => {
+                    let mut c = Card { copies: Default::default(), ..c };
+                    c.add_purchase(&sale.finish, sale.condition, purchase);
+                    c
+                }
+                None => {
+                    let mut c = sale.card.to_card();
+                    c.add_purchase(&sale.finish, sale.condition, purchase);
+                    c
+                }
+            };
+            let gone = self.store.get(&crate::collection::card_key(&card)).is_none();
+            if gone {
+                // Prices, type line and rules text, if the catalog answers.
+                match self.game.refresh(std::slice::from_ref(&card.id), &mut |_, _| {}) {
+                    Ok(updates) => {
+                        if let Some(u) = updates.get(&card.id) {
+                            card.market = u.market.clone();
+                            card.type_line = u.type_line.clone();
+                            card.rules_text = u.rules_text.clone();
+                            card.price_from = u.price_from.clone();
+                            card.prices_updated = dates::today_string();
+                        }
+                    }
+                    Err(e) => tracing::warn!(game = self.game.id(), error = %e, "restored card's catalog data not refreshed"),
+                }
+            }
+            self.store.add_cards(vec![card])?;
+        }
+        self.sales.remove(id)?;
+        tracing::info!(game = self.game.id(), card = sale.card.name, restore, "sale deleted");
+        Ok(sale)
+    }
+
     /// The set sizes for completion stats, loaded once.
     pub fn sets(&self) -> Result<Arc<HashMap<String, SetInfo>>> {
         let mut cached = self.sets.lock().unwrap();
@@ -135,6 +218,9 @@ impl GameService {
         }
         if let Err(e) = self.prices.refresh() {
             tracing::debug!(game = self.game.id(), error = %e, "price history not refreshed");
+        }
+        if let Err(e) = self.sales.refresh() {
+            tracing::debug!(game = self.game.id(), error = %e, "sales not refreshed");
         }
         if let Err(e) = self.lots.refresh() {
             tracing::debug!(game = self.game.id(), error = %e, "lots not refreshed");

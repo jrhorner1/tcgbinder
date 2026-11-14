@@ -13,7 +13,8 @@ card** below them. On phones the tab bar at the bottom has **Home**, **Cards**,
 ## Home
 
 - **Tiles:** total cards (with unique cards and sets), price paid, market value, and
-  gain/loss.
+  gain/loss. Gain/loss is for the cards you hold; once you've sold cards, its detail
+  line adds the gain realised by this year's sales.
 - **Value Over Time** (30 days, 90 days, 1 year or all):
   - *Market value* uses real daily prices. Up to 90 days come from MTGJSON, then one
     point is added for each day the app runs.
@@ -182,6 +183,23 @@ prices** (finished value-split lots) and **Delete** (keep the cards with their p
 or delete them too). On a card's page, copies from a lot name it; a price typed there
 is replaced the next time the lot is repriced.
 
+## Selling cards
+
+To record a sale, open the card and choose **Sell…** under the purchase the copies
+came from. Say how many copies, what each sold for, the date, any fees for the whole
+sale, and a note (where or to whom). The dialog shows the gain as you type: what they
+sold for, less fees and what you paid. The copies leave your collection (a card with
+none left leaves the list), and the sale is kept even after the card is gone.
+
+**Tools → Earnings…** lists your sales, newest first, for all years or one year: what
+they sold for, fees, what the copies cost, and the gain, in total and by month. Copies
+with no price paid count toward what you sold for, but their gain is unknown, so they
+are left out of the cost and gain totals (the page says how many). **Undo…** on a sale
+either puts the copies back in your collection as the purchase they were, or deletes
+only the record and leaves them sold.
+
+Deleting a card is still the way to correct a mistake; it records no sale.
+
 ## Scanning cards
 
 **Scan a card** (on Add, and in the sidebar) identifies a physical card.
@@ -293,7 +311,8 @@ defaults**.
 ## Where your data lives
 
 Your collection is kept in the **data folder**. Each game has its own folder in it:
-`mtg/` holds `collection.json` (your cards), `price-history.json` and `backups/`.
+`mtg/` holds `collection.json` (your cards), `price-history.json`, `lots.json`,
+`sales.json` (sold cards) and `backups/`.
 
 By default the data folder is the app's own folder:
 
@@ -331,4 +350,5 @@ seconds. If two devices save at the same moment, the sync service keeps the othe
 version as a separate file (such as "collection 2.json"), and Home says so:
 **Merge it** adds its cards and copies to yours without counting any twice (a card
 deleted on one device comes back); **Discard it** deletes that file. A backup is
-taken before merging. See the README for command-line options.
+taken before merging. The same goes for the lots and sales files: merging adds the
+lots or sales only the other version has. See the README for command-line options.

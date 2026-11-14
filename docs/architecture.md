@@ -87,6 +87,15 @@ Per game, in `<data>/<game>/`:
   finished; `Store::reprice_lot` saves them, and `GameService::save_lot` refreshes
   stale prices before a value split. Conflict copies merge by lot ID, the later
   `created` winning.
+- `sales.json`: sold cards (`core::sales`, a `JsonFile`). Each `Sale` keeps a
+  `CardRef` (the card's catalog fields), the purchase it came from (cost, date, note,
+  lot) and the sale. `GameService::sell` records the sale first and then takes the
+  copies out (`Store::take_copies`): if the second write fails the sale and the copies
+  both remain, visible and fixable, where the other order could lose the record.
+  `GameService::delete_sale` can put the copies back, rebuilding a card that has left
+  from its `CardRef` and refreshing its catalog data. `sales_totals` adds up proceeds,
+  fees, cost and gain, leaving sales of unknown cost out of cost and gain. Conflict
+  copies merge by sale ID.
 - `backups/`: copies of `collection.json` taken before each import, bulk edit, bulk
   delete and restore (`Store::backup`), named
   `collection-YYYYMMDD-HHMMSS[-N]-<reason>.json`; the 10 newest are kept. Restoring
