@@ -34,6 +34,7 @@ use tcgbinder_core::collection::{
     self, BulkChange, Card, Condition, Query, SortKey, card_key, compute_stats, is_any, round_cents, set_options, sort_cards, statistics,
     top_by_each, unique_cards, with_printing, write_csv,
 };
+use tcgbinder_core::collection::{TagEdit, clean_tag, normalize_tags, same_tag, split_tags, tag_summaries};
 use tcgbinder_core::game::finish_names;
 use tcgbinder_core::scan::Reading;
 use tcgbinder_core::service::{self, GameService, ImportPreview, ImportResult};
@@ -91,6 +92,38 @@ fn set_cards(g: &GameService, code: &str) -> Vec<Card> {
 
 fn check_date(date: &str) -> Result<()> {
     if date.is_empty() || dates::parse(date).is_some() { Ok(()) } else { Err(bad("acquired date must look like 2024-03-15")) }
+}
+
+/// Checks and normalizes tags sent by a client: a 400 with the reason if any is
+/// invalid.
+fn tags_from(raw: &[String]) -> Result<Vec<String>> {
+    normalize_tags(raw).map_err(|e| bad(e.to_string()))
+}
+
+/// Adds `tags` to every purchase of `cards` (an import's "tag every card").
+fn tag_every_purchase(cards: &mut [Card], tags: &[String]) -> anyhow::Result<()> {
+    if tags.is_empty() {
+        return Ok(());
+    }
+    for c in cards {
+        for list in c.copies.0.values_mut().flat_map(|m| m.values_mut()) {
+            for p in list {
+                let mut all = std::mem::take(&mut p.tags);
+                all.extend(tags.iter().cloned());
+                p.tags = normalize_tags(&all).map_err(|e| e.context(format!("{} ({} · {})", c.name, c.set, c.collector_number)))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A tag rename's or delete's answer: `changed`, and `undo` for its backup.
+fn tag_edit_answer(g: &GameService, edit: &TagEdit) -> Value {
+    let mut answer = json!({ "changed": edit.changed });
+    if let Some(b) = &edit.backup {
+        answer["undo"] = undo(g, b);
+    }
+    answer
 }
 
 /// The API for a set of games.
@@ -321,6 +354,9 @@ impl Api {
                     ("PUT", ["card", "printing"]) => self.change_printing(g, key, body),
                     ("POST", ["card", "sell"]) => self.sell(g, key, body),
                     ("GET", ["sales"]) => self.sales(g, &q),
+                    ("GET", ["tags"]) => Ok(self.tags(g)),
+                    ("PUT", ["tags"]) => self.rename_tag(g, q.get("name").map_or("", String::as_str), body),
+                    ("DELETE", ["tags"]) => self.delete_tag(g, q.get("name").map_or("", String::as_str)),
                     ("GET", ["sealed"]) => Ok(self.sealed(g)),
                     ("POST", ["sealed"]) => self.add_sealed(g, body),
                     ("PUT", ["sealed"]) => self.update_sealed(g, &q, body),
@@ -523,15 +559,16 @@ impl Api {
         let (text, set) = g.game.search_hints();
         Reply::Json(json!({
             "sets": sets, "rarities": g.game.rarities(), "finishes": g.game.finishes(), "finishNames": finish_names(g.game.as_ref()),
-            "filters": extra, "conditions": choices::CONDITIONS, "searchHints": [text, set],
+            "filters": extra, "conditions": choices::CONDITIONS, "searchHints": [text, set], "tags": g.store.tag_names(),
             "languages": g.game.languages().iter().map(|(code, name)| json!({ "code": code, "name": name })).collect::<Vec<_>>(),
         }))
     }
 
     /// The filtered cards, sorted, with counts and money totals. Filters: q, set,
     /// rarity, finish, condition, language, card_type, lot, has_note, price_min,
-    /// price_max, acquired_from, acquired_to, min_copies, no_price_paid, unpriced, and
-    /// one per game filter, named f.<filter name>. Sorting: sort (a [`SortKey`] name)
+    /// price_max, acquired_from, acquired_to, min_copies, no_price_paid, unpriced,
+    /// tags, tags_mode (all or any), tags_not, untagged, and one per game filter,
+    /// named f.<filter name>. Sorting: sort (a [`SortKey`] name)
     /// and dir (asc or desc); without sort, the Card order setting.
     fn cards(&self, g: &GameService, params: &HashMap<String, String>) -> Result {
         let (filtered, key, descending) = self.filtered_cards(g, params)?;
@@ -589,7 +626,14 @@ impl Api {
             matches: Some(Box::new(|c: &Card| {
                 filters.iter().all(|f| params.get(&format!("f.{}", f.name)).is_none_or(|opt| is_any(opt) || (f.matches)(c, opt)))
             })),
-            ..Query::default()
+            tags: split_tags(&get("tags")),
+            tags_any: match get("tags_mode").as_str() {
+                "" | "all" => false,
+                "any" => true,
+                _ => return Err(bad("tags_mode must be all or any")),
+            },
+            tags_not: split_tags(&get("tags_not")),
+            untagged: flag("untagged"),
         };
         let (key, descending) = match get("sort").as_str() {
             "" => SortKey::from_card_order(&self.settings.get().card_order),
@@ -606,6 +650,43 @@ impl Api {
             }
         };
         Ok((sort_cards(g.store.cards_where(q.matcher()), key, descending, g.game.rarities()), key, descending))
+    }
+
+    /// Every tag in use with its totals over the copies that carry it, and the
+    /// untagged copies' totals (null when every copy is tagged).
+    fn tags(&self, g: &GameService) -> Reply {
+        Reply::Json(json!(tag_summaries(&g.store.cards())))
+    }
+
+    /// Renames a tag everywhere: `{"name": "<new>"}`. Returns `changed` and `undo`.
+    fn rename_tag(&self, g: &GameService, name: &str, body: &[u8]) -> Result {
+        #[derive(Deserialize)]
+        struct Req {
+            name: String,
+        }
+        let req: Req = decode(body)?;
+        let to = clean_tag(&req.name)
+            .ok_or_else(|| bad(format!("{:?} can't be a tag: at most 40 characters, with no comma or semicolon", req.name.trim())))?;
+        self.tag_in_use(g, name)?;
+        let edit = g.store.rename_tag(name, &to).map_err(internal)?;
+        tracing::info!(game = g.game.id(), from = name, to, changed = edit.changed, "tag renamed");
+        Ok(Reply::Json(tag_edit_answer(g, &edit)))
+    }
+
+    /// Removes a tag from every purchase. Returns `changed` and `undo`.
+    fn delete_tag(&self, g: &GameService, name: &str) -> Result {
+        self.tag_in_use(g, name)?;
+        let edit = g.store.delete_tag(name).map_err(internal)?;
+        tracing::info!(game = g.game.id(), tag = name, changed = edit.changed, "tag deleted");
+        Ok(Reply::Json(tag_edit_answer(g, &edit)))
+    }
+
+    fn tag_in_use(&self, g: &GameService, name: &str) -> Result<()> {
+        if g.store.tag_names().iter().any(|t| same_tag(t, name)) {
+            Ok(())
+        } else {
+            Err(not_found(format!("no card has the tag {:?}", name)))
+        }
     }
 
     fn find(&self, g: &GameService, key: &str) -> Result<Card> {
@@ -802,6 +883,9 @@ impl Api {
             acquired_date: String,
             /// `null` leaves notes as they are; "" clears them.
             note: Option<String>,
+            add_tags: Vec<String>,
+            remove_tags: Vec<String>,
+            clear_tags: bool,
             delete: bool,
         }
         let req: Req = decode(body).map_err(|_| bad("choose at least one card"))?;
@@ -818,11 +902,19 @@ impl Api {
             price_paid: req.price_paid,
             acquired_date: (!req.acquired_date.is_empty()).then_some(req.acquired_date),
             note: req.note,
+            add_tags: tags_from(&req.add_tags)?,
+            remove_tags: req.remove_tags,
+            clear_tags: req.clear_tags,
             delete: req.delete,
-            ..BulkChange::default()
         };
         if change.is_empty() {
             return Err(bad("choose at least one change"));
+        }
+        // A card that would end up with too many tags stops the change before the backup.
+        if !change.delete {
+            for c in req.keys.iter().filter_map(|k| g.store.get(k)) {
+                change.apply(&c).map_err(|e| bad(format!("{e:#}")))?;
+            }
         }
         let backup = g.store.backup(if change.delete { "bulk-delete" } else { "bulk-edit" }).map_err(internal)?;
         let res = g.store.bulk_edit(&req.keys, &change).map_err(internal)?;
@@ -899,8 +991,12 @@ impl Api {
             /// Import the cards into this lot (a pasted list or a CSV of its contents).
             #[serde(default)]
             lot: String,
+            /// Tags added to every purchase in the import.
+            #[serde(default)]
+            tags: Vec<String>,
         }
         let req: Req = decode(body)?;
+        let tags = tags_from(&req.tags)?;
         let lot = match req.lot.as_str() {
             "" => None,
             id => Some(self.open_lot(g, id)?),
@@ -921,6 +1017,7 @@ impl Api {
         if let Some(lot) = &lot {
             lots::put_in_lot(&mut preview.cards, lot);
         }
+        tag_every_purchase(&mut preview.cards, &tags).map_err(|e| bad(format!("{e:#}")))?;
         self.job(g, "import", |r| {
             r.report(0, 0, "Saving");
             let res = g.commit_import(preview)?;
@@ -1035,6 +1132,8 @@ struct PurchaseForm {
     note: String,
     /// The lot the copies belong to; its total sets their price.
     lot: String,
+    /// The owner's tags on these copies.
+    tags: Vec<String>,
 }
 
 impl PurchaseForm {
@@ -1048,6 +1147,7 @@ impl PurchaseForm {
         if self.price_paid < 0.0 || !self.price_paid.is_finite() {
             return Err(bad("price paid can't be negative"));
         }
+        tags_from(&self.tags)?;
         check_date(&self.acquired_date)
     }
 
@@ -1060,7 +1160,7 @@ impl PurchaseForm {
             acquired_date: self.acquired_date.clone(),
             note: self.note.trim().to_string(),
             lot: self.lot.clone(),
-            ..Purchase::default()
+            tags: normalize_tags(&self.tags).unwrap_or_default(), // checked by validate
         };
         c.add_purchase(&finish, Condition::parse(&self.condition), p);
     }

@@ -37,6 +37,7 @@ pub struct PurchaseView {
     pub note: String,
     /// The lot it was bought in (its ID), or "".
     pub lot: String,
+    pub tags: Vec<String>,
     /// The market price of one copy in this finish (0 if unknown).
     pub market: f64,
 }
@@ -54,6 +55,7 @@ pub fn view(c: &Card) -> CardView<'_> {
             acquired_date: r.purchase.acquired_date,
             note: r.purchase.note,
             lot: r.purchase.lot,
+            tags: r.purchase.tags,
         })
         .collect();
     CardView {
