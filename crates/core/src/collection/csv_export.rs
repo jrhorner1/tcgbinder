@@ -1,5 +1,6 @@
 //! The collection as CSV, one row per purchase, for spreadsheets and other apps. The
-//! headers are ones the importer knows, so the app reads its own CSV back.
+//! headers are ones the importer knows, so the app reads its own CSV back. Tags are
+//! joined with "; " in one column.
 
 use anyhow::Result;
 
@@ -18,6 +19,7 @@ pub const CSV_COLUMNS: &[&str] = &[
     "Price Paid",
     "Acquired Date",
     "Note",
+    "Tags",
     "Rarity",
     "Market Price",
 ];
@@ -47,6 +49,7 @@ pub fn write_csv(cards: &[Card], id_label: &str) -> Result<Vec<u8>> {
                 &money(Some(p.price_paid)),
                 &p.acquired_date,
                 &p.note,
+                &p.tags.join("; "),
                 &c.rarity,
                 &money(c.market_price(&r.finish)),
                 &c.id,
@@ -79,15 +82,26 @@ mod tests {
             Condition::NearMint,
             Purchase { quantity: 2, price_paid: 0.1234, acquired_date: "2024-03-15".into(), ..Default::default() },
         );
-        c.add_purchase("foil", Condition::LightPlay, Purchase { quantity: 1, note: "trade, \"binder\"".into(), ..Default::default() });
+        c.add_purchase(
+            "foil",
+            Condition::LightPlay,
+            Purchase {
+                quantity: 1,
+                note: "trade, \"binder\"".into(),
+                tags: vec!["binder A".into(), "for sale".into()],
+                ..Default::default()
+            },
+        );
         let out = String::from_utf8(write_csv(&[c], "Scryfall ID").unwrap()).unwrap();
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(
             lines[0],
-            "Name,Set Code,Set Name,Collector Number,Language,Finish,Condition,Quantity,Price Paid,Acquired Date,Note,Rarity,Market Price,Scryfall ID"
+            "Name,Set Code,Set Name,Collector Number,Language,Finish,Condition,Quantity,Price Paid,Acquired Date,Note,Tags,Rarity,Market Price,Scryfall ID"
         );
-        assert!(lines.contains(&"Fire // Ice,MH2,Modern Horizons 2,290,en,nonfoil,NM,2,0.1234,2024-03-15,,uncommon,,abc"));
-        assert!(lines.contains(&"Fire // Ice,MH2,Modern Horizons 2,290,en,foil,LP,1,,,\"trade, \"\"binder\"\"\",uncommon,1.5,abc"));
+        assert!(lines.contains(&"Fire // Ice,MH2,Modern Horizons 2,290,en,nonfoil,NM,2,0.1234,2024-03-15,,,uncommon,,abc"));
+        assert!(lines.contains(
+            &"Fire // Ice,MH2,Modern Horizons 2,290,en,foil,LP,1,,,\"trade, \"\"binder\"\"\",binder A; for sale,uncommon,1.5,abc"
+        ));
         assert_eq!(lines.len(), 3);
     }
 }

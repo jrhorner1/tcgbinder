@@ -1427,6 +1427,16 @@ async function viewStats() {
       onclick: b.label === "No price" ? filter({ unpriced: "1" }) : filter(params),
     };
   }), bandMax, "var(--amber)");
+  // Tags count only the tagged copies, so they aren't a breakdown of whole cards.
+  const tagsBox = (t) => {
+    if (!t.tags.length) return null;
+    const max = Math.max(1, ...t.tags.map((x) => x.copies));
+    const rows = t.tags.map((x) => ({ label: x.name, value: x.copies, text: `${x.copies.toLocaleString()} · ${usd(x.value)}`,
+      onclick: filter({ tags: x.name }) }));
+    if (t.untagged) rows.push({ label: "Untagged", value: t.untagged.copies, text: `${t.untagged.copies.toLocaleString()} · ${usd(t.untagged.value)}`, onclick: filter({ untagged: "1" }) });
+    return h("div.card-box", h("h2", { style: "margin-top:0" }, "Tags"), bars(rows, Math.max(max, t.untagged ? t.untagged.copies : 0), "var(--blue)"),
+      h("p.note", "Copies carrying each tag, and their market value. A copy with two tags counts under both."));
+  };
   const months = [...s.byMonth].reverse();
   const monthTable = (rows) => h("table.months",
     h("thead", h("tr", h("th", "Month"), h("th.n", "Copies"), h("th.n", "Spent"))),
@@ -1440,7 +1450,7 @@ async function viewStats() {
     h("p.muted", "Counts are copies. Each bar's figures are copies and market value (and, by price, the share of the collection's value). Click a row to see those cards in the collection list."),
     h("h2", "By Price of One Copy"),
     h("div.card-box", bands),
-    h("div.two-col.stats", s.breakdowns.map(breakdown)),
+    h("div.two-col.stats", s.breakdowns.map(breakdown), tagsBox(s.tags)),
     h("div.two-col",
       h("div", h("h2", "By Month Acquired"),
         months.length ? monthBox : h("p.muted", "No acquired dates recorded."),

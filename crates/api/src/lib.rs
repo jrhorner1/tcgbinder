@@ -540,8 +540,8 @@ impl Api {
     }
 
     /// The Statistics page: breakdowns (each with the collection list's filter
-    /// parameter for its rows), value bands, copies and money by month acquired, and
-    /// the cards with the most copies.
+    /// parameter for its rows), value bands, copies and money by month acquired, the
+    /// cards with the most copies, and each tag's totals over its tagged copies.
     fn statistics(&self, g: &GameService) -> Reply {
         let cards = g.store.cards();
         let s = statistics(&cards, &g.game.breakdowns(), g.game.rarities(), g.game.finishes());
@@ -550,6 +550,7 @@ impl Api {
         let most: Vec<Card> = most.into_iter().take(10).cloned().collect();
         Reply::Json(json!({
             "breakdowns": s.breakdowns, "bands": s.bands, "byMonth": s.by_month, "undated": s.undated, "mostCopies": views(&most),
+            "tags": tag_summaries(&cards),
         }))
     }
 

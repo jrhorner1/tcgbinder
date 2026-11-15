@@ -13,7 +13,7 @@ use tcgbinder_core::service::GameService;
 use crate::{Api, Reply, Result, bad, check_date, decode};
 
 /// `POST /card/sell`: the purchase to sell from (finish, condition, price paid,
-/// acquired date, note) and the sale.
+/// acquired date, note, tags) and the sale.
 #[derive(Deserialize)]
 #[serde(default)]
 struct SellForm {
@@ -22,6 +22,7 @@ struct SellForm {
     price_paid: f64,
     acquired_date: String,
     note: String,
+    tags: Vec<String>,
     quantity: i64,
     sale_each: f64,
     date: String,
@@ -37,6 +38,7 @@ impl Default for SellForm {
             price_paid: 0.0,
             acquired_date: String::new(),
             note: String::new(),
+            tags: Vec::new(),
             quantity: 1,
             sale_each: 0.0,
             date: String::new(),
@@ -80,7 +82,8 @@ impl Api {
             ..Sale::default()
         };
         sale.validate().map_err(|e| bad(e.to_string()))?;
-        let purchase = Purchase { price_paid: f.price_paid, acquired_date: f.acquired_date, note: f.note, ..Purchase::default() };
+        let purchase =
+            Purchase { price_paid: f.price_paid, acquired_date: f.acquired_date, note: f.note, tags: f.tags, ..Purchase::default() };
         let sale = g.sell(key, &purchase, sale).map_err(|e| bad(format!("{e:#}")))?;
         Ok(Reply::Json(json!({ "sale": sale, "gain": sale.gain().map(round_cents) })))
     }

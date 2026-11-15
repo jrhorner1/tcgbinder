@@ -120,7 +120,8 @@ Every card in the collection list has a tick box:
    the filters hide. **Clear** unticks everything.
 3. **Bulk edit…** opens the changes for the ticked cards: condition, finish, price
    paid, acquired date or note for every copy (**Set to…** a note, or **Remove
-   notes**), or delete them. You can still untick cards
+   notes**), tags (**Add tags**, **Remove tags**, or **Remove all tags**; see Tags),
+   or delete them. You can still untick cards
    there. Finish changes skip printings that don't come in that finish, and copies
    that end up identical join one purchase.
 
@@ -129,6 +130,43 @@ which puts the collection back as it was, as long as nothing else has changed it
 since; otherwise use **Tools → Restore a backup…**. Imports offer Undo the same way.
 
 **Tools → Bulk edit…** opens the same dialog.
+
+### Tags
+
+Tags are your own labels on the copies you own, such as "binder A", "elves deck",
+"for sale" or "to grade", to filter, sort and total the collection by. A tag belongs
+to a purchase, so four copies of a card in a deck and two in a binder can be tagged
+differently. There is no list of tags to keep: the tags that exist are the ones on
+your cards, and a tag disappears when it is removed from its last card.
+
+- **Adding tags:** on a card's page, **Add tags** on a purchase opens a tag box. Type
+  a tag and press Enter (or type a comma or semicolon); Backspace in the empty box
+  removes the last one, and × removes any. Tags you already use are suggested. A tag
+  can be up to 40 characters, without commas or semicolons, and a purchase can have
+  up to 20. Tags ignore case: "Binder A" and "binder a" are one tag, kept in the
+  spelling first used. To tag some copies of a purchase apart from the rest,
+  **Split** moves one copy to a row of its own; set the quantities, change its tags,
+  and save. The Add page has a tag box too, and keeps its tags for the next card, so
+  a stack going to one place is tagged once. **Bulk edit** adds or removes tags on
+  many cards at once.
+- **In the list:** each card shows up to three of its tags (and "+N" for more);
+  click one to show the cards with that tag. **More filters → Tags** lists every tag
+  with its number of cards: click a tag to show cards with it, again to show cards
+  without it (struck through), a third time to clear it. With two or more chosen,
+  choose **All of these** or **Any of these**. **Untagged** shows cards with a copy
+  that has no tags. The search box finds tags too, and **Sort: Tag** orders cards by
+  their first tag, untagged cards last.
+- **Tools → Tags…** lists every tag with how many cards and copies carry it, what
+  they're worth and what they cost (counting only the tagged copies), and the
+  untagged copies. **Rename…** changes a tag everywhere; renaming it to a tag you
+  already have combines the two (the app asks first). **Delete…** removes a tag from
+  every card. Both offer Undo, and a backup is taken first.
+- **Statistics** has a Tags table with the same totals.
+- **Import and export:** an import preview can tag every card in the import. The CSV
+  export has a Tags column (tags joined with "; "), and imported files with a Tags,
+  Tag, Labels or Label column bring their tags in; a tag that can't be used is
+  skipped and the preview says how many. Selling copies remembers their tags, and
+  undoing the sale puts them back with them.
 
 ## Adding cards
 
@@ -334,8 +372,8 @@ The Tools page works on the selected game:
   downloads it. The other exports go to the same place.
 - **Export CSV:** every card as a CSV file for spreadsheets and other collection
   apps, one row per purchase: name, set code and name, collector number, language,
-  finish, condition, quantity, price paid, acquired date, note, rarity, market price
-  and Scryfall ID. Other apps can match the cards on the Scryfall ID, or on set code
+  finish, condition, quantity, price paid, acquired date, note, tags, rarity, market
+  price and Scryfall ID. Other apps can match the cards on the Scryfall ID, or on set code
   and collector number. Import reads it back.
 - **Valuation report:** a page listing every card by set, newest set first, with
   finish, condition, quantity, the price of one copy and the value, a total for each
@@ -345,8 +383,10 @@ The Tools page works on the selected game:
 - **Export…** under the collection list's filters exports just the cards the list
   shows, in its order, as CSV or a valuation report.
 - **Bulk edit…** (see above) and **Scan a card…**.
+- **Tags…:** every tag, with Rename and Delete (see Tags).
 - **Restore a backup…:** a copy of the collection is saved before every import,
-  bulk edit, bulk delete and restore, and the last 10 are kept. The list shows when
+  bulk edit, bulk delete, restore, tag rename and tag delete, and the last 10 are
+  kept. The list shows when
   each was taken, before what, and how many unique cards it holds. Restoring one
   replaces the collection (the current one is backed up first, so you can go back).
 - **Refresh prices now** and **Load/Update price history**, with when each last ran.
@@ -364,6 +404,7 @@ file), then shows what importing would do, before anything is saved:
 - rows that matched no card. **Download the unmatched rows** saves them as a CSV with
   the file's header, to fix and import again.
 
+**Tag every card in this import** puts tags on everything the import adds (optional).
 **Import N cards** saves them; **Cancel** saves nothing. A preview waits 15 minutes.
 
 Files with separate regular and foil quantity columns ("Reg Qty" and "Foil Qty")

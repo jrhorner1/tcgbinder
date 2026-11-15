@@ -12,6 +12,7 @@ use anyhow::{Result, anyhow, bail};
 use chrono::{Months, NaiveDate};
 
 use crate::collection::Purchase;
+use crate::collection::same_tags;
 use crate::collection::{Card, PriceHistory, SetInfo, Stats, Store, TimePoint, read_export};
 use crate::game::{Game, ImportReport};
 use crate::lists::{ListEntry, ListsStore};
@@ -153,15 +154,17 @@ impl GameService {
     }
 
     /// Sells copies from one purchase of the card stored under `key` (the purchase is
-    /// `sale`'s finish and condition with `purchase`'s price paid, acquired date and
-    /// note). The sale is recorded first, then the copies leave the collection: if
+    /// `sale`'s finish and condition with `purchase`'s price paid, acquired date, note
+    /// and tags). The sale is recorded first, then the copies leave the collection: if
     /// the second step fails, the sale exists and the copies remain, both visible.
     pub fn sell(&self, key: &str, purchase: &Purchase, mut sale: Sale) -> Result<Sale> {
         let Some(card) = self.store.get(key) else { bail!("that card isn't in the collection") };
-        let found = card
-            .purchases(&sale.finish, sale.condition)
-            .into_iter()
-            .find(|p| p.price_paid == purchase.price_paid && p.acquired_date == purchase.acquired_date && p.note == purchase.note);
+        let found = card.purchases(&sale.finish, sale.condition).into_iter().find(|p| {
+            p.price_paid == purchase.price_paid
+                && p.acquired_date == purchase.acquired_date
+                && p.note == purchase.note
+                && same_tags(&p.tags, &purchase.tags)
+        });
         let Some(p) = found else { bail!("that purchase isn't in the collection any more") };
         if sale.quantity > p.quantity {
             bail!("there are only {} copies in that purchase", p.quantity);
@@ -171,6 +174,7 @@ impl GameService {
         sale.acquired_date = p.acquired_date.clone();
         sale.purchase_note = p.note.clone();
         sale.lot = p.lot.clone();
+        sale.purchase_tags = p.tags.clone();
         let sale = self.sales.add(sale)?;
         if let Err(e) = self.store.take_copies(key, &sale.finish, sale.condition, &p, sale.quantity) {
             tracing::warn!(game = self.game.id(), sale = sale.id, error = %e, "sale recorded, but the copies stayed in the collection");
@@ -192,7 +196,7 @@ impl GameService {
                 acquired_date: sale.acquired_date.clone(),
                 note: sale.purchase_note.clone(),
                 lot: sale.lot.clone(),
-                ..Purchase::default()
+                tags: sale.purchase_tags.clone(),
             };
             let existing = self.store.cards_where(|c| c.id == sale.card.id);
             let mut card = match existing.into_iter().next() {

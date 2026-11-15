@@ -306,7 +306,11 @@ fn download(api: &Api, path: &str) -> (String, String) {
 fn csv_export_reads_back() {
     let f = fixture();
     let mut shock = f.svc.store.get(SHOCK).unwrap();
-    shock.add_purchase("foil", Condition::LightPlay, Purchase { quantity: 1, note: "trade, \"binder\"".into(), ..Default::default() });
+    shock.add_purchase(
+        "foil",
+        Condition::LightPlay,
+        Purchase { quantity: 1, note: "trade, \"binder\"".into(), tags: vec!["binder A".into(), "for sale".into()], ..Default::default() },
+    );
     f.svc.store.save_card(SHOCK, shock).unwrap();
 
     let (name, csv) = download(&f.api, "/api/games/mtg/export?format=csv");
@@ -314,7 +318,7 @@ fn csv_export_reads_back() {
     let lines: Vec<&str> = csv.lines().collect();
     assert_eq!(lines[0], format!("{},Scryfall ID", tcgbinder_core::collection::CSV_COLUMNS.join(",")));
     assert_eq!(lines.len(), 4, "a row per purchase: {csv}");
-    assert!(lines.contains(&format!("Shock,M19,Core Set 2019,156,en,nonfoil,NM,2,0.25,2018-08-08,,common,0.2,{SHOCK}").as_str()), "{csv}");
+    assert!(lines.contains(&format!("Shock,M19,Core Set 2019,156,en,nonfoil,NM,2,0.25,2018-08-08,,,common,0.2,{SHOCK}").as_str()), "{csv}");
 
     // The list's filters and sort apply.
     let (_, red) = download(&f.api, "/api/games/mtg/export?format=csv&f.Color=R&sort=name");
@@ -336,7 +340,7 @@ fn csv_export_reads_back() {
                 c.purchase_rows().into_iter().map(move |r| {
                     let p = r.purchase;
                     format!(
-                        "{}|{}|{}|{}|{}|{:?}|{}|{}|{}|{}",
+                        "{}|{}|{}|{}|{}|{:?}|{}|{}|{}|{}|{}",
                         c.name,
                         c.set.to_uppercase(),
                         c.collector_number,
@@ -346,7 +350,8 @@ fn csv_export_reads_back() {
                         p.quantity,
                         p.price_paid,
                         p.acquired_date,
-                        p.note
+                        p.note,
+                        p.tags.join(";")
                     )
                 })
             })
@@ -355,6 +360,7 @@ fn csv_export_reads_back() {
         out
     };
     assert_eq!(rows(empty.store.cards()), rows(f.svc.store.cards()));
+    assert_eq!(empty.store.tag_names(), ["binder A", "for sale"], "tags came back");
 }
 
 #[test]
@@ -814,6 +820,40 @@ fn import_with_tags() {
     assert_eq!(t["tags"][0]["name"], "From echo");
     assert_eq!(t["tags"][0]["copies"], v["cards"], "every imported copy, and only those");
     assert_eq!(t["untagged"]["copies"], 3, "the copies held before stay untagged");
+}
+
+#[test]
+fn selling_tagged_copies_and_undoing() {
+    let f = fixture();
+    // Shock: 2 copies tagged "binder A", 1 tagged "for sale", same price and date.
+    let body = json!({"purchases": [
+        {"finish": "nonfoil", "condition": "NM", "quantity": 2, "price_paid": 0.25, "acquired_date": "2018-08-08", "tags": ["binder A"]},
+        {"finish": "nonfoil", "condition": "NM", "quantity": 1, "price_paid": 0.25, "acquired_date": "2018-08-08", "tags": ["for sale"]}
+    ]});
+    assert_eq!(call(&f.api, "PUT", &format!("/api/games/mtg/card?key={SHOCK}"), Some(body)).0, 200);
+    let sell = json!({"finish": "nonfoil", "condition": "NM", "price_paid": 0.25, "acquired_date": "2018-08-08", "tags": ["FOR SALE"],
+        "quantity": 1, "sale_each": 1.0});
+    let (status, v) = call(&f.api, "POST", &format!("/api/games/mtg/card/sell?key={SHOCK}"), Some(sell));
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["sale"]["purchase_tags"], json!(["for sale"]), "the tagged purchase was the one sold");
+    let tags = |f: &Fixture| -> Vec<(i64, Value)> {
+        let mut out: Vec<(i64, Value)> = get(&f.api, &format!("/api/games/mtg/card?key={SHOCK}"))["card"]["purchases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| (p["quantity"].as_i64().unwrap(), p["tags"].clone()))
+            .collect();
+        out.sort_by_key(|(q, t)| (*q, t.to_string()));
+        out
+    };
+    assert_eq!(tags(&f), [(2, json!(["binder A"]))]);
+    let id = v["sale"]["id"].as_str().unwrap().to_string();
+    assert_eq!(call(&f.api, "DELETE", &format!("/api/games/mtg/sales?id={id}&restore=1"), None).0, 200);
+    assert_eq!(tags(&f), [(1, json!(["for sale"])), (2, json!(["binder A"]))], "back with its tags");
+    // Statistics count each tag's copies.
+    let stats = get(&f.api, "/api/games/mtg/stats");
+    assert_eq!(stats["tags"]["tags"][1], json!({"name": "for sale", "cards": 1, "copies": 1, "value": 0.2, "paid": 0.25}));
+    assert_eq!(stats["tags"]["untagged"]["copies"], 1, "Opt");
 }
 
 #[test]

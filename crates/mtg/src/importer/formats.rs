@@ -4,6 +4,7 @@ use anyhow::{Result, bail};
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime};
 
 use tcgbinder_core::Condition;
+use tcgbinder_core::collection::{MAX_TAGS, clean_tag, normalize_tags, same_tag, split_tags};
 
 use super::{parse_finish, parse_language};
 
@@ -33,6 +34,8 @@ pub struct Row {
     /// `YYYY-MM-DD`, or "".
     pub acquired_date: String,
     pub note: String,
+    /// The owner's tags on these copies, cleaned (see `read_tags`).
+    pub tags: Vec<String>,
     /// The row as it appears in the file, so unmatched rows can be handed back.
     pub text: String,
 }
@@ -73,6 +76,7 @@ enum Field {
     Price,
     Date,
     Note,
+    Tags,
 }
 
 /// Normalized header names (lowercase, '_' and '-' as spaces) for each field. Matching
@@ -99,6 +103,7 @@ const HEADER_ALIASES: &[(Field, &[&str])] = &[
     ),
     (Field::Date, &["date acquired", "date bought", "date added", "acquired date", "acquired", "purchase date", "acquired on", "added"]),
     (Field::Note, &["note", "notes", "comment", "comments"]),
+    (Field::Tags, &["tags", "tag", "labels", "label"]),
 ];
 
 fn normalize_header(h: &str) -> String {
@@ -227,6 +232,7 @@ pub fn parse_csv(data: &[u8]) -> Result<ParsedCsv> {
     let split = has(Field::QuantityFoil);
 
     let (mut price_misses, mut date_misses) = (Misses::default(), Misses::default());
+    let mut tags_skipped = 0;
     let mut rows = Vec::new();
     for (i, rec) in records.iter().enumerate().skip(first + 1) {
         let get = |f: Field| cols.get(&f).and_then(|i| rec.get(*i)).map_or("", str::trim);
@@ -251,6 +257,7 @@ pub fn parse_csv(data: &[u8]) -> Result<ParsedCsv> {
             price_paid: price.unwrap_or(0.0),
             acquired_date: date,
             note: get(Field::Note).to_string(),
+            tags: read_tags(get(Field::Tags), &mut tags_skipped),
             text: text_of(i),
         };
         let amb = get(Field::SetAmbiguous);
@@ -295,7 +302,26 @@ pub fn parse_csv(data: &[u8]) -> Result<ParsedCsv> {
     }
     warnings.extend(price_misses.warning("price", &column_name(Field::Price)));
     warnings.extend(date_misses.warning("date", &column_name(Field::Date)));
+    if tags_skipped > 0 {
+        warnings
+            .push(format!("{tags_skipped} {} skipped: too long or not valid.", if tags_skipped == 1 { "tag was" } else { "tags were" }));
+    }
     Ok(ParsedCsv { rows, format: profile.name.to_string(), warnings, header: header_text })
+}
+
+/// The tags in a cell ("binder A; elves deck"): each cleaned, duplicates (ignoring
+/// case) dropped, at most MAX_TAGS. A tag that can't be used is dropped and counted in
+/// `skipped`, so a bad tag never fails the import.
+fn read_tags(cell: &str, skipped: &mut usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for raw in split_tags(cell) {
+        match clean_tag(&raw) {
+            Some(t) if out.iter().any(|o| same_tag(o, &t)) => {}
+            Some(t) if out.len() < MAX_TAGS => out.push(t),
+            _ => *skipped += 1,
+        }
+    }
+    normalize_tags(&out).unwrap_or_default()
 }
 
 fn looks_like_set_code(s: &str) -> bool {
@@ -366,8 +392,8 @@ mod tests {
         let cases: &[(&str, &str, Row)] = &[
             (
                 "TCG Binder CSV",
-                "Name,Set Code,Set Name,Collector Number,Language,Finish,Condition,Quantity,Price Paid,Acquired Date,Note,Rarity,Market Price,Scryfall ID\n\
-                 Opt,DOM,Dominaria,60,ja,etched,LP,2,0.1234,2024-03-15,\"trade, binder\",common,1.5,AAAAAAAA-0000-4000-8000-000000000060\n",
+                "Name,Set Code,Set Name,Collector Number,Language,Finish,Condition,Quantity,Price Paid,Acquired Date,Note,Tags,Rarity,Market Price,Scryfall ID\n\
+                 Opt,DOM,Dominaria,60,ja,etched,LP,2,0.1234,2024-03-15,\"trade, binder\",elves deck; Binder A,common,1.5,AAAAAAAA-0000-4000-8000-000000000060\n",
                 Row {
                     name: "Opt".into(),
                     set_code: "dom".into(),
@@ -381,6 +407,7 @@ mod tests {
                     price_paid: 0.1234,
                     acquired_date: "2024-03-15".into(),
                     note: "trade, binder".into(),
+                    tags: vec!["Binder A".into(), "elves deck".into()],
                     ..Row::default()
                 },
             ),
@@ -586,5 +613,19 @@ mod tests {
         ] {
             assert_eq!(parse_date(raw), want, "{raw}");
         }
+    }
+
+    #[test]
+    fn bad_tags_are_skipped_with_one_warning() {
+        let long = "x".repeat(41);
+        let csv = format!("Name,Quantity,Labels\nOpt,1,\"keep; {long};KEEP;\u{7}bell\"\nShock,1,ok\n");
+        let parsed = parse_csv(csv.as_bytes()).unwrap();
+        assert_eq!(parsed.rows[0].tags, ["keep"], "a duplicate ignoring case isn't counted as bad");
+        assert_eq!(parsed.rows[1].tags, ["ok"]);
+        assert!(parsed.warnings.contains(&"2 tags were skipped: too long or not valid.".to_string()), "{:?}", parsed.warnings);
+        let many: Vec<String> = (0..22).map(|i| format!("t{i:02}")).collect();
+        let parsed = parse_csv(format!("Name,Tags\nOpt,\"{}\"\n", many.join(";")).as_bytes()).unwrap();
+        assert_eq!(parsed.rows[0].tags.len(), 20);
+        assert!(parsed.warnings.iter().any(|w| w.starts_with("2 tags were skipped")));
     }
 }

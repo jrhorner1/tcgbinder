@@ -217,6 +217,7 @@ Code uses the UI's words, so a label on screen leads straight to the code behind
 | Bulk edit | `collection::BulkChange`, `Store::bulk_edit` |
 | Load / Update price history | `GameService::load_price_history`, `PriceHistory::history_loaded_on` |
 | Card order (Settings) | `Settings::card_order`, `SortKey::from_card_order` |
+| Tags | `Purchase::tags`; `collection::tags` (`clean_tag`, `normalize_tags`, `split_tags`, `same_tag`, `tag_summaries`); one spelling per tag through `Store::canonical_tags` inside each save; `Query::tags`/`tags_not`/`untagged`, `SortKey::Tag`, `BulkChange::add_tags`/`remove_tags`/`clear_tags`, `Store::rename_tag`/`delete_tag` (after a backup) |
 | Statistics page | `collection::statistics` (breakdowns, value bands, by month), `Game::breakdowns` (Magic's Color and Card type) |
 | Collection list: Sort menu | `collection::SortKey`, `collection::sort_cards` (key, direction, the game's rarity order) |
 | Export CSV | `collection::write_csv`, `Game::catalog_id_label`; read back by the importer's "TCG Binder CSV" profile |
