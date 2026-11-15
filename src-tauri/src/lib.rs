@@ -217,6 +217,7 @@ pub fn run(opts: Options) {
         .plugin(tauri_plugin_dialog::init());
     builder
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
         .register_asynchronous_uri_scheme_protocol(SCHEME, |ctx, request, responder| {
             let served = ctx.app_handle().state::<Served>();
             match served.inner() {
@@ -242,7 +243,7 @@ pub fn run(opts: Options) {
                     for g in &started.games {
                         g.set_alert_hook(alert_notifier(app.handle().clone()));
                     }
-                    let api = started.api(client, export_dir);
+                    let api = started.api(client, export_dir).with_url_opener(link_opener(app.handle().clone()));
                     #[cfg(desktop)]
                     let api = desktop_hooks(api, app.handle().clone());
                     let api = Arc::new(api);
@@ -272,6 +273,13 @@ pub fn run(opts: Options) {
         .run(tauri::generate_context!())
         .expect("error while running TCG Binder");
     tracing::info!("exiting");
+}
+
+/// Opens a link in the system's browser: the web view drops links that would open a
+/// new window, such as View on Scryfall.
+fn link_opener(app: tauri::AppHandle) -> tcgbinder_api::OpenUrl {
+    use tauri_plugin_opener::OpenerExt;
+    Arc::new(move |url| app.opener().open_url(url, None::<&str>).map_err(|e| anyhow::anyhow!("{e}")))
 }
 
 /// Posts a price alert as a system notification.

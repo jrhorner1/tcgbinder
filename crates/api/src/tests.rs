@@ -676,6 +676,30 @@ fn completion_of_the_printed_set() {
 }
 
 #[test]
+fn links_open_in_the_system_browser() {
+    let f = fixture();
+    assert_eq!(get(&f.api, "/api/info")["opensLinks"], false);
+    let (status, _) = call(&f.api, "POST", "/api/open", Some(json!({"url": "https://scryfall.com/card/m19/156"})));
+    assert_eq!(status, 501, "--web opens links itself");
+
+    let opened = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let o = opened.clone();
+    let api = Api::new("TCG Binder", "test", Client::Desktop, Arc::new(SettingsStore::memory()), vec![f.svc.clone()]).with_url_opener(
+        Arc::new(move |url| {
+            o.lock().unwrap().push(url.to_string());
+            Ok(())
+        }),
+    );
+    assert_eq!(get(&api, "/api/info")["opensLinks"], true);
+    let (status, v) = call(&api, "POST", "/api/open", Some(json!({"url": " https://scryfall.com/card/m19/156 "})));
+    assert_eq!(status, 200, "{v}");
+    for bad in ["javascript:alert(1)", "file:///etc/passwd", "tcgb://localhost/", "not a url", ""] {
+        assert_eq!(call(&api, "POST", "/api/open", Some(json!({"url": bad}))).0, 400, "{bad}");
+    }
+    assert_eq!(*opened.lock().unwrap(), ["https://scryfall.com/card/m19/156"]);
+}
+
+#[test]
 fn changes_need_the_client_header() {
     let f = fixture();
     // A cross-site form or fetch can't add the header, so it must be refused.

@@ -23,10 +23,11 @@ Errors are `{"error": "..."}` with a 4xx/5xx status.
 
 | Method & path | Purpose |
 |---|---|
-| `GET /api/info` | app name, version, games (`ID`, `Name`, and `Scan`: whether card scanning works here), chart ranges, `client` (`desktop`, `phone` or `web`), `saveExports` |
+| `GET /api/info` | app name, version, games (`ID`, `Name`, and `Scan`: whether card scanning works here), chart ranges, `client` (`desktop`, `phone` or `web`), `saveExports`, `opensLinks` (links to other sites go through `POST /api/open`) |
 | `GET /api/status` | `{"revision"}`: changes whenever a collection is saved or reloaded, so open pages can refresh after background work. Each call first checks every game's files for changes another device made |
 | `GET /api/search?q=` | search every game's collection |
 | `GET /api/data-folder` | the data folder: `path`, `isDefault`, `defaultPath`, `fixed` (set by `--data-dir` or `TCGBINDER_DATA_DIR`), `firstRun`, `canPick` (a folder picker exists here), `restartsItself`, and `conflicts`: `[{"game", "name", "kind", "cards"}]`, conflict copies (`kind`: `collection`, `lots`, `sales`, `lists`, `watchlist` or `sealed`; `cards` only for a collection) |
+| `POST /api/open` | `{"url"}`: open an http or https link in the system's browser (the apps' web views drop links that open a new window); `400` for any other address, `501` where there is no opener (`--web`) |
 | `POST /api/data-folder/pick` | show the system folder picker: `{"path"}`, `null` if cancelled; `501` where there is none (`--web`, iPhone) |
 | `POST /api/data-folder/inspect` | `{"path"}` (absolute): what is there, `{"exists", "writable", "games": [{"id", "cards"}]}` |
 | `POST /api/data-folder` | `{"path", "mode"}`: switch to `path` (`""` for the default folder). `mode` `use` opens what is there; `move` and `copy` take the current data along (refused if `path` already has a collection; `move` backs up first and deletes the originals once the copies check out). Saves the choice and answers `{"restart": true, "restartsItself", "path"}`; until the app restarts, requests that change data get `409`. `409` when the folder is fixed |

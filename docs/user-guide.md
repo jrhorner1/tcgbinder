@@ -75,8 +75,11 @@ as soon as the import finishes.
   (a new one, or one you have). Click a missing card to add it.
 
 On a wide screen the selected card or set shows beside the list. On a phone (or a
-narrow window) a card replaces the list, with a **Back** button. When the card has
-little room, its picture sits above the details and each purchase takes two lines.
+narrow window) a card replaces the list, with a **Back** button, which returns to
+the same place in the list. Selecting a card keeps the list where it was scrolled.
+When the card has little room, its picture sits above the details and each purchase
+takes two lines. In the desktop and iPhone apps, **View on Scryfall** and other links
+to websites open in your browser.
 
 ### Editing a card
 

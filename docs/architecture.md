@@ -145,7 +145,10 @@ what a folder holds; `transfer` moves or copies each game's collection, price hi
 and backups and checks the copies read back; the choice is saved as `data_dir`, and
 the app restarts (the desktop app through the `with_restart` hook; `--web` asks the
 user). Until then the API refuses changes. The folder picker is another hook,
-`with_folder_picker` (desktop: `tauri-plugin-dialog`).
+`with_folder_picker` (desktop: `tauri-plugin-dialog`). So is `with_url_opener`: the apps'
+web views (wry's WebKit delegate) drop links that would open a new window, so the UI
+sends links to other sites to `POST /api/open`, which the desktop and iPhone apps
+answer with `tauri-plugin-opener`.
 
 Conflict copies (`datafolder::conflict_copies`): files named `collection*.json`
 beside `collection.json`, which sync services leave when two devices save at once.

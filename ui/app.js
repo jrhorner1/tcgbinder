@@ -522,6 +522,8 @@ function filterChips(q, nav, lots) {
 // edit), and beside them the selected card's editor or, when a set is chosen, the
 // set's page.
 async function viewCollection(params) {
+  // Selecting a card redraws the list: keep its scroll position if it lists the same cards.
+  const listScroll = document.querySelector(".pane-list .list")?.scrollTop || 0;
   const f = state.filters;
   const q = new URLSearchParams(params);
   const nav = (mutate, replace) => { const p = hashParams(); mutate(p); go("collection", p, replace); };
@@ -621,6 +623,13 @@ async function viewCollection(params) {
     h("p.counts.muted", h("span", filtering ? `Matching: ${counts}` : counts, h("span.money-line", ` · ${money}`)), h("span.count-actions", clear, exportButton)),
     listbar, list, bar), detail);
   fill($("#main"), split);
+  const listKey = `${apiQ}|${grid}`;
+  if (state.listKey === listKey) {
+    list.scrollTop = listScroll;
+    if (!q.get("key") && state.listWindowY != null) window.scrollTo(0, state.listWindowY);
+  }
+  if (!q.get("key")) state.listWindowY = null;
+  state.listKey = listKey;
   if (q.get("key")) {
     split.classList.add("showing-detail");
     await renderCard(detail, q.get("key"));
@@ -1326,8 +1335,11 @@ function cardImage(c, lazy) {
 function openCard(key) {
   const p = location.hash.startsWith("#/collection") ? hashParams() : new URLSearchParams();
   p.set("key", key);
+  // On a narrow screen the card replaces the list: Back returns to this spot.
+  const narrow = matchMedia("(max-width: 1000px)").matches;
+  if (narrow && location.hash.startsWith("#/collection")) state.listWindowY = window.scrollY;
   go("collection", p);
-  if (matchMedia("(max-width: 1000px)").matches) window.scrollTo(0, 0); // the card replaces the list
+  if (narrow) window.scrollTo(0, 0);
 }
 
 function closeCard() {
@@ -2384,6 +2396,14 @@ async function init() {
   showGame();
   await loadFilters();
   window.addEventListener("hashchange", route);
+  // In the apps, the web view drops links that open a new window (View on Scryfall):
+  // links to other sites open in the system's browser instead.
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest && e.target.closest("a[href]");
+    if (!a || !state.info.opensLinks || !/^https?:/i.test(a.href) || new URL(a.href).origin === location.origin) return;
+    e.preventDefault();
+    api("POST", "/api/open", { url: a.href }).catch((err) => status(err.message, true));
+  });
   setInterval(() => { if (!document.hidden) watchForChanges(); }, 15000);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) watchForChanges(); });
   route();

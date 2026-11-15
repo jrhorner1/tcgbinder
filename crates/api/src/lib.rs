@@ -16,6 +16,10 @@ mod watchlist;
 
 pub use folders::{Folders, PickFolder, Restart};
 
+/// Opens a web page in the system's browser (the apps' web views can't open new
+/// windows themselves).
+pub type OpenUrl = Arc<dyn Fn(&str) -> anyhow::Result<()> + Send + Sync>;
+
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -106,6 +110,7 @@ pub struct Api {
     folders: Option<Folders>,
     pick_folder: Option<PickFolder>,
     restart: Option<Restart>,
+    open_url: Option<OpenUrl>,
     /// The data folder was changed: until the app restarts, nothing may be saved.
     switched: AtomicBool,
 }
@@ -237,6 +242,7 @@ impl Api {
             folders: None,
             pick_folder: None,
             restart: None,
+            open_url: None,
             switched: AtomicBool::new(false),
         }
     }
@@ -294,6 +300,7 @@ impl Api {
             ("GET", ["data-folder"]) => self.data_folder(),
             ("POST", ["data-folder"]) => self.change_data_folder(body),
             ("POST", ["data-folder", "pick"]) => self.pick_data_folder(),
+            ("POST", ["open"]) => self.open_link(body),
             ("POST", ["data-folder", "inspect"]) => self.inspect_data_folder(body),
             ("GET", ["search"]) => Ok(self.search_all(q.get("q").map_or("", String::as_str))),
             ("GET", ["settings"]) => Ok(self.get_settings()),
@@ -381,6 +388,32 @@ impl Api {
     /// Runs a long operation unless one of the same kind is already running.
     /// Runs a long operation unless one of the same kind is already running. `run` can
     /// report its progress, which `GET .../jobs` gives while it runs.
+    /// Lets links to other sites open in the system's browser (`POST /api/open`).
+    pub fn with_url_opener(mut self, open: OpenUrl) -> Api {
+        self.open_url = Some(open);
+        self
+    }
+
+    /// Opens `{"url"}` (http or https only) in the system's browser.
+    fn open_link(&self, body: &[u8]) -> Result {
+        #[derive(Deserialize)]
+        struct Req {
+            url: String,
+        }
+        let req: Req = decode(body)?;
+        let open = self
+            .open_url
+            .as_ref()
+            .ok_or_else(|| Error { status: StatusCode::NOT_IMPLEMENTED, message: "links open in this browser here".into() })?;
+        let url = url::Url::parse(req.url.trim()).map_err(|_| bad("that isn't a web address"))?;
+        if !matches!(url.scheme(), "http" | "https") {
+            return Err(bad("only http and https links can be opened"));
+        }
+        open(url.as_str()).map_err(|e| internal(e.context("opening the link")))?;
+        tracing::info!(host = url.host_str().unwrap_or(""), "link opened in the browser");
+        Ok(Reply::Json(json!({ "opened": true })))
+    }
+
     fn job(&self, g: &GameService, name: &str, run: impl FnOnce(&Reporter) -> anyhow::Result<Value>) -> Result {
         let key = format!("{}/{name}", g.game.id());
         {
@@ -419,7 +452,7 @@ impl Api {
             self.games.iter().map(|g| json!({ "ID": g.game.id(), "Name": g.game.name(), "Scan": self.scanning(g) })).collect();
         Reply::Json(json!({
             "name": self.name, "version": self.version, "games": games, "ranges": choices::CHART_RANGES,
-            "client": self.client.as_str(), "saveExports": self.export_dir.is_some(),
+            "client": self.client.as_str(), "saveExports": self.export_dir.is_some(), "opensLinks": self.open_url.is_some(),
         }))
     }
 

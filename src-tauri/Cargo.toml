@@ -27,6 +27,8 @@ tracing.workspace = true
 tauri = { version = "2", features = [] }
 # Price alerts as system notifications.
 tauri-plugin-notification = "2"
+# Links to other sites (View on Scryfall) open in the system's browser.
+tauri-plugin-opener = "2"
 
 [target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
