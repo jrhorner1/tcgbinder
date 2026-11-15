@@ -184,7 +184,8 @@ date).
   to search for it.
 - **Adding many cards:** after adding, the page stays open with the name box empty
   and the finish, condition, price and date kept for the next card. The cards appear
-  under **Added this session**, each with **Undo**, which takes back exactly those
+  under **Added this session**, beside the add form (below it on a phone, so the
+  results keep their room), each with **Undo**, which takes back exactly those
   copies.
 - **Keyboard:** Enter searches; ↑ and ↓ move through the results (or the
   suggestions); Enter then adds the selected printing.
@@ -199,8 +200,8 @@ date).
 
 ## Adding a lot
 
-When you buy many cards for one price (a bulk lot, a bundle), **Add a lot…** on the
-Add page records the purchase once and works out each card's price for you:
+When you buy many cards for one price (a bulk lot, a bundle), **Add a lot…** (on the
+Add page or the Lots page) records the purchase once and works out each card's price for you:
 - **Name, total paid and date.** Every card in the lot gets the date.
 - **How many cards?**
   - **I counted them:** one number.
@@ -223,8 +224,10 @@ first), showing what each card will be costed at before saving. If you entered f
 cards than counted, it asks whether to spread the total over the cards entered.
 
 A paused lot is offered again the next time you open Add, on any device sharing the
-data folder. **Tools → Lots…** lists every lot with what it cost and what its cards
-are worth now. A lot's page lists its cards, with **Edit** (changing the total, count,
+data folder. While you enter a lot, its banner links to the lot's page and to all
+lots. **Tools → Lots…** lists every lot with what it cost, how many of its cards are
+entered ("37 of 500 entered"), and what its cards are worth now; **Add a lot…** there
+starts a new one and goes on to the Add page to enter its cards. A lot's page lists its cards, with **Edit** (changing the total, count,
 date or split reprices the cards), **Continue adding**, **Recalculate at today's
 prices** (finished value-split lots) and **Delete** (keep the cards with their prices,
 or delete them too). On a card's page, copies from a lot name it; a price typed there

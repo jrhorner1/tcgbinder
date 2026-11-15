@@ -1884,11 +1884,12 @@ function viewAdd(params) {
       fill(banner, open.map((l) => h("div.card-box.notice.lot-banner", h("span", "An unfinished lot: ", h("strong", l.name), ` — ${lotProgress(l)}`),
         h("button", { type: "button", onclick: () => { state.activeLot = l.id; lot = l; showBanner(); refreshPicker(); } }, "Continue adding"))),
         h("p", h("button", { type: "button", onclick: () => showLotDialog(null, (l) => { state.activeLot = l.id; lot = l; showBanner(); refreshPicker(); }) }, "Add a lot…"),
-          h("span.muted", " Cards bought together for one price, such as a bulk lot or a bundle.")));
+          h("span.muted", " Cards bought together for one price, such as a bulk lot or a bundle. "), h("a", { href: "#/lots" }, "All lots")));
       return;
     }
     fill(banner, h("div.card-box.notice.lot-banner",
-      h("div", h("strong", lot.name), h("div.muted", [lotProgress(lot), lot.split === "even" ? `${usd4(lot.priceEach)} each` : `worth ${usd(lot.marketValue)} so far`].join(" · "))),
+      h("div", h("strong", lot.name), h("div.muted", [lotProgress(lot), lot.split === "even" ? `${usd4(lot.priceEach)} each` : `worth ${usd(lot.marketValue)} so far`].join(" · ")),
+        h("div", h("a", { href: `#/lots?id=${encodeURIComponent(lot.id)}` }, "This lot's page"), " · ", h("a", { href: "#/lots" }, "All lots"))),
       h("div.right", h("button", { type: "button", onclick: () => { state.activeLot = null; lot = null; showBanner(); refreshPicker(); } }, "Pause"),
         h("button.primary", { type: "button", onclick: () => finishLot(lot, () => { state.activeLot = null; lot = null; showBanner(); refreshPicker(); }) }, "Finish"))));
   };
@@ -2031,7 +2032,8 @@ function viewAdd(params) {
   const form = h("form.search", { onsubmit: (e) => { e.preventDefault(); run(false); } },
     h("div.suggest-wrap", text, suggest), set, h("button.primary", { type: "submit" }, "Search"),
     pasteBtn, gameInfo().Scan ? h("a.button", { href: "#/scan" }, "Scan a card") : null);
-  fill($("#main"), h("h1", "Add Cards"), banner, form, listPanel, h("div.split", h("div.pane-list", results, session), preview));
+  // The results keep the column to themselves; what's been added sits under the add form.
+  fill($("#main"), h("h1", "Add Cards"), banner, form, listPanel, h("div.split", h("div.pane-list", results), h("div", preview, session)));
   showSession();
   loadLots().then(() => { if (lot) lot = (state.lots || []).find((l) => l.id === lot.id) || lot; showBanner(); });
   if (state.info.client !== "phone") text.focus(); // on phones the keyboard would cover the page
@@ -2384,13 +2386,19 @@ async function viewLots(params) {
   const id = new URLSearchParams(params).get("id");
   if (id) return viewLot(id);
   const lots = await loadLots();
+  // A new lot opens the Add page ready to enter its cards.
+  const addLot = () => showLotDialog(null, async (l) => {
+    state.activeLot = l.id;
+    await loadLots();
+    go("add");
+  });
   fill($("#main"), h("h1", "Lots"),
-    h("p.muted", "Cards bought together for one price. Start one from Add cards → Add a lot…"),
+    h("p.muted", "Cards bought together for one price, such as a bulk lot or a bundle."),
     lots.length ? h("div.list", lots.map((l) => h("a.card", { href: `#/lots?id=${encodeURIComponent(l.id)}` },
       h("div.text", h("span.name", l.name, l.open ? h("span.muted", " · being entered") : null),
-        h("span.meta", [l.acquired_date, `paid ${usd(l.total_paid)}`, plural(l.copies, "card", "cards"), `worth ${usd(l.marketValue)} now`].filter(Boolean).join(" · "))))))
+        h("span.meta", [l.acquired_date, `paid ${usd(l.total_paid)}`, lotProgress(l), `worth ${usd(l.marketValue)} now`].filter(Boolean).join(" · "))))))
       : h("p.muted", "No lots yet."),
-    h("p", h("a.button", { href: "#/add" }, "Add a lot…")));
+    h("p", h("button.primary", { type: "button", onclick: addLot }, "Add a lot…")));
 }
 
 async function viewLot(id) {
