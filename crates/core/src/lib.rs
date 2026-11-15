@@ -17,6 +17,7 @@ pub mod logging;
 pub mod lots;
 pub mod sales;
 pub mod scan;
+pub mod sealed;
 pub mod service;
 pub mod settings;
 pub mod version;

@@ -203,6 +203,10 @@ dialog.ask .body input[type=text] { width: 100%; }
 .list-entry .change { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .list-entry .change.up { color: var(--green); }
 .list-entry .change.down { color: var(--red); }
+/* Sealed product */
+.list-entry.stale { box-shadow: inset 3px 0 0 var(--amber); padding-left: 8px; }
+.inline { display: flex; gap: 6px; }
+.inline input { flex: 1; min-width: 0; }
 /* Earnings */
 .sale { display: flex; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .sale:last-child { border-bottom: 0; }

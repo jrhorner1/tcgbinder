@@ -19,6 +19,7 @@ use serde_json::Value;
 use tcgbinder_core::collection::{Card, CatalogUpdate, Purchase, SetInfo};
 use tcgbinder_core::dates;
 use tcgbinder_core::game::{self, DailyPriceMap, Filter, Game, ImportReport, PriceHistorySource, Progress, Row, SearchPage};
+use tcgbinder_core::sealed::SealedProduct;
 
 /// The game's identifier and data folder name.
 pub const ID: &str = "mtg";
@@ -52,6 +53,8 @@ pub struct Magic {
     dir: Mutex<PathBuf>,
     /// The cache for [`Game::set_cards`].
     set_cards: Mutex<HashMap<String, Vec<Card>>>,
+    /// The cache for [`Game::sealed_products`], per set.
+    sealed: Mutex<HashMap<String, Vec<SealedProduct>>>,
 }
 
 impl Default for Magic {
@@ -63,7 +66,7 @@ impl Default for Magic {
 
 impl Magic {
     pub fn with_clients(scryfall: scryfall::Client, mtgjson: mtgjson::Client) -> Magic {
-        Magic { scryfall, mtgjson, dir: Mutex::default(), set_cards: Mutex::default() }
+        Magic { scryfall, mtgjson, dir: Mutex::default(), set_cards: Mutex::default(), sealed: Mutex::default() }
     }
 }
 
@@ -359,6 +362,17 @@ impl Game for Magic {
 
     fn catalog_id_label(&self) -> &'static str {
         "Scryfall ID"
+    }
+
+    /// MTGJSON's sealed products for the set, from its set file (kept for the session).
+    fn sealed_products(&self, set: &str) -> Result<Vec<SealedProduct>> {
+        let code = set.trim().to_uppercase();
+        if let Some(found) = self.sealed.lock().unwrap().get(&code) {
+            return Ok(found.clone());
+        }
+        let found = self.mtgjson.sealed_products(&code)?;
+        self.sealed.lock().unwrap().insert(code, found.clone());
+        Ok(found)
     }
 
     fn card_link(&self, c: &Card) -> Option<(String, String)> {

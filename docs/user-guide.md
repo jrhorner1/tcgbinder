@@ -241,6 +241,23 @@ from today's price from now on. **Tools → Watchlist…** lists every watched c
 its starting price, today's price, the change and the alert, with **Change…**,
 **Reset** and ✕ (stop watching).
 
+## Sealed product
+
+**Tools → Sealed product…** keeps boxes, bundles and decks you hold unopened. No free
+source prices sealed product, so you enter each item's value yourself.
+
+**Add sealed product** asks for a set code; **Find products** lists that set's
+products (from MTGJSON) to choose from, or you can type a name. Then the quantity,
+the price paid each, the date, the value each and a note. A value is dated the day
+you enter it, and values older than 90 days (or not entered yet) are marked so you
+know to look them up again. **Look up a price ↗** opens a shop's page for the
+product when MTGJSON has one.
+
+The page totals the items, what you paid and what they're worth. Its gain/loss
+covers the items with both a price paid and a value. Sealed product isn't part of the
+cards' market value or the value chart on Home; Home adds a line under Market Value,
+"plus $X sealed", that links here.
+
 ## Scanning cards
 
 **Scan a card** (on Add, and in the sidebar) identifies a physical card.
@@ -353,8 +370,8 @@ defaults**.
 
 Your collection is kept in the **data folder**. Each game has its own folder in it:
 `mtg/` holds `collection.json` (your cards), `price-history.json`, `lots.json`,
-`sales.json` (sold cards), `lists.json` (lists and decks), `watchlist.json` and
-`backups/`.
+`sales.json` (sold cards), `lists.json` (lists and decks), `watchlist.json`,
+`sealed.json` and `backups/`.
 
 By default the data folder is the app's own folder:
 
@@ -392,7 +409,8 @@ seconds. If two devices save at the same moment, the sync service keeps the othe
 version as a separate file (such as "collection 2.json"), and Home says so:
 **Merge it** adds its cards and copies to yours without counting any twice (a card
 deleted on one device comes back); **Discard it** deletes that file. A backup is
-taken before merging. The same goes for the lots, sales, lists and watchlist files:
-merging adds the lots, sales, lists or watches only the other version has (on a list
+taken before merging. The same goes for the lots, sales, lists, watchlist and sealed
+files: merging adds the lots, sales, lists, watches or sealed items only the other
+version has (on a list
 both have, the cards only it has, keeping the larger number wanted; for a card both
 watch, the one reset more recently). See the README for command-line options.

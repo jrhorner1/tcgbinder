@@ -10,6 +10,7 @@ mod lists;
 mod lots;
 mod report;
 mod sales;
+mod sealed;
 mod views;
 mod watchlist;
 
@@ -312,6 +313,11 @@ impl Api {
                     ("PUT", ["card", "printing"]) => self.change_printing(g, key, body),
                     ("POST", ["card", "sell"]) => self.sell(g, key, body),
                     ("GET", ["sales"]) => self.sales(g, &q),
+                    ("GET", ["sealed"]) => Ok(self.sealed(g)),
+                    ("POST", ["sealed"]) => self.add_sealed(g, body),
+                    ("PUT", ["sealed"]) => self.update_sealed(g, &q, body),
+                    ("DELETE", ["sealed"]) => self.delete_sealed(g, &q),
+                    ("GET", ["sealed", "products"]) => self.sealed_products(g, &q),
                     ("GET", ["watchlist"]) => Ok(self.watchlist(g)),
                     ("POST", ["watchlist"]) => self.add_watch(g, body),
                     ("PUT", ["watchlist"]) => self.change_watch(g, &q, body),
@@ -451,7 +457,7 @@ impl Api {
             "pricePaid": round_cents(st.price_paid), "pricePaidUnknown": st.price_paid_unknown,
             "marketValue": round_cents(st.market_value), "unpriced": st.unpriced, "pricesAsOf": st.prices_as_of,
             "realisedThisYear": round_cents(sales::realised_this_year(g)), "hasSales": !g.sales.all().is_empty(),
-            "alerts": watchlist::alerts(g),
+            "alerts": watchlist::alerts(g), "sealed": sealed::home_summary(g),
             "bySet": sets, "topCards": top,
             "chart": {
                 "range": range, "from": date_or_empty(vc.from), "to": dates::format(vc.to),

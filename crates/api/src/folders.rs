@@ -13,6 +13,7 @@ use tcgbinder_core::datafolder::{self, Mode};
 use tcgbinder_core::lists::ListsData;
 use tcgbinder_core::lots::LotsData;
 use tcgbinder_core::sales::SalesData;
+use tcgbinder_core::sealed::SealedData;
 use tcgbinder_core::service::GameService;
 use tcgbinder_core::watchlist::WatchData;
 
@@ -87,7 +88,8 @@ impl Api {
             .iter()
             .flat_map(|g| {
                 datafolder::conflict_copies(game_dir(g)).into_iter().map(move |name| {
-                    let kind = ["lots", "sales", "lists", "watchlist"].into_iter().find(|k| name.starts_with(k)).unwrap_or("collection");
+                    let kind =
+                        ["lots", "sales", "lists", "watchlist", "sealed"].into_iter().find(|k| name.starts_with(k)).unwrap_or("collection");
                     let cards = std::fs::read(game_dir(g).join(&name)).ok().and_then(|b| read_export(&b).ok()).map(|(_, c)| c.len());
                     json!({ "game": g.game.id(), "name": name, "kind": kind, "cards": cards })
                 })
@@ -170,7 +172,7 @@ impl Api {
     }
 
     /// Merges a conflict copy into the collection (after a backup), the lots, the sales,
-    /// the lists or the watchlist, then deletes it.
+    /// the lists, the watchlist or the sealed product, then deletes it.
     pub(crate) fn merge_conflict(&self, g: &GameService, body: &[u8]) -> Result {
         let req: NameReq = decode(body)?;
         let path = Self::conflict_path(g, &req.name)?;
@@ -180,6 +182,13 @@ impl Api {
             let changed = g.lots.merge_copy(theirs).map_err(internal)?;
             std::fs::remove_file(&path).map_err(|e| internal(e.into()))?;
             tracing::info!(game = g.game.id(), copy = req.name, changed, "lots conflict copy merged");
+            return Ok(Reply::Json(json!({ "changed": changed })));
+        }
+        if req.name.starts_with("sealed") {
+            let theirs: SealedData = serde_json::from_slice(&data).map_err(|e| bad(format!("{} can't be read: {e}", req.name)))?;
+            let changed = g.sealed.merge_copy(theirs).map_err(internal)?;
+            std::fs::remove_file(&path).map_err(|e| internal(e.into()))?;
+            tracing::info!(game = g.game.id(), copy = req.name, changed, "sealed product conflict copy merged");
             return Ok(Reply::Json(json!({ "changed": changed })));
         }
         if req.name.starts_with("watchlist") {

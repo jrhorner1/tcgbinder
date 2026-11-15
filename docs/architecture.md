@@ -114,6 +114,13 @@ Per game, in `<data>/<game>/`:
   hook set with `GameService::set_alert_hook`. The desktop and iPhone apps set one
   that posts a system notification (`tauri-plugin-notification`); `--web` has none.
   Conflict copies merge by card and finish, the later `baseline_date` winning.
+- `sealed.json`: sealed product (`core::sealed`, a `JsonFile`), valued by hand since no
+  free source prices it. `Game::sealed_products` lists a set's products for choosing;
+  Magic reads `sealedProduct` from MTGJSON's set file (`mtgjson::Client::sealed_products`,
+  cached per set for the session). Each item keeps MTGJSON's `product_uuid` (the key
+  for MTGJSON's sealed prices, should it publish them) and TCGplayer's product ID (for
+  a price source, if one becomes allowed; TCGCSV's rules exclude apps end users run, so
+  it isn't called). Conflict copies merge by item ID.
 - `backups/`: copies of `collection.json` taken before each import, bulk edit, bulk
   delete and restore (`Store::backup`), named
   `collection-YYYYMMDD-HHMMSS[-N]-<reason>.json`; the 10 newest are kept. Restoring

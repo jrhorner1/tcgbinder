@@ -17,6 +17,7 @@ use crate::game::{Game, ImportReport};
 use crate::lists::{ListEntry, ListsStore};
 use crate::lots::{Lot, LotCopy, LotPrices, LotSplit, LotsStore, lot_prices};
 use crate::sales::{CardRef, Sale, SalesStore};
+use crate::sealed::SealedStore;
 use crate::settings::{Settings, SettingsStore};
 use crate::watchlist::{Watch, WatchStore};
 use crate::{datadir, dates};
@@ -44,6 +45,8 @@ pub struct GameService {
     pub lists: ListsStore,
     /// Watched prices.
     pub watchlist: WatchStore,
+    /// Sealed product.
+    pub sealed: SealedStore,
     /// Told about each watch that triggers (the apps post a system notification).
     alert_hook: OnceLock<AlertHook>,
     /// The app settings (price refresh frequency, automatic price history). Without
@@ -73,6 +76,7 @@ impl GameService {
         let sales = SalesStore::open(&dir)?;
         let lists = ListsStore::open(&dir)?;
         let watchlist = WatchStore::open(&dir)?;
+        let sealed = SealedStore::open(&dir)?;
         let path = store.file_path().with_file_name(datadir::PRICE_HISTORY_FILE);
         let prices = match PriceHistory::open(&path) {
             Ok((prices, warning)) => {
@@ -96,6 +100,7 @@ impl GameService {
             sales,
             lists,
             watchlist,
+            sealed,
             alert_hook: OnceLock::new(),
             settings: None,
             auto_history: true,
@@ -271,6 +276,9 @@ impl GameService {
         }
         if let Err(e) = self.prices.refresh() {
             tracing::debug!(game = self.game.id(), error = %e, "price history not refreshed");
+        }
+        if let Err(e) = self.sealed.refresh() {
+            tracing::debug!(game = self.game.id(), error = %e, "sealed product not refreshed");
         }
         if let Err(e) = self.watchlist.refresh() {
             tracing::debug!(game = self.game.id(), error = %e, "watchlist not refreshed");

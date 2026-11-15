@@ -9,6 +9,7 @@ use serde::Serialize;
 
 use crate::collection::{Card, CatalogUpdate, SetInfo};
 use crate::scan::Reading;
+use crate::sealed::SealedProduct;
 
 /// Progress callbacks receive the work done so far and the total.
 pub type Progress<'a> = &'a mut dyn FnMut(usize, usize);
@@ -72,6 +73,11 @@ pub trait Game: Send + Sync {
     fn filters(&self) -> Vec<Filter>;
     /// Extra rows in the card editor.
     fn details(&self, c: &Card) -> Vec<Row>;
+    /// The sealed products the catalog lists for a set (boxes, bundles, decks), for
+    /// choosing one to add. None by default.
+    fn sealed_products(&self, _set: &str) -> Result<Vec<SealedProduct>> {
+        Ok(Vec::new())
+    }
     /// The header of the catalog ID column in CSV exports, e.g. "Scryfall ID".
     fn catalog_id_label(&self) -> &'static str {
         "ID"
