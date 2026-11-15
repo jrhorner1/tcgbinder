@@ -435,6 +435,22 @@ function ticks() {
 }
 const tickInfo = (c) => ({ name: c.name, where: sn(c), tags: cardTagList(c) });
 
+// addMenu makes the sidebar's Add cards button a menu: a single card, or a pack,
+// bundle or lot.
+function addMenu() {
+  const button = $("#add-menu-button"), items = $("#add-menu-items");
+  if (!button || !items) return;
+  const close = () => { items.hidden = true; button.setAttribute("aria-expanded", "false"); };
+  button.addEventListener("click", () => {
+    items.hidden = !items.hidden;
+    button.setAttribute("aria-expanded", String(!items.hidden));
+    if (!items.hidden) items.querySelector("a").focus();
+  });
+  items.addEventListener("click", close);
+  document.addEventListener("click", (e) => { if (!e.target.closest(".add-menu")) close(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !items.hidden) { close(); button.focus(); } });
+}
+
 // --- Tags --------------------------------------------------------------------
 
 // The core's limits on tags (crates/core/src/collection/tags.rs).
@@ -1904,8 +1920,10 @@ function viewAdd(params) {
       const open = (state.lots || []).filter((l) => l.open);
       fill(banner, open.map((l) => h("div.card-box.notice.lot-banner", h("span", "An unfinished lot: ", h("strong", l.name), ` — ${lotProgress(l)}`),
         h("button", { type: "button", onclick: () => { state.activeLot = l.id; lot = l; showBanner(); refreshPicker(); } }, "Continue adding"))),
-        h("p", h("button", { type: "button", onclick: () => showLotDialog(null, (l) => { state.activeLot = l.id; lot = l; showBanner(); refreshPicker(); }) }, "Add a lot…"),
-          h("span.muted", " Cards bought together for one price, such as a bulk lot or a bundle. "), h("a", { href: "#/lots" }, "All lots")));
+        h("div.add-kinds", h("span.muted", "Add:"),
+          h("button.on", { type: "button", "aria-pressed": "true", onclick: () => text.focus() }, "A single card"),
+          h("button", { type: "button", onclick: startLot }, "A pack, bundle or lot…"),
+          h("a", { href: "#/lots" }, "All bundles/lots")));
       return;
     }
     fill(banner, h("div.card-box.notice.lot-banner",
@@ -1914,6 +1932,9 @@ function viewAdd(params) {
       h("div.right", h("button", { type: "button", onclick: () => { state.activeLot = null; lot = null; showBanner(); refreshPicker(); } }, "Pause"),
         h("button.primary", { type: "button", onclick: () => finishLot(lot, () => { state.activeLot = null; lot = null; showBanner(); refreshPicker(); }) }, "Finish"))));
   };
+
+  // A new pack or lot: the cards added next belong to it.
+  const startLot = () => showLotDialog(null, (l) => { state.activeLot = l.id; lot = l; showBanner(); refreshPicker(); });
 
   const showSession = () => {
     const added = state.added || [];
@@ -2055,6 +2076,11 @@ function viewAdd(params) {
     pasteBtn, gameInfo().Scan ? h("a.button", { href: "#/scan" }, "Scan a card") : null);
   // The results keep the column to themselves; what's been added sits under the add form.
   fill($("#main"), h("h1", "Add Cards"), banner, form, listPanel, h("div.split", h("div.pane-list", results), h("div", preview, session)));
+  // From the Add menu: "A pack, bundle or lot…" opens its dialog straight away.
+  if (pre.get("new") === "lot") {
+    history.replaceState(null, "", "#/add");
+    startLot();
+  }
   showSession();
   loadLots().then(() => { if (lot) lot = (state.lots || []).find((l) => l.id === lot.id) || lot; showBanner(); });
   if (state.info.client !== "phone") text.focus(); // on phones the keyboard would cover the page
@@ -2311,10 +2337,12 @@ function lotCountText(l) {
 }
 
 // showLotDialog creates a lot (lot null) or edits one, then calls done(lot).
+// showLotDialog adds a pack, bundle or lot (cards bought together for one price), or
+// edits `lot`.
 function showLotDialog(lot, done) {
   const l = lot || { name: "", total_paid: "", acquired_date: today(), count: { kind: "known", cards: "" }, split: "by_value", note: "" };
   const dlg = $("#dialog");
-  const name = h("input", { type: "text", value: l.name, placeholder: "e.g. 500-card lot from eBay", "aria-label": "Name" });
+  const name = h("input", { type: "text", value: l.name, placeholder: "e.g. M19 booster, or a 500-card lot from eBay", "aria-label": "Name" });
   const total = h("input", { type: "number", min: 0, step: "0.01", value: l.total_paid, placeholder: "0.00", "aria-label": "Total paid" });
   const date = h("input", { type: "date", value: l.acquired_date, "aria-label": "Acquired" });
   const c = l.count;
@@ -2363,7 +2391,8 @@ function showLotDialog(lot, done) {
       done(r);
     } catch (e) { err.textContent = e.message; }
   };
-  fill(dlg, h("div.dlg", h("header", h("h2", lot ? "Edit lot" : "Add a lot")),
+  fill(dlg, h("div.dlg", h("header", h("h2", lot ? "Edit lot" : "Add a pack, bundle or lot"),
+      lot ? null : h("p.muted", { style: "margin:4px 0 0" }, "Cards bought together for one price, which is split among them. A pack is usually 14 or 15 cards.")),
     h("div.body",
       h("div.form", h("label", "Name"), name, h("label", "Total paid"), total, h("label", "Acquired"), date, h("label", "How many cards?"), kind),
       knownRows, bundleRows,
@@ -2419,7 +2448,7 @@ async function viewLots(params) {
       h("div.text", h("span.name", l.name, l.open ? h("span.muted", " · being entered") : null),
         h("span.meta", [l.acquired_date, `paid ${usd(l.total_paid)}`, lotProgress(l), `worth ${usd(l.marketValue)} now`].filter(Boolean).join(" · "))))))
       : h("p.muted", "No lots yet."),
-    h("p", h("button.primary", { type: "button", onclick: addLot }, "Add a lot…")));
+    h("p", h("button.primary", { type: "button", onclick: addLot }, "Add a pack, bundle or lot…")));
 }
 
 async function viewLot(id) {
@@ -2756,6 +2785,7 @@ async function init() {
   showGame();
   await loadFilters();
   window.addEventListener("hashchange", route);
+  addMenu();
   // In the apps, the web view drops links that open a new window (View on Scryfall):
   // links to other sites open in the system's browser instead.
   document.addEventListener("click", (e) => {

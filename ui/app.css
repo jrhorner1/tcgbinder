@@ -230,6 +230,15 @@ button.tag-chip { cursor: pointer; font-family: inherit; }
   .tags-table td.n::before { content: attr(data-label); display: block; font-size: 11px; color: var(--muted); }
 }
 
+/* The sidebar's Add menu, and the Add page's choices */
+.add-menu { position: relative; display: grid; }
+.add-menu-items { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 20; display: grid; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); box-shadow: 0 8px 24px rgb(0 0 0 / 25%); }
+.add-menu-items[hidden] { display: none; }
+.add-menu-items a { padding: 7px 10px; border-radius: 6px; color: var(--text); text-decoration: none; font-size: 14px; }
+.add-menu-items a:hover, .add-menu-items a:focus-visible { background: var(--panel-2); }
+.add-kinds { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; margin: 0 0 12px; }
+.add-kinds button.on { border-color: var(--blue); background: var(--blue-soft); }
+
 /* Putting owned cards in a lot */
 .list.picker { max-height: 50vh; margin-top: 8px; }
 .list.picker .card { flex-wrap: wrap; cursor: default; }

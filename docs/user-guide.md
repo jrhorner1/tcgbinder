@@ -6,8 +6,9 @@ The same app runs on the desktop (macOS, Windows, Linux), on iPhone and iPad, an
 web browser (`tcgbinder --web`), with the same pages everywhere.
 
 On the desktop (and in a wide browser window) the sidebar has **Home**, your
-collection (**Magic**), **Tools** and **Settings**, with **Add cards** and **Scan a
-card** below them. On phones the tab bar at the bottom has **Home**, **Cards**,
+collection (**Magic**), **Statistics**, **Lists**, **Bundles/Lots**, **Tools** and
+**Settings**, with **Add cards** (a menu: a single card, or a pack, bundle or lot)
+and **Scan a card** below them. On phones the tab bar at the bottom has **Home**, **Cards**,
 **Add**, **Tools** and **Settings**.
 
 ## Home
@@ -170,7 +171,9 @@ your cards, and a tag disappears when it is removed from its last card.
 
 ## Adding cards
 
-**Add** searches Scryfall by name, set code or both, and lists every printing, newest
+**Add cards** in the sidebar offers **A single card** (the Add page) or **A pack,
+bundle or lot…** (see below); on a phone, the Add tab opens the Add page, which offers
+both. **Add** searches Scryfall by name, set code or both, and lists every printing, newest
 first (cards you already own say so). Pick the exact one, then set the quantity,
 finish, condition, price paid and date. Adding a printing you already own adds a
 purchase to it (or to a matching purchase with the same finish, condition, price and
@@ -198,10 +201,12 @@ date).
 - **Missing cards:** on a set page, **Add…** beside a missing card adds it without
   leaving the page.
 
-## Adding a lot
+## Adding a pack, bundle or lot
 
-When you buy many cards for one price (a bulk lot, a bundle), **Add a lot…** (on the
-Add page or the Lots page) records the purchase once and works out each card's price for you:
+When you buy cards together for one price (a pack, usually 14 or 15 cards; a bundle;
+a bulk lot), **A pack, bundle or lot…** records the purchase once (from the sidebar's
+**Add cards** menu, the Add page, or **Add a pack, bundle or lot…** on the
+Bundles/Lots page; they're all the same to the app) and works out each card's price for you:
 - **Name, total paid and date.** Every card in the lot gets the date.
 - **How many cards?**
   - **I counted them:** one number.
@@ -227,7 +232,7 @@ A paused lot is offered again the next time you open Add, on any device sharing 
 data folder. While you enter a lot, its banner links to the lot's page and to all
 lots. **Bundles/Lots** (in the sidebar; on a phone, **Tools → Bundles/Lots…**) lists
 every lot with what it cost, how many of its cards are entered ("37 of 500
-entered"), and what its cards are worth now; **Add a lot…** there starts a new one
+entered"), and what its cards are worth now; **Add a pack, bundle or lot…** there starts a new one
 and goes on to the Add page to enter its cards. A lot's page lists its cards, with
 **Edit** (changing the total, count, date or split reprices the cards), **Continue
 adding**, **Add cards you own…**, **Recalculate at today's prices** (finished

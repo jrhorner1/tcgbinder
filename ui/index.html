@@ -37,7 +37,13 @@
       <a href="#/settings" data-view="settings"><svg class="ico" aria-hidden="true"><use href="#i-settings"/></svg>Settings</a>
     </nav>
     <div class="side-actions">
-      <a class="button primary" href="#/add"><svg class="ico" aria-hidden="true"><use href="#i-add"/></svg>Add cards</a>
+      <div class="add-menu">
+        <button class="button primary" type="button" id="add-menu-button" aria-haspopup="true" aria-expanded="false" aria-controls="add-menu-items"><svg class="ico" aria-hidden="true"><use href="#i-add"/></svg>Add cards</button>
+        <div class="add-menu-items" id="add-menu-items" hidden>
+          <a href="#/add">A single card</a>
+          <a href="#/add?new=lot">A pack, bundle or lot…</a>
+        </div>
+      </div>
       <a class="button" href="#/scan" data-scan hidden><svg class="ico" aria-hidden="true"><use href="#i-scan"/></svg>Scan a card</a>
     </div>
     <p class="side-foot muted" id="version"></p>
