@@ -32,8 +32,8 @@ static COUNT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d+)\s*[xX]?\s+(
 static FINISH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\s*(\*f\*|\*e\*|\(foil\)|\(etched\))$").unwrap());
 /// "(M11) 149" or "(M11)" at the end.
 static PAREN_SET: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s*\(([A-Za-z0-9]{2,8})\)(?:\s+([A-Za-z0-9★†-]+))?$").unwrap());
-/// "[M11]" at the end.
-static BRACKET_SET: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s*\[([A-Za-z0-9]{2,8})\]$").unwrap());
+/// "[M11] 149" or "[M11]" at the end.
+static BRACKET_SET: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s*\[([A-Za-z0-9]{2,8})\](?:\s+([A-Za-z0-9★†-]+))?$").unwrap());
 /// A heading with a count, e.g. "Sideboard (15)" or "Creatures: 20".
 static COUNTED_HEADING: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(.+?)\s*(?:\(\d+\)|:\s*\d*)$").unwrap());
 
@@ -46,8 +46,8 @@ fn is_heading(line: &str) -> bool {
     COUNTED_HEADING.captures(&lower).is_some_and(|c| HEADINGS.contains(&c[1].trim()))
 }
 
-/// Reads a pasted card list: one card per line, with an optional count, set and
-/// collector number, and foil marker. Blank lines, comments (`//`, `#`) and section
+/// Reads a pasted card list: one card per line, with an optional count, set ("(M19)"
+/// or "[M19]") and collector number, and foil marker. Blank lines, comments (`//`, `#`) and section
 /// headings ("Sideboard") are skipped; a line without a count is one copy.
 pub fn parse_decklist(text: &str) -> ParsedCsv {
     let mut rows = Vec::new();
@@ -75,6 +75,7 @@ pub fn parse_decklist(text: &str) -> ParsedCsv {
             rest.truncate(c.get(0).unwrap().start());
         } else if let Some(c) = BRACKET_SET.captures(&rest) {
             set_code = c[1].to_lowercase();
+            number = c.get(2).map_or("", |m| m.as_str()).to_string();
             rest.truncate(c.get(0).unwrap().start());
         }
         let name = rest.trim().to_string();
@@ -120,6 +121,7 @@ mod tests {
         assert_eq!(one("2 Lightning Bolt (foil)"), bolt(2, "", "", "foil"));
         assert_eq!(one("1 Lightning Bolt (2X2) 117 *E*"), bolt(1, "2x2", "117", "etched"));
         assert_eq!(one("Lightning Bolt"), bolt(1, "", "", "nonfoil"));
+        assert_eq!(one("5 Plains [M19] 261"), (5, "Plains".to_string(), "m19".to_string(), "261".to_string(), "nonfoil".to_string()));
         assert_eq!(one("1 Fire // Ice (MH2) 290"), (1, "Fire // Ice".into(), "mh2".into(), "290".into(), "nonfoil".into()));
     }
 

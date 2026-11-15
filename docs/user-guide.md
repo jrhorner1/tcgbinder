@@ -190,7 +190,7 @@ date).
   suggestions); Enter then adds the selected printing.
 - **Paste a list…** takes a card list, one card per line, as decklists from
   Moxfield, Archidekt or MTG Arena write them: `4 Lightning Bolt`,
-  `4x Lightning Bolt`, `4 Lightning Bolt (M11) 149`, `4 Lightning Bolt [M11]`, with
+  `4x Lightning Bolt`, `4 Lightning Bolt (M11) 149`, `4 Lightning Bolt [M11] 149`, with
   `*F*` or `(foil)` at the end for foil. Headings such as "Sideboard" and comments
   (`//`, `#`) are skipped. It shows the same preview as an import before anything is
   saved. Import accepts such a list as a file too.
