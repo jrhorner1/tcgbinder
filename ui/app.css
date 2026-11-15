@@ -230,6 +230,12 @@ button.tag-chip { cursor: pointer; font-family: inherit; }
   .tags-table td.n::before { content: attr(data-label); display: block; font-size: 11px; color: var(--muted); }
 }
 
+/* Putting owned cards in a lot */
+.list.picker { max-height: 50vh; margin-top: 8px; }
+.list.picker .card { flex-wrap: wrap; cursor: default; }
+.list.picker .card .text { flex: 1 1 180px; }
+.list.picker .card input[type=number] { width: 4.5em; }
+
 /* Lists */
 .list-entry { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .list-entry .entry-controls { display: flex; gap: 6px; align-items: center; margin-left: auto; }

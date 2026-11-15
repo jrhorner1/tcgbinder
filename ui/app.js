@@ -832,12 +832,32 @@ function showBulkEdit() {
   const onTicked = sortTags([...new Map([...chosen.values()].flatMap((c) => c.tags || []).map((t) => [t.toLowerCase(), t])).values()]);
   const removeTags = tagEditor([], { label: "Tags to remove", suggest: onTicked });
   const clearTags = h("input", { type: "checkbox" });
+  const lotMenu = h("select", { "aria-label": "Put in a lot" }, h("option", { value: "" }, "Unchanged"),
+    (state.lots || []).map((x) => h("option", { value: x.id }, x.name)));
   const err = h("p.error");
   const apply = async () => {
     err.textContent = "";
     if (!chosen.size) { err.textContent = "Tick at least one card."; return; }
     let add_tags, remove_tags;
     try { add_tags = addTags.value(); remove_tags = removeTags.value(); } catch (e) { err.textContent = e.message; return; }
+    if (lotMenu.value) {
+      // Putting cards in a lot is a change of its own: the lot sets their price and date.
+      if (del.checked || cond.value || fin.value || date.value || price.value !== "" || noteMode.value || add_tags.length || remove_tags.length || clearTags.checked) {
+        err.textContent = "Put in a lot on its own: set the other changes back to Unchanged, or do them after."; return;
+      }
+      const lot = state.lots.find((x) => x.id === lotMenu.value);
+      const n = plural(chosen.size, "card", "cards");
+      if (!(await confirmDialog(`Put every copy of ${n} in ${lot.name}? Their price paid and date come from the lot, and copies in another lot leave it.`, { action: "Put in lot" }))) return;
+      try {
+        const r = await api("POST", gameAPI(`/lots/cards?id=${encodeURIComponent(lot.id)}`), { cards: [...chosen.keys()].map((key) => ({ key })) });
+        status(`Put ${plural(r.moved, "copy", "copies")} in ${lot.name}.`, false, r.undo);
+        ticked.clear();
+        dlg.close();
+        await loadLots();
+        route();
+      } catch (e) { err.textContent = e.message; }
+      return;
+    }
     const body = { keys: [...chosen.keys()], condition: cond.value, finish: fin.value, acquired_date: date.value, delete: del.checked,
       add_tags, remove_tags, clear_tags: clearTags.checked };
     if (price.value !== "") body.price_paid = parseFloat(price.value);
@@ -867,6 +887,7 @@ function showBulkEdit() {
       h("div.form",
         h("label", "Condition"), cond, h("label", "Finish"), fin, h("label", "Price paid (each)"), price, h("label", "Acquired"), date,
         h("label", "Note"), h("div.stack", noteMode, noteText),
+        h("label", "Put in a lot"), (state.lots || []).length ? lotMenu : h("span.muted", "No lots yet."),
         h("label", "Add tags"), addTags.el,
         h("label", "Remove tags"), onTicked.length ? removeTags.el : h("span.muted", "The ticked cards have no tags."),
         h("label", ""), h("label.check", { style: "display:flex;gap:8px;align-items:center;text-align:left" }, clearTags, "Remove all tags"),
@@ -2392,8 +2413,8 @@ async function viewLots(params) {
     await loadLots();
     go("add");
   });
-  fill($("#main"), h("h1", "Lots"),
-    h("p.muted", "Cards bought together for one price, such as a bulk lot or a bundle."),
+  fill($("#main"), h("h1", "Bundles/Lots"),
+    h("p.muted", "Cards bought together for one price, such as a bundle or a bulk lot. To bring in cards you already own, open a lot and choose Add cards you own…, or tick them in the collection and use Bulk edit → Put in a lot."),
     lots.length ? h("div.list", lots.map((l) => h("a.card", { href: `#/lots?id=${encodeURIComponent(l.id)}` },
       h("div.text", h("span.name", l.name, l.open ? h("span.muted", " · being entered") : null),
         h("span.meta", [l.acquired_date, `paid ${usd(l.total_paid)}`, lotProgress(l), `worth ${usd(l.marketValue)} now`].filter(Boolean).join(" · "))))))
@@ -2434,7 +2455,18 @@ async function viewLot(id) {
     } catch (e) { status(e.message, true); }
   };
   const inLot = (c) => c.purchases.filter((p) => p.lot === id);
-  fill($("#main"), h("p", h("a", { href: "#/lots" }, "← Lots")),
+  // Out of the lot, into the collection's other copies, at the price the lot gave them.
+  const removeCard = async (c) => {
+    if (!(await confirmDialog(`Take ${c.name} out of ${l.name}? Its copies stay in your collection at the price the lot gave them, and the lot's other cards are repriced.`,
+      { action: "Take it out", title: "Take the card out of the lot?" }))) return;
+    try {
+      const r = await api("DELETE", gameAPI(`/lots/cards?id=${encodeURIComponent(id)}&key=${encodeURIComponent(c.key)}`));
+      status(`Took ${plural(r.freed, "copy", "copies")} of ${c.name} out of ${l.name}.`);
+      await loadLots();
+      route();
+    } catch (e) { status(e.message, true); }
+  };
+  fill($("#main"), h("p", h("a", { href: "#/lots" }, "← Bundles/Lots")),
     h("h1", l.name),
     h("p.muted", [l.acquired_date, lotCountText(l), l.split === "even" ? "split evenly" : "split by market value", l.open ? "being entered" : l.split_date ? `split on ${l.split_date}` : ""].filter(Boolean).join(" · ")),
     l.note ? h("p", l.note) : null,
@@ -2446,13 +2478,62 @@ async function viewLot(id) {
     h("div.buttons", h("div.right",
       h("button", { type: "button", onclick: () => showLotDialog(l, () => route()) }, "Edit"),
       h("button", { type: "button", onclick: continueAdding }, "Continue adding"),
+      h("button", { type: "button", onclick: () => showOwnedPicker(l) }, "Add cards you own…"),
       !l.open && l.split === "by_value" ? h("button", { type: "button", onclick: recalc }, "Recalculate at today's prices") : null,
       l.open ? h("button.primary", { type: "button", onclick: () => finishLot(l, () => route()) }, "Finish") : null,
       h("button.danger", { type: "button", onclick: del }, "Delete"))),
     h("h2", "Cards"),
-    d.cards.length ? h("div.list", d.cards.map((c) => h("a.card", { href: `#/collection?key=${encodeURIComponent(c.key)}` },
-      h("div.text", h("span.name", c.name),
-        h("span.meta", inLot(c).map((p) => `${p.quantity}× ${fname(p.finish)} ${p.condition} at ${usd4(p.price_paid)}`).join(" · ") + ` · ${sn(c)}`))))) : h("p.muted", "No cards yet."));
+    d.cards.length ? h("div.list", d.cards.map((c) => h("div.card",
+      h("a.rowlink", { href: `#/collection?key=${encodeURIComponent(c.key)}` },
+        h("span.text", h("span.name", c.name),
+          h("span.meta", inLot(c).map((p) => `${p.quantity}× ${fname(p.finish)} ${p.condition} at ${usd4(p.price_paid)}`).join(" · ") + ` · ${sn(c)}`))),
+      h("button", { type: "button", "aria-label": `Take ${c.name} out of the lot`, onclick: () => removeCard(c) }, "Remove from lot"))))
+      : h("p.muted", "No cards yet. Continue adding to enter new cards, or Add cards you own… to bring in cards already in your collection."));
+}
+
+// showOwnedPicker finds cards in the collection and puts copies of them into lot `l`.
+function showOwnedPicker(l) {
+  const dlg = $("#dialog");
+  const search = h("input", { type: "search", placeholder: "Search your collection", "aria-label": "Search your collection" });
+  const results = h("div.list.picker");
+  let changed = false, timer;
+  const notInLot = (c) => c.copy_count - c.purchases.filter((p) => p.lot === l.id).reduce((n, p) => n + p.quantity, 0);
+  const show = async () => {
+    const q = search.value.trim();
+    if (!q) { fill(results, h("p.muted.empty", "Type part of a card's name, its set or its number.")); return; }
+    try {
+      const d = await api("GET", gameAPI(`/cards?${new URLSearchParams({ q, sort: "name" })}`));
+      const cards = d.cards.filter((c) => notInLot(c) > 0).slice(0, 40);
+      fill(results, cards.length ? cards.map((c) => {
+        const free = notInLot(c);
+        const qty = h("input", { type: "number", min: 1, max: free, step: 1, value: free, "aria-label": `Copies of ${c.name} to put in the lot` });
+        const row = h("div.card",
+          h("span.text", h("span.name", c.name), h("span.meta", `${sn(c)} · ${plural(free, "copy", "copies")} not in this lot`)),
+          qty,
+          h("button", { type: "button", onclick: async (e) => {
+            const n = parseInt(qty.value, 10);
+            if (!(n >= 1 && n <= free)) { status(`Choose 1 to ${free}.`, true); return; }
+            e.currentTarget.disabled = true;
+            try {
+              const r = await api("POST", gameAPI(`/lots/cards?id=${encodeURIComponent(l.id)}`), { cards: [{ key: c.key, quantity: n }] });
+              changed = true;
+              status(`Put ${plural(r.moved, "copy", "copies")} of ${c.name} in ${l.name}.`, false, r.undo);
+              fill(row, h("span.text", h("span.name", c.name), h("span.meta", `${plural(r.moved, "copy", "copies")} put in the lot`)));
+            } catch (err) { status(err.message, true); e.currentTarget.disabled = false; }
+          } }, "Put in lot"));
+        return row;
+      }) : h("p.muted.empty", "No cards match that aren't already all in this lot."));
+    } catch (e) { fill(results, h("p.error", e.message)); }
+  };
+  search.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(show, 250); });
+  fill(dlg, h("div.dlg", h("header", h("h2", `Add cards you own to ${l.name}`),
+      h("p.muted", { style: "margin:4px 0 0" }, "The copies join the lot: its date and its share of the price replace theirs. Copies in another lot leave it.")),
+    h("div.body", search, results),
+    h("footer", h("button.primary", { type: "button", onclick: () => dlg.close() }, "Done"))));
+  dlg.addEventListener("close", async () => { if (changed) { await loadLots(); route(); } }, { once: true });
+  dlg.showModal();
+  show();
+  search.focus();
 }
 
 // toolRow is one action on the Tools page with what it does.
@@ -2507,7 +2588,7 @@ async function viewTools() {
       toolRow(h("a.button", { href: "#/sealed" }, "Sealed product…"), "Boxes, bundles and decks you keep unopened: what you paid and what they're worth. There's no free price source for sealed product, so you enter each value yourself."),
       toolRow(h("a.button", { href: "#/watchlist" }, "Watchlist…"), "Cards whose price you're watching, with an alert when one moves by a percentage or crosses a price. Prices are checked when the app refreshes them, so alerts appear while the app is open or the next time you open it."),
       toolRow(h("a.button", { href: "#/earnings" }, "Earnings…"), "Cards you've sold: what they sold for, what they cost, fees, and the gain, by month and year. Sell copies with Sell… on a card's purchase."),
-      toolRow(h("a.button", { href: "#/lots" }, "Lots…"), "Cards bought together for one price, such as a bulk lot or a bundle: what each lot cost and what its cards are worth now."),
+      toolRow(h("a.button", { href: "#/lots" }, "Bundles/Lots…"), "Cards bought together for one price, such as a bulk lot or a bundle: what each lot cost and what its cards are worth now."),
       toolRow(h("a.button", { href: "#/backups" }, "Restore a backup…"), "Go back to the collection as it was before a recent import, bulk edit or bulk delete. The last 10 backups are kept."),
       gameInfo().Scan ? toolRow(h("a.button", { href: "#/scan" }, "Scan a card…"), "Identify a card from the camera or a photo, then add it.") : null),
     h("h2", "Prices"),
@@ -2608,10 +2689,10 @@ async function route() {
   const [path, qs] = location.hash.replace(/^#\/?/, "").split("?");
   const view = path || "home";
   if (state.scanStop && view !== "scan") { state.scanStop(); state.scanStop = null; }
-  const active = ["import", "backups", "lots", "earnings", "watchlist", "sealed", "tags"].includes(view) ? "tools" : view === "scan" ? "add" : view;
+  const active = ["import", "backups", "earnings", "watchlist", "sealed", "tags"].includes(view) ? "tools" : view === "scan" ? "add" : view;
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === active));
-  // The tab bar has no Lists or Statistics tab: they're reached from Tools there.
-  document.querySelectorAll(".tabbar a").forEach((a) => a.classList.toggle("active", a.dataset.view === (["lists", "stats"].includes(active) ? "tools" : active)));
+  // The tab bar has no Lists, Statistics or Lots tab: they're reached from Tools there.
+  document.querySelectorAll(".tabbar a").forEach((a) => a.classList.toggle("active", a.dataset.view === (["lists", "stats", "lots"].includes(active) ? "tools" : active)));
   try {
     if (view === "collection") await viewCollection(qs || "");
     else if (view === "add") viewAdd(qs || "");

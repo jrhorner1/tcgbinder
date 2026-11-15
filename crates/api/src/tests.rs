@@ -857,6 +857,48 @@ fn selling_tagged_copies_and_undoing() {
 }
 
 #[test]
+fn owned_cards_into_and_out_of_lots() {
+    let f = fixture();
+    // A finished lot of 4 cards for $8, split evenly: $2 each.
+    let (status, lot) = call(
+        &f.api,
+        "POST",
+        "/api/games/mtg/lots",
+        Some(
+            json!({"name": "Old box", "total_paid": 8, "acquired_date": "2020-01-01", "count": {"kind": "known", "cards": 4}, "split": "even"}),
+        ),
+    );
+    assert_eq!(status, 200, "{lot}");
+    let id = lot["id"].as_str().unwrap().to_string();
+    let path = format!("/api/games/mtg/lots/cards?id={id}");
+    // Shock (2 copies at $0.25) and one Opt.
+    let (status, v) = call(&f.api, "POST", &path, Some(json!({"cards": [{"key": SHOCK}, {"key": OPT, "quantity": 1}]})));
+    assert_eq!(status, 200, "{v}");
+    assert_eq!((v["moved"].as_i64(), v["lot"]["entered"].as_i64()), (Some(3), Some(3)));
+    assert!(v["undo"]["backup"].as_str().is_some());
+    let shock = get(&f.api, &format!("/api/games/mtg/card?key={SHOCK}"))["card"].clone();
+    assert_eq!(
+        (shock["purchases"][0]["lot"].as_str(), shock["purchases"][0]["price_paid"].as_f64()),
+        (Some(id.as_str()), Some(2.0)),
+        "repriced"
+    );
+    assert_eq!(shock["purchases"][0]["acquired_date"], "2020-01-01", "the lot's date");
+    assert_eq!(call(&f.api, "POST", &path, Some(json!({"cards": [{"key": SHOCK}]}))).0, 400, "already all in the lot");
+    assert_eq!(call(&f.api, "POST", &path, Some(json!({"cards": []}))).0, 400);
+    assert_eq!(call(&f.api, "POST", "/api/games/mtg/lots/cards?id=nope", Some(json!({"cards": [{"key": OPT}]}))).0, 404);
+
+    // Out again: Shock stays, at the lot's price; the lot has Opt left.
+    let (status, v) = call(&f.api, "DELETE", &format!("{path}&key={SHOCK}"), None);
+    assert_eq!((status, v["freed"].as_i64(), v["lot"]["entered"].as_i64()), (200, Some(2), Some(1)));
+    let shock = get(&f.api, &format!("/api/games/mtg/card?key={SHOCK}"))["card"].clone();
+    assert_eq!(
+        (shock["copy_count"].as_i64(), shock["purchases"][0]["lot"].as_str(), shock["purchases"][0]["price_paid"].as_f64()),
+        (Some(2), Some(""), Some(2.0))
+    );
+    assert_eq!(call(&f.api, "DELETE", &format!("{path}&key={SHOCK}"), None).0, 400);
+}
+
+#[test]
 fn changes_need_the_client_header() {
     let f = fixture();
     // A cross-site form or fetch can't add the header, so it must be refused.

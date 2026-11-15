@@ -225,12 +225,24 @@ cards than counted, it asks whether to spread the total over the cards entered.
 
 A paused lot is offered again the next time you open Add, on any device sharing the
 data folder. While you enter a lot, its banner links to the lot's page and to all
-lots. **Tools → Lots…** lists every lot with what it cost, how many of its cards are
-entered ("37 of 500 entered"), and what its cards are worth now; **Add a lot…** there
-starts a new one and goes on to the Add page to enter its cards. A lot's page lists its cards, with **Edit** (changing the total, count,
-date or split reprices the cards), **Continue adding**, **Recalculate at today's
-prices** (finished value-split lots) and **Delete** (keep the cards with their prices,
-or delete them too). On a card's page, copies from a lot name it; a price typed there
+lots. **Bundles/Lots** (in the sidebar; on a phone, **Tools → Bundles/Lots…**) lists
+every lot with what it cost, how many of its cards are entered ("37 of 500
+entered"), and what its cards are worth now; **Add a lot…** there starts a new one
+and goes on to the Add page to enter its cards. A lot's page lists its cards, with
+**Edit** (changing the total, count, date or split reprices the cards), **Continue
+adding**, **Add cards you own…**, **Recalculate at today's prices** (finished
+value-split lots) and **Delete** (keep the cards with their prices, or delete them
+too).
+
+- **Cards you already own** can join a lot, for a purchase you entered card by card
+  before. **Add cards you own…** on the lot's page searches your collection: choose
+  how many copies of a card to put in. Or tick cards in the collection list and use
+  **Bulk edit → Put in a lot** to put every copy of them in. Either way the copies
+  take the lot's date and their share of its price (the lot is repriced), copies that
+  were in another lot leave it, and Undo puts things back.
+- **Remove from lot** beside a card on the lot's page takes it out of the lot without
+  removing it from your collection: its copies keep the price and date the lot gave
+  them, and the lot's other cards are repriced. On a card's page, copies from a lot name it; a price typed there
 is replaced the next time the lot is repriced.
 
 ## Selling cards

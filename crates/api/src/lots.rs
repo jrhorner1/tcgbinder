@@ -1,8 +1,9 @@
 //! Lots: cards bought together for one price (see `tcgbinder_core::lots`).
 
+use serde::Deserialize;
 use serde_json::{Value, json};
 
-use tcgbinder_core::collection::{Card, Copies, Purchase, round_cents};
+use tcgbinder_core::collection::{Card, Copies, LotPick, Purchase, round_cents};
 use tcgbinder_core::lots::{Lot, LotSplit};
 use tcgbinder_core::service::GameService;
 
@@ -131,6 +132,48 @@ impl Api {
         }
         tracing::info!(game = g.game.id(), lot = lot.name, open = lot.open, "lot changed");
         Ok(Reply::Json(answer))
+    }
+
+    /// Puts cards the collection holds into a lot (after a backup):
+    /// `{"cards": [{"key", "quantity"}]}`, `quantity` optional (every copy not in the
+    /// lot). The lot, and any lot the copies left, are repriced. Returns `lot`,
+    /// `moved` and `undo`.
+    pub(crate) fn put_cards_in_lot(&self, g: &GameService, id: &str, body: &[u8]) -> Result {
+        #[derive(Deserialize)]
+        struct Pick {
+            key: String,
+            #[serde(default)]
+            quantity: Option<i64>,
+        }
+        #[derive(Deserialize)]
+        struct Req {
+            cards: Vec<Pick>,
+        }
+        let lot = Self::find_lot(g, id)?;
+        let req: Req = decode(body)?;
+        if req.cards.is_empty() {
+            return Err(bad("choose at least one card"));
+        }
+        let picks: Vec<LotPick> = req.cards.into_iter().map(|p| LotPick { key: p.key, quantity: p.quantity }).collect();
+        let backup = g.store.backup("bulk-edit").map_err(internal)?;
+        let (moved, left) = g.store.put_in_lot(&lot.id, &lot.acquired_date, &picks).map_err(|e| bad(e.to_string()))?;
+        g.reprice_lot(&lot).map_err(internal)?;
+        for other in left.iter().filter_map(|l| g.lots.get(l)) {
+            g.reprice_lot(&other).map_err(internal)?;
+        }
+        tracing::info!(game = g.game.id(), lot = lot.name, moved, "cards put in lot");
+        Ok(Reply::Json(json!({ "lot": summary(g, &lot), "moved": moved, "undo": undo(g, &backup) })))
+    }
+
+    /// Takes a card out of a lot (`key=`): its copies stay in the collection at the
+    /// price the lot gave them, and the lot's other cards are repriced. Returns `lot`
+    /// and `freed`.
+    pub(crate) fn remove_card_from_lot(&self, g: &GameService, id: &str, key: &str) -> Result {
+        let lot = Self::find_lot(g, id)?;
+        let freed = g.store.remove_from_lot(&lot.id, key).map_err(|e| bad(e.to_string()))?;
+        g.reprice_lot(&lot).map_err(internal)?;
+        tracing::info!(game = g.game.id(), lot = lot.name, freed, "card taken out of lot");
+        Ok(Reply::Json(json!({ "lot": summary(g, &lot), "freed": freed })))
     }
 
     /// Deletes a lot: `cards=keep` leaves its copies with their prices, `cards=remove`

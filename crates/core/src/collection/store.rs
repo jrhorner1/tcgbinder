@@ -18,6 +18,14 @@ pub struct Store {
     file: JsonFile<StoreData>,
 }
 
+/// A card to put in a lot ([`Store::put_in_lot`]): all its copies not in the lot, or
+/// `quantity` of them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LotPick {
+    pub key: String,
+    pub quantity: Option<i64>,
+}
+
 /// What renaming or deleting a tag did: purchases changed, and the backup taken
 /// first (None when the tag wasn't in use, so nothing was done).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -347,6 +355,69 @@ impl Store {
             }
             data.cards.retain(|_, c| c.copy_count() > 0);
             Ok(changed)
+        })
+    }
+
+    /// Moves copies the collection already holds into a lot, in one save: for each
+    /// pick, every copy of the card not already in the lot, or `quantity` of them
+    /// (copies in no lot first, then copies from other lots). Moved copies take the
+    /// lot's date; their price comes from repricing the lot. Returns the copies moved
+    /// and the other lots copies left, which need repricing too.
+    pub fn put_in_lot(&self, lot_id: &str, acquired_date: &str, picks: &[LotPick]) -> Result<(i64, Vec<String>)> {
+        self.file.mutate(|data| {
+            let (mut moved, mut left) = (0, Vec::<String>::new());
+            for pick in picks {
+                let Some(card) = data.cards.get_mut(&pick.key) else { bail!("that card isn't in the collection") };
+                let available: i64 = card.copies.each().filter(|(_, _, p)| p.lot != lot_id).map(|(_, _, p)| p.quantity).sum();
+                let mut want = pick.quantity.unwrap_or(available);
+                if want <= 0 || want > available {
+                    bail!("{} has {} {} that could join the lot", card.name, available, if available == 1 { "copy" } else { "copies" });
+                }
+                // Copies in no lot first, then those in other lots.
+                let mut rows = card.purchase_rows();
+                rows.sort_by_key(|r| !r.purchase.lot.is_empty());
+                let mut copies = super::Copies::default();
+                for r in rows {
+                    let p = r.purchase;
+                    let take = if p.lot == lot_id { 0 } else { want.min(p.quantity) };
+                    if take > 0 {
+                        if !p.lot.is_empty() && !left.contains(&p.lot) {
+                            left.push(p.lot.clone());
+                        }
+                        let joined =
+                            Purchase { quantity: take, lot: lot_id.to_string(), acquired_date: acquired_date.to_string(), ..p.clone() };
+                        copies.add(&r.finish, r.condition, joined);
+                        want -= take;
+                        moved += take;
+                    }
+                    copies.add(&r.finish, r.condition, Purchase { quantity: p.quantity - take, ..p });
+                }
+                card.copies = copies;
+            }
+            Ok((moved, left))
+        })
+    }
+
+    /// Takes a card out of a lot: its copies stay in the collection with the price and
+    /// date the lot gave them, in no lot. Returns the copies freed.
+    pub fn remove_from_lot(&self, lot_id: &str, key: &str) -> Result<i64> {
+        self.file.mutate(|data| {
+            let Some(card) = data.cards.get_mut(key) else { bail!("that card isn't in the collection") };
+            let mut freed = 0;
+            let mut copies = super::Copies::default();
+            for (f, cond, p) in card.copies.each() {
+                if p.lot == lot_id {
+                    freed += p.quantity;
+                    copies.add(f, cond, Purchase { lot: String::new(), ..p.clone() });
+                } else {
+                    copies.add(f, cond, p.clone());
+                }
+            }
+            if freed == 0 {
+                bail!("{} isn't in that lot", card.name);
+            }
+            card.copies = copies;
+            Ok(freed)
         })
     }
 
@@ -1061,5 +1132,42 @@ mod tests {
         s.reprice_lot("L", &prices, "2026-11-15").unwrap();
         let p = &s.get("d").unwrap().purchase_rows()[0].purchase;
         assert_eq!((p.price_paid, p.tags.clone()), (1.5, v(&["deck"])));
+    }
+
+    #[test]
+    fn moving_copies_into_and_out_of_lots() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path().join("c.json"), "mtg").unwrap();
+        // a: 3 copies at $1 (no lot) and 2 in lot "old"; b: 1 copy at $1.
+        let mut a = card("a", 3);
+        a.add_purchase("nonfoil", Condition::NearMint, Purchase { quantity: 2, price_paid: 0.5, lot: "old".into(), ..Default::default() });
+        s.add_cards(vec![a, card("b", 1)]).unwrap();
+        let pick = |key: &str, q: Option<i64>| LotPick { key: key.into(), quantity: q };
+        let in_lot = |key: &str, lot: &str| -> i64 {
+            s.get(key).map_or(0, |c| c.copies.each().filter(|(_, _, p)| p.lot == lot).map(|(_, _, p)| p.quantity).sum())
+        };
+
+        // Two copies of a: taken from the copies in no lot first.
+        assert_eq!(s.put_in_lot("new", "2026-11-15", &[pick("a", Some(2))]).unwrap(), (2, vec![]));
+        assert_eq!((in_lot("a", "new"), in_lot("a", ""), in_lot("a", "old")), (2, 1, 2));
+        let joined = s.get("a").unwrap().purchase_rows().into_iter().find(|r| r.purchase.lot == "new").unwrap().purchase;
+        assert_eq!(joined.acquired_date, "2026-11-15", "the lot's date");
+        // Every other copy of a (1 in no lot, 2 from "old"), and all of b.
+        let (moved, left) = s.put_in_lot("new", "2026-11-15", &[pick("a", None), pick("b", None)]).unwrap();
+        assert_eq!((moved, left), (4, vec!["old".to_string()]));
+        assert_eq!((in_lot("a", "new"), in_lot("a", "old"), in_lot("b", "new")), (5, 0, 1));
+        assert_eq!(s.get("a").unwrap().copy_count(), 5, "no copies made or lost");
+        assert!(s.put_in_lot("new", "", &[pick("a", None)]).is_err(), "nothing left to join");
+        assert!(s.put_in_lot("new", "", &[pick("b", Some(2))]).is_err());
+        assert!(s.put_in_lot("new", "", &[pick("nope", None)]).is_err());
+
+        // Out of the lot: the copies stay, at the price the lot gave them.
+        let mut priced = s.get("b").unwrap();
+        priced.copies.0.get_mut("nonfoil").unwrap().get_mut(&Condition::NearMint).unwrap()[0].price_paid = 0.37;
+        s.save_card("b", priced).unwrap();
+        assert_eq!(s.remove_from_lot("new", "b").unwrap(), 1);
+        let p = s.get("b").unwrap().purchase_rows()[0].purchase.clone();
+        assert_eq!((p.lot.as_str(), p.price_paid, p.quantity), ("", 0.37, 1));
+        assert!(s.remove_from_lot("new", "b").is_err(), "not in the lot any more");
     }
 }

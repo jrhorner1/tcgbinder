@@ -383,6 +383,8 @@ impl Api {
                         None => Ok(self.list_lots(g)),
                     },
                     ("POST", ["lots"]) => self.create_lot(g, body),
+                    ("POST", ["lots", "cards"]) => self.put_cards_in_lot(g, q.get("id").map_or("", String::as_str), body),
+                    ("DELETE", ["lots", "cards"]) => self.remove_card_from_lot(g, q.get("id").map_or("", String::as_str), key),
                     ("PUT", ["lots"]) => self.update_lot(g, q.get("id").map_or("", String::as_str), body),
                     ("DELETE", ["lots"]) => {
                         self.delete_lot(g, q.get("id").map_or("", String::as_str), q.get("cards").map_or("", String::as_str))
