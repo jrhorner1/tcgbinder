@@ -12,7 +12,7 @@ mod stats;
 mod store;
 
 pub use breakdown::{Breakdown, BreakdownRow, BreakdownTable, MonthRow, Statistics, ValueBand, statistics};
-pub use card::{Card, CatalogUpdate, Condition, SetInfo};
+pub use card::{Card, CatalogUpdate, Condition, SetInfo, in_printed_set};
 pub use copies::{Copies, Purchase, PurchaseRow};
 pub use csv_export::{CSV_COLUMNS, write_csv};
 pub use edit::{BulkChange, BulkResult, missing, top_by_each, unique_cards, with_printing};

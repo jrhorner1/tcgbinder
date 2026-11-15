@@ -209,7 +209,7 @@ Code uses the UI's words, so a label on screen leads straight to the code behind
 | Cards / unique cards / sets | `Stats::cards`, `Stats::unique_cards`, `Stats::sets` |
 | N copies of a card | `Card::copy_count`, `finish_copy_count`, `condition_copy_count` |
 | Price paid / Market value / unpriced | `price_paid`, `market_value`, `unpriced` |
-| Set completion "12 / 280" | `SetStats::collected` / `SetStats::set_size` |
+| Set completion "12 / 280" | `SetStats::collected` / `SetStats::set_size`; `SetInfo::printed_size` (Scryfall's, 0 when unknown), `in_printed_set`, `compute_stats(…, main_only)` and `missing(…, printed_size)` follow the Set completion setting |
 | Collector number, rules text | `Card::collector_number`, `Card::rules_text` |
 | Bulk edit | `collection::BulkChange`, `Store::bulk_edit` |
 | Load / Update price history | `GameService::load_price_history`, `PriceHistory::history_loaded_on` |

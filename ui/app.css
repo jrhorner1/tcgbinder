@@ -207,6 +207,12 @@ dialog.ask .body input[type=text] { width: 100%; }
 .list-entry.stale { box-shadow: inset 3px 0 0 var(--amber); padding-left: 8px; }
 .inline { display: flex; gap: 6px; }
 .inline input { flex: 1; min-width: 0; }
+.missing-head { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; justify-content: space-between; padding-right: 12px; }
+.missing-head .empty { flex: 1 1 260px; }
+.missing-head .row-actions { flex-wrap: wrap; padding: 0 0 8px 12px; }
+.list.missing .card { flex-wrap: wrap; }
+.list.missing .card a.rowlink { flex: 1 1 180px; }
+.list.missing .card .row-actions { margin-left: auto; }
 /* Statistics */
 .two-col.stats { margin-top: 16px; gap: 16px 28px; }
 .two-col.stats .card-box { margin-bottom: 0; }

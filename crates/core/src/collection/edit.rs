@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use serde::Serialize;
 
 use super::copies::norm_finish;
-use super::{Card, CardValue, Condition, filter::default_order};
+use super::{Card, CardValue, Condition, filter::default_order, in_printed_set};
 
 /// Counts distinct printings (catalog IDs): several copies, finishes or conditions of
 /// the same printing count once.
@@ -40,10 +40,16 @@ pub fn top_by_each(cards: &[Card], n: usize) -> Vec<CardValue> {
     out
 }
 
-/// The cards of a set that aren't owned (by collector number).
-pub fn missing(set_cards: &[Card], owned: &[Card]) -> Vec<Card> {
+/// The cards of a set that aren't owned (by collector number). With a `printed_size`,
+/// only those in the printed run (see [`in_printed_set`]).
+pub fn missing(set_cards: &[Card], owned: &[Card], printed_size: Option<usize>) -> Vec<Card> {
     let have: HashSet<&str> = owned.iter().map(|c| c.collector_number.as_str()).collect();
-    set_cards.iter().filter(|c| !have.contains(c.collector_number.as_str())).cloned().collect()
+    set_cards
+        .iter()
+        .filter(|c| printed_size.is_none_or(|n| in_printed_set(&c.collector_number, n)))
+        .filter(|c| !have.contains(c.collector_number.as_str()))
+        .cloned()
+        .collect()
 }
 
 /// An edit applied to many cards at once. `None` fields are left unchanged; each
@@ -172,8 +178,9 @@ mod tests {
         assert_eq!(moved.id, "b");
         assert_eq!(moved.finish_copy_count("nonfoil"), 3);
 
-        let set = vec![card("x", "1", &["nonfoil"]), card("y", "2", &["nonfoil"])];
-        assert_eq!(missing(&set, &[owned])[0].id, "y");
-        assert_eq!(unique_cards(&set), 2);
+        let set = vec![card("x", "1", &["nonfoil"]), card("y", "2", &["nonfoil"]), card("z", "3a", &["nonfoil"])];
+        assert_eq!(missing(&set, std::slice::from_ref(&owned), None).iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["y", "z"]);
+        assert_eq!(missing(&set, &[owned], Some(2)).iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["y"], "the printed run only");
+        assert_eq!(unique_cards(&set), 3);
     }
 }

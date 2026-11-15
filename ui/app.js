@@ -714,9 +714,15 @@ async function renderSet(container, code) {
     try {
       const m = await api("GET", gameAPI(`/missing?set=${encodeURIComponent(code)}`));
       missingBox.hidden = false;
-      fill(missingBox,
-        h("p.muted.empty", m.missing.length ? `${plural(m.missing.length, "card", "cards")} you don't own yet. Add one here, or click it to search its printings.` : "You have every card in this set."),
-        m.missing.map((c) => {
+      const byNumber = (a, b) => compareNumber(a.collector_number, b.collector_number);
+      const byPrice = (a, b) => (anyPrice(b) || 0) - (anyPrice(a) || 0) || byNumber(a, b);
+      const sortMenu = h("select", { "aria-label": "Sort the missing cards", onchange: () => show() },
+        h("option", { value: "number" }, "By number"), h("option", { value: "price" }, "Most expensive first"));
+      const copy = h("button", { type: "button", onclick: () => copyToList(m, code) }, "Copy to a list…");
+      const head = m.missing.length ? h("div.missing-head",
+        h("p.muted.empty", `${plural(m.missing.length, "card", "cards")} you don't own yet${m.printedSize ? ` (of the ${m.printedSize} printed)` : ""}: ${usd(m.totalCost)} for one of each${m.unpriced ? `, ${m.unpriced} without a price` : ""}. Add one here, or click it to search its printings.`),
+        h("div.row-actions", sortMenu, copy)) : h("p.muted.empty", "You have every card in this set.");
+      const show = () => fill(missingBox, head, [...m.missing].sort(sortMenu.value === "price" ? byPrice : byNumber).map((c) => {
           const row = h("div.card",
             h("a.rowlink", { href: `#/add?${new URLSearchParams({ text: c.name, set: code })}` },
               h("span.num", c.collector_number), h("span.text", h("span.name", c.name),
@@ -725,6 +731,7 @@ async function renderSet(container, code) {
               h("button", { type: "button", onclick: () => addInDialog(c, () => row.remove()) }, "Add…")));
           return row;
         }));
+      show();
       showMissing.remove();
     } catch (e) { status(e.message, true); showMissing.disabled = false; }
   } }, d.size > 0 ? `Show the ${Math.max(d.size - d.collected, 0)} missing cards` : "Show missing cards");
@@ -1265,6 +1272,39 @@ async function viewStats() {
         s.undated ? h("p.note", `${plural(s.undated, "copy has", "copies have")} no acquired date and aren't counted here.`) : null),
       h("div", h("h2", "Most Copies"),
         s.mostCopies.length ? h("div.card-box", cardRows(s.mostCopies, (c) => c.market_value)) : h("p.muted", "No card has more than one copy."))));
+}
+
+// compareNumber orders collector numbers: "2" < "10" < "10a" < "A1".
+function compareNumber(a, b) {
+  const na = parseInt(a, 10), nb = parseInt(b, 10);
+  if (Number.isNaN(na) !== Number.isNaN(nb)) return Number.isNaN(na) ? 1 : -1;
+  return (na - nb) || a.localeCompare(b);
+}
+
+// copyToList puts every missing card of a set on a new list (or an existing one).
+async function copyToList(m, code) {
+  const lists = await api("GET", gameAPI("/lists")).catch(() => []);
+  const NEW = "\u0000new";
+  const which = h("select", { "aria-label": "List", onchange: () => { name.hidden = which.value !== NEW; } },
+    h("option", { value: NEW }, "A new list"), lists.map((l) => h("option", { value: l.id }, l.name)));
+  const name = h("input", { type: "text", value: `${code} missing`, "aria-label": "New list's name" });
+  const v = await askDialog("Copy to a list", [
+    `Puts the ${plural(m.missing.length, "missing card", "missing cards")} on a list, one of each, as these printings.`, which, name,
+  ], [{ label: "Copy", value: "copy", primary: true }]);
+  if (!v) return;
+  try {
+    let id = which.value;
+    if (id === NEW) {
+      if (!name.value.trim()) { status("Name the new list.", true); return; }
+      id = (await api("POST", gameAPI("/lists"), { name: name.value.trim() })).id;
+    }
+    const list = await api("GET", gameAPI(`/lists?id=${encodeURIComponent(id)}`));
+    const entries = list.entries.map((e) => ({ card: e.card, quantity: e.quantity, any_printing: e.any_printing, finish: e.finish }))
+      .concat(m.missing.map((c) => ({ card: c, quantity: 1, any_printing: false, finish: "" })));
+    await api("PUT", gameAPI(`/lists?id=${encodeURIComponent(id)}`), { entries });
+    status(`Copied ${plural(m.missing.length, "card", "cards")} to ${list.list.name}.`);
+    go("lists", new URLSearchParams({ id }));
+  } catch (e) { status(e.message, true); }
 }
 
 // addInDialog shows a catalog card's add form in the dialog, leaving the page as it is.
@@ -2193,6 +2233,7 @@ const choiceNames = {
   theme: { system: "Match system", light: "Light", dark: "Dark" },
   text_size: { small: "Small", normal: "Normal", large: "Large", larger: "Larger" },
   card_order: { name: "By name", newest: "By set, newest first", oldest: "By set, oldest first", value: "Most valuable first" },
+  set_completion: { main: "The printed set (e.g. 280 cards)", all: "Every card Scryfall lists (variants too)" },
   chart_range: { "30D": "30 days", "90D": "90 days", "1Y": "1 year", All: "All time" },
   price_refresh: { daily: "Daily", weekly: "Weekly", manual: "Only when I ask" },
   default_condition: { NM: "NM — Near Mint", LP: "LP — Lightly Played", MP: "MP — Moderately Played", HP: "HP — Heavily Played", DMG: "DMG — Damaged" },
@@ -2237,7 +2278,8 @@ async function viewSettings() {
       row("Text size", menu("text_size", "text size"), "Scales text and spacing"),
       row("Card images", check("show_images", "Show card images", "card images"), "Turn off to save data on slow or metered connections")),
     section("Collection",
-      row("Card order", menu("card_order", "card order"), "How cards are listed in the collection"),
+      row("Card order", menu("card_order", "card order"), "How cards are listed in the collection, until you choose a Sort there"),
+      row("Set completion", menu("set_completion", "set completion"), "What a set's completion counts: the cards numbered up to the size printed on them, or every card including variants, promos and extras"),
       row("Value chart", menu("chart_range", "chart range"), "The range the Value Over Time chart shows first")),
     section("Prices",
       row("Update prices", menu("price_refresh", "price updates"), "You can also refresh them on the Tools page"),

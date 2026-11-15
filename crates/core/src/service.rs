@@ -694,7 +694,7 @@ mod tests {
         let today = day("2024-03-01");
         let prices = PriceHistory::in_memory();
         prices.set("a", "nonfoil", "2024-02-20", 4.0);
-        let st = compute_stats_at(&cards, &HashMap::new(), today);
+        let st = compute_stats_at(&cards, &HashMap::new(), true, today);
         let vc = build_value_chart(&cards, &st, &prices, "30D", today);
         assert_eq!(vc.history_start, Some(day("2024-02-20")));
         assert_eq!(pts(&vc.market_value), [("2024-02-20".into(), 4.0), ("2024-03-01".into(), 4.0)]);

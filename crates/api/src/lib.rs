@@ -436,7 +436,7 @@ impl Api {
 
     fn home(&self, g: &GameService, range: &str) -> Reply {
         let cards = g.store.cards();
-        let st = compute_stats(&cards, &g.cached_sets());
+        let st = compute_stats(&cards, &g.cached_sets(), self.main_set_only());
         let range = if range.is_empty() { service::DEFAULT_CHART_RANGE } else { range };
         let vc = service::build_value_chart(&cards, &st, &g.prices, range, dates::today());
         let sets: Vec<Value> = st
@@ -598,7 +598,7 @@ impl Api {
     fn set_page(&self, g: &GameService, code: &str) -> Result {
         let code = code.to_uppercase();
         let cards = set_cards(g, &code);
-        let st = compute_stats(&cards, &g.cached_sets());
+        let st = compute_stats(&cards, &g.cached_sets(), self.main_set_only());
         let set = st.by_set.first().ok_or_else(|| not_found(format!("no cards from set {code:?}")))?;
         let top = top_by_each(&cards, 10); // ranked by one copy
         Ok(Reply::Json(json!({
@@ -610,11 +610,29 @@ impl Api {
         })))
     }
 
+    /// Whether set completion counts only the printed set (the Set completion setting).
+    fn main_set_only(&self) -> bool {
+        self.settings.get().set_completion != "all"
+    }
+
+    /// The set's cards not owned, by collector number, following the Set completion
+    /// setting, with `totalCost`: one of each at market price, in the usual finish
+    /// where it has a price. `printedSize` is the printed run used, or null for all.
     fn missing(&self, g: &GameService, code: &str) -> Result {
         let code = code.to_uppercase();
         let set_cards = g.game.set_cards(&code).map_err(upstream)?;
-        let missing = collection::missing(&set_cards, &self::set_cards(g, &code));
-        Ok(Reply::Json(json!({ "set": code, "total": set_cards.len(), "missing": views(&missing) })))
+        let printed = g.cached_sets().get(&code).map_or(0, |s| s.printed_size);
+        let printed = (self.main_set_only() && printed > 0).then_some(printed);
+        let missing = collection::missing(&set_cards, &self::set_cards(g, &code), printed);
+        let order = g.game.finishes();
+        let price = |c: &Card| order.iter().find_map(|f| c.market.get(*f).copied()).or_else(|| c.market.values().copied().reduce(f64::min));
+        let cost: f64 = missing.iter().filter_map(price).sum();
+        let unpriced = missing.iter().filter(|c| price(c).is_none()).count();
+        let total = set_cards.iter().filter(|c| printed.is_none_or(|n| collection::in_printed_set(&c.collector_number, n))).count();
+        Ok(Reply::Json(json!({
+            "set": code, "total": total, "printedSize": printed, "totalCost": round_cents(cost), "unpriced": unpriced,
+            "missing": views(&missing),
+        })))
     }
 
     /// Every printing of the card in a language (the card's own when `lang` is "").

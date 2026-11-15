@@ -70,7 +70,7 @@ impl FakeServer {
 /// lists that set's cards (Lightning Bolt 1, Opt 60, Shock 156), and "oracleid:..."
 /// (every printing of a card) is treated as Lightning Bolt. /cards/collection finds
 /// those three by set code and collector number, in any set, and by ID or name alone
-/// (as the "m19" printing).
+/// (as the "m19" printing). /sets lists M19, with a printed size of 100.
 pub fn search_server() -> (crate::scryfall::Client, FakeServer) {
     use crate::scryfall::{Card, CollectionResponse, Prices, SearchResponse};
     let set_cards = |code: &str| -> Vec<Card> {
@@ -123,6 +123,12 @@ pub fn search_server() -> (crate::scryfall::Client, FakeServer) {
                 }
             }
             return Reply::json(&resp);
+        }
+        if req.path == "/sets" {
+            // M19 with a printed size of 100: Shock (156) is outside its printed run.
+            return Reply::json(&serde_json::json!({"data": [
+                {"code": "m19", "name": "Core Set 2019", "card_count": 4, "printed_size": 100, "released_at": "2018-07-13"}
+            ]}));
         }
         if req.path != "/cards/search" {
             return Reply::not_found();

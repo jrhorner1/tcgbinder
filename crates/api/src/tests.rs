@@ -650,6 +650,32 @@ fn statistics_page() {
 }
 
 #[test]
+fn completion_of_the_printed_set() {
+    let f = fixture();
+    let cache = tempfile::tempdir().unwrap();
+    f.svc.game.open(cache.path()).unwrap(); // the set list is cached there
+    f.svc.sets().unwrap();
+    // M19's fake cards: Lightning Bolt 1, Opt 60, Shock 156 (owned); printed size 100.
+    let set = get(&f.api, "/api/games/mtg/set?code=m19");
+    assert_eq!((set["collected"].as_i64(), set["size"].as_i64()), (Some(0), Some(100)), "Shock is outside the printed run");
+    let m = get(&f.api, "/api/games/mtg/missing?set=m19");
+    let names: Vec<&str> = m["missing"].as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["Lightning Bolt", "Opt"]);
+    assert_eq!(
+        (m["total"].as_i64(), m["printedSize"].as_i64(), m["totalCost"].as_f64(), m["unpriced"].as_i64()),
+        (Some(2), Some(100), Some(0.5), Some(0))
+    );
+    assert_eq!(get(&f.api, "/api/games/mtg/home")["bySet"][0]["Size"], 100);
+
+    call(&f.api, "PUT", "/api/settings", Some(json!({"set_completion": "all"})));
+    let set = get(&f.api, "/api/games/mtg/set?code=m19");
+    assert_eq!((set["collected"].as_i64(), set["size"].as_i64()), (Some(1), Some(4)));
+    let m = get(&f.api, "/api/games/mtg/missing?set=m19");
+    assert_eq!((m["total"].as_i64(), m["printedSize"].is_null(), m["missing"].as_array().unwrap().len()), (Some(3), true, 2));
+    assert_eq!(get(&f.api, "/api/settings")["choices"]["set_completion"], json!(["main", "all"]));
+}
+
+#[test]
 fn changes_need_the_client_header() {
     let f = fixture();
     // A cross-site form or fetch can't add the header, so it must be refused.

@@ -20,7 +20,11 @@ card** below them. On phones the tab bar at the bottom has **Home**, **Cards**,
     point is added for each day the app runs.
   - *Price paid* is a running total by acquired date.
   - Before recorded prices begin, a grey line estimates value at today's prices.
-- **Set Completion:** distinct collector numbers owned out of each set's size. Click a
+- **Set Completion:** distinct collector numbers owned out of each set's size: by
+  default the printed set, as the number on the cards says ("123/280": Core Set 2019
+  has 280, though Scryfall lists 314 with its variants and extras). Only plain numbers
+  up to that size count. **Settings → Set completion** can count every card instead.
+  Sets without a printed size count every card. Click a
   set to open it.
 - **Value by Set** and **Most Valuable Cards.** Click a set or card to open it.
 
@@ -65,8 +69,10 @@ as soon as the import finishes.
   address, so a bookmark keeps them.
 - **Set pages:** choose a set in the **Set** filter, or click a set on Home. They show
   completion, value, the most valuable cards (ranked by one copy), and **Missing
-  Cards**. That list is loaded from Scryfall on request; click a missing card to add
-  it.
+  Cards**. That list is loaded from Scryfall on request and follows the Set completion
+  setting. It says what one of each missing card would cost at market price, sorts
+  by number or most expensive first, and **Copy to a list…** puts them all on a list
+  (a new one, or one you have). Click a missing card to add it.
 
 On a wide screen the selected card or set shows beside the list. On a phone (or a
 narrow window) a card replaces the list, with a **Back** button. When the card has
@@ -374,6 +380,7 @@ and the desktop and web apps on one computer share them.
 | Text size | Small, Normal, Large, Larger | Normal |
 | Card images | show or hide (saves data on metered connections) | shown |
 | Card order | The collection list's order until you choose one in its Sort menu: By name, By set (newest or oldest first), Most valuable first | By name |
+| Set completion | What a set's completion counts: the printed set (collector numbers up to the size printed on the cards), or every card Scryfall lists, variants too | The printed set |
 | Value chart | 30 days, 90 days, 1 year, All time (also changed by the chart's buttons) | 90 days |
 | Update prices | Daily, Weekly, Only when I ask | Daily |
 | Price history | load automatically the first time (desktop and web; phones ask) | on |

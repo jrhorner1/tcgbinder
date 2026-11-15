@@ -161,8 +161,27 @@ pub struct CatalogUpdate {
 pub struct SetInfo {
     pub code: String,
     pub name: String,
+    /// Every card Scryfall lists in the set, variants included.
     pub card_count: usize,
     pub released_at: String,
+    /// The number printed on the cards as the set's size ("123/280"); 0 when unknown.
+    pub printed_size: usize,
+}
+
+impl SetInfo {
+    /// The set's size for completion: the printed size when counting the main set and
+    /// it's known, else every card.
+    pub fn completion_size(&self, main_only: bool) -> usize {
+        if main_only && self.printed_size > 0 { self.printed_size } else { self.card_count }
+    }
+}
+
+/// Whether a collector number is in a set's printed run: a plain number from 1 to
+/// `printed_size` ("280" yes; "281", "12a", "★5", "A1" no).
+pub fn in_printed_set(collector_number: &str, printed_size: usize) -> bool {
+    !collector_number.is_empty()
+        && collector_number.bytes().all(|b| b.is_ascii_digit())
+        && collector_number.parse::<usize>().is_ok_and(|n| n >= 1 && n <= printed_size)
 }
 
 #[cfg(test)]

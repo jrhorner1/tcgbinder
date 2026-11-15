@@ -25,6 +25,7 @@ pub mod choices {
         ("theme", &["system", "light", "dark"]),
         ("text_size", &["small", "normal", "large", "larger"]),
         ("card_order", &["name", "newest", "oldest", "value"]),
+        ("set_completion", &["main", "all"]),
         ("chart_range", CHART_RANGES),
         ("price_refresh", &["daily", "weekly", "manual"]),
         ("default_condition", CONDITIONS),
@@ -50,6 +51,9 @@ pub struct Settings {
     pub card_order: String,
     /// The value-over-time range shown first.
     pub chart_range: String,
+    /// Set completion counts the printed set (main: collector numbers up to the
+    /// number printed on the cards) or every card Scryfall lists in it (all).
+    pub set_completion: String,
 
     // Prices
     /// daily, weekly or manual.
@@ -85,6 +89,7 @@ impl Default for Settings {
             show_images: true,
             card_order: "name".into(),
             chart_range: "90D".into(),
+            set_completion: "main".into(),
             price_refresh: "daily".into(),
             auto_price_history: true,
             default_condition: "NM".into(),
@@ -97,12 +102,13 @@ impl Default for Settings {
 }
 
 impl Settings {
-    fn fields_mut(&mut self) -> [(&'static str, &mut String); 8] {
+    fn fields_mut(&mut self) -> [(&'static str, &mut String); 9] {
         [
             ("theme", &mut self.theme),
             ("text_size", &mut self.text_size),
             ("card_order", &mut self.card_order),
             ("chart_range", &mut self.chart_range),
+            ("set_completion", &mut self.set_completion),
             ("price_refresh", &mut self.price_refresh),
             ("default_condition", &mut self.default_condition),
             ("default_date", &mut self.default_date),
