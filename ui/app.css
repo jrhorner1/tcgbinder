@@ -178,6 +178,58 @@ details.more .note { margin: 6px 0 0; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { font-size: 13px; padding: 3px 10px; border-radius: 999px; border-color: var(--blue); background: var(--blue-soft); }
 .counts .money-line { white-space: nowrap; }
+/* Tags. A chip's hue comes from its name (--tag-hue); the lightness suits the theme. */
+:root { --tag-bg: 30%; --tag-fg: 88%; --tag-sat: 45%; }
+@media (prefers-color-scheme: light) { :root:not([data-theme=dark]) { --tag-bg: 90%; --tag-fg: 26%; --tag-sat: 60%; } }
+:root[data-theme=light] { --tag-bg: 90%; --tag-fg: 26%; --tag-sat: 60%; }
+.tag-chip {
+  display: inline-flex; align-items: center; gap: 2px; max-width: 100%; padding: 1px 8px; border: 0; border-radius: 999px;
+  font-size: 12px; line-height: 1.6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-decoration: none;
+  background: hsl(var(--tag-hue, 220) var(--tag-sat) var(--tag-bg)); color: hsl(var(--tag-hue, 220) 60% var(--tag-fg));
+}
+button.tag-chip { cursor: pointer; font-family: inherit; }
+.tag-chip .tag-x { border: 0; background: none; color: inherit; padding: 0 0 0 3px; font-size: 14px; line-height: 1; cursor: pointer; }
+.tag-editor { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0; padding: 3px 6px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
+.tag-editor:focus-within { border-color: var(--blue); }
+.tag-editor .tag-chips { display: contents; }
+.tag-editor .tag-input { flex: 1 1 90px; min-width: 70px; border: 0; padding: 3px 2px; background: none; outline: none; }
+.tag-editor .tag-error { flex-basis: 100%; color: var(--red); font-size: 12px; }
+.tag-editor .tag-error:empty { display: none; }
+.list .card.tagged { flex-wrap: wrap; }
+.list .card .row-tags { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding-left: 28px; min-width: 0; }
+.list .card .row-tags .more { font-size: 12px; color: var(--muted); }
+.list.grid .card .row-tags { display: none; }
+.tag-filter { margin: 4px 0 8px; }
+.tag-filter-head { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; justify-content: space-between; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.tag-filter .tag-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.tag-filter .tag-chip { font-size: 13px; padding: 2px 10px; }
+.tag-filter .tag-chip.off { background: none; color: var(--text); box-shadow: inset 0 0 0 1px var(--line); }
+.tag-filter .tag-chip.on { box-shadow: inset 0 0 0 2px hsl(var(--tag-hue) 60% var(--tag-fg)); }
+.tag-filter .tag-chip.not { text-decoration: line-through; opacity: 0.75; }
+.tag-filter .tag-chip .count { opacity: 0.7; }
+.tag-filter .note { margin: 6px 0 0; }
+.import-tags { display: grid; gap: 6px; margin: 12px 0; max-width: 520px; }
+.import-tags label { font-size: 14px; }
+.tags-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.tags-table th, .tags-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+.tags-table th { font-size: 12px; color: var(--muted); font-weight: 600; }
+.tags-table .n { text-align: right; white-space: nowrap; }
+.tags-table .actions { text-align: right; white-space: nowrap; }
+.tags-table tr:last-child td { border-bottom: 0; }
+.tags-table .tag-name { max-width: 0; width: 34%; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (max-width: 800px) {
+  .tags-table thead { display: none; }
+  .tags-table tr { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .tags-table tr:last-child { border-bottom: 0; }
+  .tags-table td { border: 0; padding: 0; text-align: left; }
+  .tags-table .tag-name, .tags-table .actions { grid-column: 1 / -1; max-width: none; width: auto; }
+  .tags-table .actions { text-align: left; padding-top: 4px; }
+  .tags-table .actions:empty { display: none; }
+  .tags-table td.n { text-align: left; font-size: 13px; }
+  .tags-table td.n::before { content: attr(data-label); display: block; font-size: 11px; color: var(--muted); }
+}
+
 /* Lists */
 .list-entry { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .list-entry .entry-controls { display: flex; gap: 6px; align-items: center; margin-left: auto; }
@@ -292,8 +344,10 @@ pre.raw { background: var(--panel-2); border-radius: 7px; padding: 10px; overflo
 .purchase-row { min-width: 0; margin-bottom: 8px; }
 .purchase { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr) minmax(0, 4.5em) minmax(0, 1fr) minmax(0, 1.4fr) 2.4em; gap: 6px; align-items: center; min-width: 0; }
 .purchase input, .purchase select { min-width: 0; width: 100%; }
-.purchase-note { margin-top: 4px; min-width: 0; }
-.purchase-note input { width: 100%; min-width: 0; }
+.purchase-note { margin-top: 4px; min-width: 0; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+.purchase-note > input { flex: 1 1 220px; min-width: 0; }
+.purchase-note > .tag-editor { flex: 1 1 220px; }
+.purchase-note > .note { flex-basis: 100%; margin: 0; }
 .purchase-note button.link { font-size: 13px; }
 .stack { display: grid; gap: 6px; min-width: 0; }
 label.inline { display: inline-flex; gap: 8px; align-items: center; color: var(--muted); margin-bottom: 8px; }

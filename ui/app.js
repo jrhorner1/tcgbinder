@@ -433,18 +433,114 @@ function ticks() {
   if (!state.ticked.has(state.game)) state.ticked.set(state.game, new Map());
   return state.ticked.get(state.game);
 }
-const tickInfo = (c) => ({ name: c.name, where: sn(c) });
+const tickInfo = (c) => ({ name: c.name, where: sn(c), tags: cardTagList(c) });
+
+// --- Tags --------------------------------------------------------------------
+
+// The core's limits on tags (crates/core/src/collection/tags.rs).
+const TAG_MAX_LEN = 40;
+const TAGS_MAX = 20;
+
+// tagProblem says why `raw` can't be a tag, or "" if it can (as clean_tag decides).
+function tagProblem(raw) {
+  const clean = tidyTag(raw);
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(raw)) return "A tag can't contain control characters.";
+  if (!clean) return "A tag can't be empty.";
+  if ([...clean].length > TAG_MAX_LEN) return `A tag can be at most ${TAG_MAX_LEN} characters.`;
+  if (/[,;]/.test(clean)) return "A tag can't contain a comma or a semicolon.";
+  return "";
+}
+const tidyTag = (raw) => raw.trim().split(/\s+/).filter(Boolean).join(" ");
+const sameTag = (a, b) => a.toLowerCase() === b.toLowerCase();
+const sortTags = (tags) => tags.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+// cardTagList is a card's tags: the union across its purchases.
+const cardTagList = (c) => sortTags([...new Map((c.purchases || []).flatMap((p) => p.tags || []).map((t) => [t.toLowerCase(), t])).values()]);
+
+// tagHue gives a tag a hue from its name, so the same tag always looks the same.
+function tagHue(name) {
+  let hash = 0;
+  for (const ch of name.toLowerCase()) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
+  return hash % 360;
+}
+const tagStyle = (name) => `--tag-hue:${tagHue(name)}`;
+
+// tagChip is a tag that does something when clicked (a button).
+const tagChip = (name, attrs, ...children) => h("button.tag-chip", { type: "button", style: tagStyle(name), ...attrs }, name, ...children);
+
+// tagEditor edits a list of tags: chips with a remove button, then a text box where
+// Enter, a comma or a semicolon adds what's typed and Backspace removes the last chip.
+// `suggest` lists tags to offer (default: every tag in use). It returns { el, value,
+// focus }; value() adds any text still typed and throws if it can't be a tag.
+let tagEditors = 0;
+function tagEditor(initial, { suggest, label = "Tags", onChange } = {}) {
+  let tags = [...(initial || [])];
+  const id = `tag-suggest-${++tagEditors}`;
+  const known = () => suggest || state.filters.tags || [];
+  const input = h("input.tag-input", { type: "text", list: id, placeholder: tags.length ? "" : "Add a tag", "aria-label": label, autocomplete: "off" });
+  const err = h("span.tag-error", { role: "alert" });
+  const chips = h("span.tag-chips");
+  const datalist = h("datalist", { id });
+  const render = () => {
+    fill(chips, tags.map((t) => h("span.tag-chip", { style: tagStyle(t) }, t,
+      h("button.tag-x", { type: "button", "aria-label": `Remove the tag ${t}`, title: "Remove", onclick: () => { remove(t); input.focus(); } }, "×"))));
+    fill(datalist, known().filter((k) => !tags.some((t) => sameTag(t, k))).map((k) => h("option", { value: k })));
+    input.placeholder = tags.length ? "" : "Add a tag";
+    if (onChange) onChange([...tags]);
+  };
+  const remove = (t) => { tags = tags.filter((x) => !sameTag(x, t)); render(); };
+  // add takes what's typed; false (with the reason shown) if any of it can't be a tag.
+  const add = () => {
+    err.textContent = "";
+    const parts = input.value.split(/[,;]/).map(tidyTag).filter(Boolean);
+    for (const part of parts) {
+      const problem = tagProblem(part);
+      if (problem) { err.textContent = problem; return false; }
+      if (tags.some((t) => sameTag(t, part))) continue;
+      if (tags.length >= TAGS_MAX) { err.textContent = `At most ${TAGS_MAX} tags.`; return false; }
+      tags.push(known().find((k) => sameTag(k, part)) || part); // the collection's spelling
+    }
+    input.value = "";
+    sortTags(tags);
+    render();
+    return true;
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === "," || e.key === ";") {
+      if (input.value.trim() || e.key !== "Enter") { e.preventDefault(); add(); }
+    } else if (e.key === "Backspace" && !input.value && tags.length) {
+      remove(tags[tags.length - 1]);
+    }
+  });
+  // Picking a suggestion from the list adds it straight away.
+  input.addEventListener("input", (e) => { if (!e.inputType && known().some((k) => sameTag(k, input.value))) add(); });
+  input.addEventListener("blur", () => { if (input.value.trim()) add(); });
+  const el = h("div.tag-editor", chips, input, datalist, err);
+  el.addEventListener("click", (e) => { if (e.target === el || e.target === chips) input.focus(); });
+  render();
+  return {
+    el,
+    value() {
+      if (input.value.trim() && !add()) throw new Error(err.textContent);
+      return [...tags];
+    },
+    focus: () => input.focus(),
+  };
+}
 
 // The collection list's sort keys (as GET /cards takes them) and labels.
 const SORTS = [["name", "Name"], ["set", "Set"], ["number", "Number"], ["price", "Price each"], ["value", "Value"],
-  ["gain", "Gain / loss"], ["paid", "Price paid"], ["quantity", "Quantity"], ["acquired", "Acquired"], ["released", "Released"], ["rarity", "Rarity"]];
+  ["gain", "Gain / loss"], ["paid", "Price paid"], ["quantity", "Quantity"], ["acquired", "Acquired"], ["released", "Released"], ["rarity", "Rarity"],
+  ["tag", "Tag"]];
 // Keys that start ascending when chosen; the rest start with the most first.
-const ASCENDING_FIRST = ["name", "number"];
+const ASCENDING_FIRST = ["name", "number", "tag"];
 // Collection URL parameters that aren't filters.
 const LIST_KEYS = ["key", "sort", "dir", "view"];
 // The filters in the More filters panel.
-const MORE_KEYS = ["condition", "language", "card_type", "lot", "price_min", "price_max", "acquired_from", "acquired_to", "min_copies", "has_note", "no_price_paid", "unpriced"];
-const FLAGS = [["has_note", "Has a note"], ["no_price_paid", "No price paid"], ["unpriced", "No market price"]];
+const MORE_KEYS = ["condition", "language", "card_type", "lot", "price_min", "price_max", "acquired_from", "acquired_to", "min_copies", "has_note", "no_price_paid", "unpriced",
+  "tags", "tags_mode", "tags_not", "untagged"];
+const FLAGS = [["has_note", "Has a note"], ["no_price_paid", "No price paid"], ["unpriced", "No market price"], ["untagged", "Untagged"]];
+// The tags in a filter parameter ("binder A,elves deck").
+const paramTags = (q, name) => (q.get(name) || "").split(",").map((t) => t.trim()).filter(Boolean);
 
 // smallImage is Scryfall's small image for a card's normal one.
 const smallImage = (uri) => uri.replace("/normal/", "/small/");
@@ -460,12 +556,12 @@ function thumbnail(c, grid) {
 
 // moreFilters is the panel of filters beyond the four menus. It stays as the user left
 // it; the chips show what is set while it is closed.
-function moreFilters(q, nav, menu, gameFilters, lots) {
+function moreFilters(q, nav, menu, gameFilters, lots, tagCounts) {
   const f = state.filters;
   const set = (name, value) => nav((p) => { value ? p.set(name, value) : p.delete(name); p.delete("key"); });
   const field = (name, attrs) => h("input" + (q.get(name) ? ".on" : ""), { value: q.get(name) || "", ...attrs,
     onchange: (e) => set(name, e.target.value.trim()) });
-  const active = MORE_KEYS.filter((k) => q.get(k)).length + gameFilters.filter((x) => q.get("f." + x.Name)).length;
+  const active = MORE_KEYS.filter((k) => q.get(k) && k !== "tags_mode").length + gameFilters.filter((x) => q.get("f." + x.Name)).length;
   const panel = h("details.more", { open: state.moreFilters, ontoggle: (e) => { state.moreFilters = e.target.open; } },
     h("summary", active ? `More filters (${active})` : "More filters"),
     h("div.menus",
@@ -481,10 +577,48 @@ function moreFilters(q, nav, menu, gameFilters, lots) {
       h("label", "Price to", field("price_max", { type: "number", min: 0, step: "0.01", placeholder: "$" })),
       h("label", "Acquired from", field("acquired_from", { type: "date" })),
       h("label", "Acquired to", field("acquired_to", { type: "date" }))),
+    tagFilter(q, nav, tagCounts),
     h("div.flags", FLAGS.map(([name, label]) => h("label.check",
       h("input", { type: "checkbox", checked: q.get(name) === "1", onchange: (e) => set(name, e.target.checked ? "1" : "") }), label))),
     h("p.note", "Price is one copy's market price. Acquired matches any purchase in the range."));
   return panel;
+}
+
+// tagFilter is More filters' Tags group: every tag in use as a chip that cycles
+// through chosen, excluded (struck through) and off, with All/Any when two or more
+// are chosen.
+function tagFilter(q, nav, tagCounts) {
+  if (!tagCounts.length) return null;
+  const chosen = paramTags(q, "tags"), excluded = paramTags(q, "tags_not");
+  const setTags = (p, name, list) => (list.length ? p.set(name, list.join(",")) : p.delete(name));
+  const cycle = (t) => nav((p) => {
+    const inc = paramTags(p, "tags"), exc = paramTags(p, "tags_not");
+    if (inc.some((x) => sameTag(x, t))) { // chosen → excluded
+      setTags(p, "tags", inc.filter((x) => !sameTag(x, t)));
+      setTags(p, "tags_not", [...exc, t]);
+    } else if (exc.some((x) => sameTag(x, t))) { // excluded → off
+      setTags(p, "tags_not", exc.filter((x) => !sameTag(x, t)));
+    } else {
+      setTags(p, "tags", [...inc, t]);
+    }
+    if (paramTags(p, "tags").length < 2) p.delete("tags_mode");
+    p.delete("key");
+  });
+  const mode = q.get("tags_mode") === "any" ? "any" : "all";
+  return h("div.tag-filter",
+    h("div.tag-filter-head", h("span", "Tags"),
+      chosen.length >= 2 ? h("div.ranges", { role: "group", "aria-label": "Cards with" },
+        [["all", "All of these"], ["any", "Any of these"]].map(([v, label]) => h("button" + (v === mode ? ".on" : ""), {
+          type: "button", "aria-pressed": String(v === mode),
+          onclick: () => nav((p) => { v === "any" ? p.set("tags_mode", "any") : p.delete("tags_mode"); p.delete("key"); }) }, label))) : null),
+    h("div.tag-chips", tagCounts.map((t) => {
+      const state = chosen.some((x) => sameTag(x, t.name)) ? "on" : excluded.some((x) => sameTag(x, t.name)) ? "not" : "off";
+      const said = { on: "chosen; click to exclude it", not: "excluded; click to clear", off: "click to choose" }[state];
+      return tagChip(t.name, { class: `tag-chip ${state}`, "aria-pressed": state === "off" ? "false" : "true",
+        "aria-label": `${t.name}, ${plural(t.cards, "card", "cards")}: ${said}`, title: said, onclick: () => cycle(t.name) },
+        h("span.count", ` ${t.cards}`));
+    })),
+    h("p.note", "Click a tag to show cards with it, again to show cards without it, a third time to clear it."));
 }
 
 // filterChip names a filter in a removable chip.
@@ -508,14 +642,24 @@ function filterChip(k, v, lots) {
   }
 }
 
-// filterChips shows each filter in use (not the search) as a chip that removes it.
+// filterChips shows each filter in use (not the search) as a chip that removes it,
+// one for each tag chosen or excluded.
 function filterChips(q, nav, lots) {
-  const chips = [...q.entries()].filter(([k, v]) => v && k !== "q" && !LIST_KEYS.includes(k)).map(([k, v]) => {
+  const tagChips = [["tags", "Tag"], ["tags_not", "Not"]].flatMap(([k, word]) => paramTags(q, k).map((t) => {
+    const label = `${word}: ${t}`;
+    return h("button.chip", { type: "button", "aria-label": `Remove the filter ${label}`, onclick: () => nav((p) => {
+      const left = paramTags(p, k).filter((x) => !sameTag(x, t));
+      left.length ? p.set(k, left.join(",")) : p.delete(k);
+      if (paramTags(p, "tags").length < 2) p.delete("tags_mode");
+      p.delete("key");
+    }) }, label, h("span", { "aria-hidden": "true" }, " ×"));
+  }));
+  const chips = [...q.entries()].filter(([k, v]) => v && k !== "q" && !LIST_KEYS.includes(k) && !["tags", "tags_not", "tags_mode"].includes(k)).map(([k, v]) => {
     const label = filterChip(k, v, lots);
     return h("button.chip", { type: "button", "aria-label": `Remove the filter ${label}`,
       onclick: () => nav((p) => { p.delete(k); p.delete("key"); }) }, label, h("span", { "aria-hidden": "true" }, " ×"));
   });
-  return chips.length ? h("div.chips", chips) : null;
+  return chips.length || tagChips.length ? h("div.chips", chips, tagChips) : null;
 }
 
 // The collection: filters and every matching card (each with a tick box for bulk
@@ -550,10 +694,11 @@ async function viewCollection(params) {
 
   const apiQ = new URLSearchParams(q);
   for (const k of LIST_KEYS) if (k !== "sort" && k !== "dir") apiQ.delete(k);
-  const [data, lots] = await Promise.all([api("GET", gameAPI(`/cards?${apiQ}`)), loadLots()]);
+  const [data, lots, tagTotals] = await Promise.all([api("GET", gameAPI(`/cards?${apiQ}`)), loadLots(),
+    (state.filters.tags || []).length ? api("GET", gameAPI("/tags")) : { tags: [] }]);
   const filtering = [...apiQ.keys()].some((k) => !LIST_KEYS.includes(k));
   const grid = q.get("view") === "grid";
-  filters.append(...[moreFilters(q, nav, menu, otherFilters, lots), filterChips(q, nav, lots)].filter(Boolean));
+  filters.append(...[moreFilters(q, nav, menu, otherFilters, lots, tagTotals.tags), filterChips(q, nav, lots)].filter(Boolean));
   const ticked = ticks();
   if (!filtering) { // every card is listed: drop ticks for cards no longer owned
     const keys = new Set(data.cards.map((c) => c.key));
@@ -583,14 +728,23 @@ async function viewCollection(params) {
     boxes.set(c.key, box);
     const priced = (c.purchases || []).some((p) => p.market > 0);
     // The tick box and the button that opens the card sit side by side.
-    return h("div.card" + (c.key === q.get("key") ? ".sel" : ""),
+    return h("div.card" + (c.key === q.get("key") ? ".sel" : "") + (cardTagList(c).length ? ".tagged" : ""),
       box, h("button.entry", { type: "button", onclick: () => openCard(c.key) },
         thumbnail(c, grid),
         h("span.text", h("span.name", c.name), h("span.meta", [sn(c), copiesSummary(c), englishPrice(c), noted(c)].filter(Boolean).join(" · "))),
         h("span.qty", `×${c.copy_count}`),
         // "each" only when every copy is one finish: with two, one price doesn't fit them all.
         h("span.money", priced ? usd(c.market_value) : "—",
-          c.copy_count > 1 && priced && new Set(c.purchases.map((p) => p.finish)).size === 1 ? h("small", `${usd(c.each)} each`) : null)));
+          c.copy_count > 1 && priced && new Set(c.purchases.map((p) => p.finish)).size === 1 ? h("small", `${usd(c.each)} each`) : null)),
+      rowTags(c));
+  };
+  // A row's tags: up to three chips (each filters the list by its tag), then "+N".
+  const rowTags = (c) => {
+    const tags = cardTagList(c);
+    if (!tags.length) return null;
+    return h("div.row-tags", tags.slice(0, 3).map((t) => tagChip(t, { "aria-label": `Show cards tagged ${t}`, title: `Show cards tagged ${t}`,
+      onclick: () => nav((p) => { p.set("tags", t); p.delete("tags_not"); p.delete("tags_mode"); p.delete("key"); }) })),
+      tags.length > 3 ? h("span.more", { title: tags.slice(3).join(", ") }, `+${tags.length - 3}`) : null);
   };
   const list = h("div.list" + (grid ? ".grid" : ""), data.cards.length ? data.cards.map(row) : h("p.muted.empty", "No cards match."));
 
@@ -673,18 +827,27 @@ function showBulkEdit() {
   const noteMode = h("select", { "aria-label": "Note", onchange: () => { noteText.hidden = noteMode.value !== "set"; if (!noteText.hidden) noteText.focus(); } },
     h("option", { value: "" }, "Unchanged"), h("option", { value: "set" }, "Set to…"), h("option", { value: "clear" }, "Remove notes"));
   const del = h("input", { type: "checkbox" });
+  const addTags = tagEditor([], { label: "Tags to add" });
+  // Only the tags the ticked cards have can be removed.
+  const onTicked = sortTags([...new Map([...chosen.values()].flatMap((c) => c.tags || []).map((t) => [t.toLowerCase(), t])).values()]);
+  const removeTags = tagEditor([], { label: "Tags to remove", suggest: onTicked });
+  const clearTags = h("input", { type: "checkbox" });
   const err = h("p.error");
   const apply = async () => {
     err.textContent = "";
     if (!chosen.size) { err.textContent = "Tick at least one card."; return; }
-    const body = { keys: [...chosen.keys()], condition: cond.value, finish: fin.value, acquired_date: date.value, delete: del.checked };
+    let add_tags, remove_tags;
+    try { add_tags = addTags.value(); remove_tags = removeTags.value(); } catch (e) { err.textContent = e.message; return; }
+    const body = { keys: [...chosen.keys()], condition: cond.value, finish: fin.value, acquired_date: date.value, delete: del.checked,
+      add_tags, remove_tags, clear_tags: clearTags.checked };
     if (price.value !== "") body.price_paid = parseFloat(price.value);
     if (noteMode.value === "clear") body.note = "";
     if (noteMode.value === "set") {
       if (!noteText.value.trim()) { err.textContent = "Type the note, or choose Unchanged."; noteText.focus(); return; }
       body.note = noteText.value.trim();
     }
-    if (!body.delete && !body.condition && !body.finish && !body.acquired_date && body.price_paid === undefined && body.note === undefined) { err.textContent = "Choose at least one change."; return; }
+    if (!body.delete && !body.condition && !body.finish && !body.acquired_date && body.price_paid === undefined && body.note === undefined
+      && !add_tags.length && !remove_tags.length && !body.clear_tags) { err.textContent = "Choose at least one change."; return; }
     const n = plural(chosen.size, "card", "cards");
     if (!(await (body.delete ? ask(`Delete every copy of ${n}? You can undo it right after, or restore a backup from Tools.`) : confirmDialog(`Apply the changes to every copy of ${n}?`, { action: "Apply" })))) return;
     try {
@@ -704,8 +867,11 @@ function showBulkEdit() {
       h("div.form",
         h("label", "Condition"), cond, h("label", "Finish"), fin, h("label", "Price paid (each)"), price, h("label", "Acquired"), date,
         h("label", "Note"), h("div.stack", noteMode, noteText),
+        h("label", "Add tags"), addTags.el,
+        h("label", "Remove tags"), onTicked.length ? removeTags.el : h("span.muted", "The ticked cards have no tags."),
+        h("label", ""), h("label.check", { style: "display:flex;gap:8px;align-items:center;text-align:left" }, clearTags, "Remove all tags"),
         h("label", ""), h("label.check", { style: "display:flex;gap:8px;align-items:center;color:var(--red);text-align:left" }, del, "Delete these cards")),
-      h("p.note", "Changes apply to every copy of each card above. Finish changes skip printings that don't come in that finish; purchases that end up the same combine."),
+      h("p.note", "Changes apply to every copy of each card above. Tags are changed in this order: Remove all tags, then Remove tags, then Add tags. Finish changes skip printings that don't come in that finish; purchases that end up the same combine."),
       err),
     h("footer", h("button", { type: "button", onclick: () => { dlg.close(); route(); } }, "Cancel"), h("button.primary", { type: "button", onclick: apply }, "Apply"))));
   dlg.showModal();
@@ -788,7 +954,7 @@ function showSell(c, key, l) {
     if (each.value === "") { err.textContent = "Type what each copy sold for."; each.focus(); return; }
     try {
       const r = await api("POST", gameAPI(`/card/sell?key=${encodeURIComponent(key)}`), {
-        finish: l.finish, condition: l.condition, price_paid: l.price_paid || 0, acquired_date: l.acquired_date || "", note: l.note || "",
+        finish: l.finish, condition: l.condition, price_paid: l.price_paid || 0, acquired_date: l.acquired_date || "", note: l.note || "", tags: l.tags || [],
         quantity: q, sale_each: parseFloat(each.value), date: date.value, fees: parseFloat(fees.value) || 0, sale_note: note.value.trim(),
       });
       dlg.close();
@@ -1316,6 +1482,60 @@ async function copyToList(m, code) {
   } catch (e) { status(e.message, true); }
 }
 
+// viewTags is the Tags page: every tag with what carries it, to rename or delete.
+async function viewTags() {
+  const d = await api("GET", gameAPI("/tags"));
+  const done = async (msg, r) => { status(msg, false, r.undo); await loadFilters(); route(); };
+  const rename = async (t) => {
+    const input = h("input", { type: "text", value: t.name, "aria-label": "New name" });
+    const problem = h("p.error");
+    const name = await new Promise((resolve) => {
+      const ok = () => { const v = tidyTag(input.value); const why = tagProblem(v); if (why) { problem.textContent = why; return; } resolve(v); dlg.close(); };
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter") ok(); });
+      const dlg = h("dialog.ask", h("div.dlg", h("header", h("h2", `Rename “${t.name}”`)),
+        h("div.body", input, h("p.note", `It changes on ${plural(t.cards, "card", "cards")} (${plural(t.copies, "copy", "copies")}).`), problem),
+        h("footer", h("button", { type: "button", onclick: () => { resolve(null); dlg.close(); } }, "Cancel"), h("button.primary", { type: "button", onclick: ok }, "Rename"))));
+      dlg.addEventListener("close", () => { resolve(null); dlg.remove(); });
+      document.body.append(dlg);
+      dlg.showModal();
+      input.select();
+    });
+    if (!name || name === t.name) return;
+    const other = d.tags.find((x) => sameTag(x.name, name) && !sameTag(x.name, t.name));
+    if (other && !(await confirmDialog(`“${other.name}” is already a tag. The two will be combined into one, “${other.name}”, on every card.`,
+      { action: "Combine", title: "Combine the tags?" }))) return;
+    try {
+      const r = await api("PUT", gameAPI(`/tags?name=${encodeURIComponent(t.name)}`), { name });
+      await done(other ? `Combined “${t.name}” into “${other.name}”.` : `Renamed “${t.name}” to “${name}”.`, r);
+    } catch (e) { status(e.message, true); }
+  };
+  const remove = async (t) => {
+    if (!(await confirmDialog(`Remove the tag “${t.name}” from ${plural(t.cards, "card", "cards")} (${plural(t.copies, "copy", "copies")})? The cards stay in your collection.`,
+      { danger: true, action: "Delete tag", title: "Delete the tag?" }))) return;
+    try {
+      const r = await api("DELETE", gameAPI(`/tags?name=${encodeURIComponent(t.name)}`));
+      await done(`Deleted the tag “${t.name}”.`, r);
+    } catch (e) { status(e.message, true); }
+  };
+  // A row of the table; on a phone each row stacks, its figures labelled.
+  const cells = (t) => [
+    h("td.n", { "data-label": "Cards" }, t.cards.toLocaleString()), h("td.n", { "data-label": "Copies" }, t.copies.toLocaleString()),
+    h("td.n", { "data-label": "Value" }, usd(t.value)), h("td.n", { "data-label": "Paid" }, usd(t.paid))];
+  const row = (t) => h("tr",
+    h("td.tag-name", h("a.tag-chip", { href: `#/collection?${new URLSearchParams({ tags: t.name })}`, style: tagStyle(t.name) }, t.name)),
+    cells(t),
+    h("td.actions", h("button", { type: "button", onclick: () => rename(t) }, "Rename…"), " ", h("button", { type: "button", onclick: () => remove(t) }, "Delete…")));
+  const table = h("table.tags-table",
+    h("thead", h("tr", h("th", "Tag"), h("th.n", "Cards"), h("th.n", "Copies"), h("th.n", "Market value"), h("th.n", "Price paid"), h("th", h("span.sr", "Actions")))),
+    h("tbody", d.tags.map(row),
+      d.untagged ? h("tr.untagged", h("td.tag-name", h("a", { href: "#/collection?untagged=1" }, "Untagged")), cells(d.untagged), h("td.actions")) : null));
+  fill($("#main"),
+    h("h1", "Tags"),
+    h("p.muted", "Tags are labels on your copies, such as where they're kept or which deck they're in. Add them on a card's page, when adding cards, with Bulk edit, or to a whole import. Totals count only the tagged copies."),
+    d.tags.length || d.untagged ? h("div.card-box", table) : h("p.muted", "No cards yet."),
+    !d.tags.length && d.untagged ? h("p.muted", "No tags yet. Open a card and choose Add tags on one of its purchases.") : null);
+}
+
 // addInDialog shows a catalog card's add form in the dialog, leaving the page as it is.
 function addInDialog(c, added) {
   const dlg = $("#dialog");
@@ -1368,6 +1588,7 @@ async function renderCard(container, key) {
     const by = new Map();
     let n = 0;
     for (const r of rows) {
+      if (r.showSplit) r.showSplit();
       const q = parseInt(r.qty.value, 10) || 0;
       if (q <= 0) continue;
       n += q;
@@ -1377,7 +1598,8 @@ async function renderCard(container, key) {
     const parts = [...by].map(([k, q]) => { const [f, cd] = k.split("|"); return `${fname(f)} ${cd} ×${q}`; });
     subtotal.textContent = n ? `${plural(n, "copy", "copies")}: ${parts.join(" · ")}` : "No copies: saving removes the card from your collection.";
   };
-  const addRow = (l) => {
+  // addRow adds a purchase row (after the row `after`, when splitting one).
+  const addRow = (l, after) => {
     const r = {
       finish: h("select", { "aria-label": "Finish", onchange: update }, finishes.map((x) => h("option", { value: x, selected: x === l.finish }, fname(x)))),
       cond: h("select", { "aria-label": "Condition", onchange: update }, conds.map((x) => h("option", { value: x, selected: x === (l.condition || "NM") }, x))),
@@ -1385,27 +1607,49 @@ async function renderCard(container, key) {
       price: h("input", { type: "number", min: 0, step: "0.01", placeholder: "Paid each", value: l.price_paid || "", "aria-label": "Price paid each" }),
       date: h("input", { type: "date", value: l.acquired_date || "", "aria-label": "Acquired" }),
       note: h("input", { type: "text", value: l.note || "", placeholder: "Note: where they're kept, who they're for…", "aria-label": "Note" }),
+      tags: tagEditor(l.tags, { label: "Tags on these copies" }),
     };
     r.lot = l.lot || "";
-    // The note sits on its own line, folded away as "Add a note" until used.
+    // The note and the tags sit on their own line, folded away as "Add a note" and
+    // "Add tags" until used.
     const noteBox = h("div.purchase-note");
+    let noteShown = !!l.note, tagsShown = !!(l.tags && l.tags.length);
     // A purchase from a lot names it; the lot sets its price.
     const lotName = r.lot ? ((state.lots || []).find((x) => x.id === r.lot) || {}).name || "a lot" : "";
     const lotLine = r.lot ? h("p.note", "From ", h("a", { href: `#/lots?id=${encodeURIComponent(r.lot)}` }, lotName),
       ". The lot sets the price paid; a price typed here is replaced the next time the lot is repriced.") : null;
     // A saved purchase can be sold (as saved: unsaved edits to the row don't count).
     const sellButton = l.saved ? h("button.link", { type: "button", onclick: () => showSell(c, key, l) }, "Sell…") : null;
-    const showNote = () => { fill(noteBox, r.note, sellButton, lotLine); r.note.focus(); };
-    if (l.note) fill(noteBox, r.note, sellButton, lotLine);
-    else fill(noteBox, h("button.link", { type: "button", onclick: showNote }, "Add a note"), sellButton, lotLine);
+    // Split: one copy into a row of its own, to tag or note it apart from the rest.
+    const splitButton = h("button.link", { type: "button", title: "Move one copy to a row of its own, to tag it apart", onclick: () => {
+      const q = parseInt(r.qty.value, 10);
+      if (!(q > 1)) return;
+      let tags;
+      try { tags = r.tags.value(); } catch { tags = []; }
+      r.qty.value = q - 1;
+      addRow({ finish: r.finish.value, condition: r.cond.value, quantity: 1, price_paid: parseFloat(r.price.value) || 0,
+        acquired_date: r.date.value, note: r.note.value, lot: r.lot, tags }, r);
+      rows[rows.indexOf(r) + 1].qty.focus();
+    } }, "Split");
+    r.showSplit = () => { splitButton.hidden = !(parseInt(r.qty.value, 10) > 1); };
+    const showLine = () => fill(noteBox,
+      noteShown ? r.note : h("button.link", { type: "button", onclick: () => { noteShown = true; showLine(); r.note.focus(); } }, "Add a note"),
+      tagsShown ? r.tags.el : h("button.link", { type: "button", onclick: () => { tagsShown = true; showLine(); r.tags.focus(); } }, "Add tags"),
+      splitButton, sellButton, lotLine);
+    showLine();
     r.el = h("div.purchase-row",
       h("div.purchase", r.finish, r.cond, r.qty, r.price, r.date,
         h("button", { type: "button", title: "Remove this purchase", "aria-label": "Remove this purchase", onclick: () => {
           rows.splice(rows.indexOf(r), 1); r.el.remove(); update();
         } }, "✕")),
       noteBox);
-    rows.push(r);
-    rowsBox.append(r.el);
+    if (after) {
+      rows.splice(rows.indexOf(after) + 1, 0, r);
+      after.el.after(r.el);
+    } else {
+      rows.push(r);
+      rowsBox.append(r.el);
+    }
     update();
   };
   c.purchases.forEach((l) => addRow({ ...l, saved: true }));
@@ -1423,7 +1667,9 @@ async function renderCard(container, key) {
       const quantity = parseInt(r.qty.value, 10);
       if (!Number.isInteger(quantity) || quantity < 0) { err.textContent = "Quantities must be whole numbers (0 or more)."; r.qty.focus(); return; }
       if (quantity === 0) continue;
-      purchases.push({ finish: r.finish.value, condition: r.cond.value, quantity, price_paid: r.price.value ? parseFloat(r.price.value) : 0, acquired_date: r.date.value, note: r.note.value.trim(), lot: r.lot });
+      let tags;
+      try { tags = r.tags.value(); } catch (e) { err.textContent = e.message; r.tags.focus(); return; }
+      purchases.push({ finish: r.finish.value, condition: r.cond.value, quantity, price_paid: r.price.value ? parseFloat(r.price.value) : 0, acquired_date: r.date.value, note: r.note.value.trim(), lot: r.lot, tags });
     }
     if (!purchases.length && !(await ask(`Remove all of ${c.name} from your collection?`, "Remove"))) return;
     try {
@@ -1536,9 +1782,10 @@ function addDefaults() {
 // addCard adds copies of a catalog card and remembers the details for the next one.
 async function addCard(c, d) {
   const r = await api("POST", gameAPI("/cards"), { card: c, quantity: d.quantity, finish: d.finish, condition: d.condition,
-    price_paid: d.price ? parseFloat(d.price) : 0, acquired_date: d.date, lot: d.lot || "" });
-  if (!d.lot) state.addDefaults = { finish: d.finish, condition: d.condition, price: d.price, date: d.date };
-  else state.addDefaults = { ...addDefaults(), finish: d.finish, condition: d.condition };
+    price_paid: d.price ? parseFloat(d.price) : 0, acquired_date: d.date, lot: d.lot || "", tags: d.tags || [] });
+  // Tags stay for the next card, so a stack going to one place is tagged once.
+  if (!d.lot) state.addDefaults = { finish: d.finish, condition: d.condition, price: d.price, date: d.date, tags: d.tags };
+  else state.addDefaults = { ...addDefaults(), finish: d.finish, condition: d.condition, tags: d.tags };
   await loadFilters();
   return r;
 }
@@ -1554,11 +1801,14 @@ function addForm(container, c, owned, onAdded, lot) {
   const cond = h("select", { "aria-label": "Condition" }, state.filters.conditions.map((x) => h("option", { value: x, selected: x === d0.condition }, x)));
   const price = h("input", { type: "number", min: 0, step: "0.01", placeholder: "0.00", value: d0.price, "aria-label": "Price paid each" });
   const date = h("input", { type: "date", value: d0.date, "aria-label": "Acquired" });
+  const tags = tagEditor(d0.tags, { label: "Tags" });
   const err = h("p.error");
   const add = async () => {
     const quantity = parseInt(qty.value, 10);
     if (!Number.isInteger(quantity) || quantity < 1) { err.textContent = "Quantity must be at least 1."; return; }
-    const details = { quantity, finish: finish.value, condition: cond.value, price: price.value, date: date.value, lot: lot ? lot.id : "" };
+    let tagList;
+    try { tagList = tags.value(); } catch (e) { err.textContent = e.message; return; }
+    const details = { quantity, finish: finish.value, condition: cond.value, price: price.value, date: date.value, lot: lot ? lot.id : "", tags: tagList };
     try {
       const r = await addCard(c, details);
       status(`Added ${quantity}× ${c.name} (${sn(c)})${r.alreadyOwned ? " to the copies you already had" : ""}`);
@@ -1573,7 +1823,8 @@ function addForm(container, c, owned, onAdded, lot) {
       cardImage(c),
       h("div", c.type_line ? h("p", h("strong", c.type_line)) : null, c.oracle_text ? h("p.rules", c.oracle_text) : null,
         h("div.form", h("label", "Quantity"), qty, h("label", "Finish"), finish, h("label", "Condition"), cond,
-          lot ? [h("label", "Price and date"), h("span.muted", `Set by the lot “${lot.name}”`)] : [h("label", "Price paid (each)"), price, h("label", "Acquired"), date]),
+          lot ? [h("label", "Price and date"), h("span.muted", `Set by the lot “${lot.name}”`)] : [h("label", "Price paid (each)"), price, h("label", "Acquired"), date],
+          h("label", "Tags"), tags.el),
         err, h("div.buttons", h("div", h("button", { type: "button", onclick: () => addToList(c, parseInt(qty.value, 10) || 1) }, "Add to list…"), " ",
           h("button", { type: "button", onclick: () => showWatch(c, finish.value) }, "Watch…")),
           h("button.primary", { type: "button", onclick: add }, "Add to collection"))))));
@@ -1645,7 +1896,8 @@ function viewAdd(params) {
       const d = await api("GET", gameAPI(`/card?key=${encodeURIComponent(a.key)}`));
       const price = a.price ? parseFloat(a.price) : 0;
       let left = a.quantity;
-      const same = (p) => a.lot ? p.lot === a.lot : p.price_paid === price && p.acquired_date === a.date && !p.lot;
+      const sameTags = (p) => (p.tags || []).length === (a.tags || []).length && (p.tags || []).every((t, i) => sameTag(t, a.tags[i]));
+      const same = (p) => sameTags(p) && (a.lot ? p.lot === a.lot : p.price_paid === price && p.acquired_date === a.date && !p.lot);
       const purchases = d.card.purchases.map((p) => {
         if (left > 0 && p.finish === a.finish && p.condition === a.condition && same(p) && !p.note) {
           const take = Math.min(left, p.quantity);
@@ -1669,7 +1921,7 @@ function viewAdd(params) {
   // After adding: stay here, ready for the next card.
   const onAdded = (r, c, d) => {
     (state.added = state.added || []).push({ key: r.key, name: c.name, set: c.set, number: c.collector_number, quantity: d.quantity,
-      finish: d.finish, condition: d.condition, price: d.price, date: d.date, lot: d.lot });
+      finish: d.finish, condition: d.condition, price: d.price, date: d.date, lot: d.lot, tags: d.tags || [] });
     if (r.lot) { lot = r.lot; showBanner(); }
     showSession();
     text.value = "";
@@ -1944,11 +2196,16 @@ function unmatchedLink(p, fileName) {
 
 // showImportPreview shows what importing would do, with Import and Cancel.
 function showImportPreview(out, p, fileName, cancel, lot, done) {
+  const importTags = tagEditor([], { label: "Tag every card in this import" });
   const importBtn = h("button.primary", { type: "button", onclick: async () => {
     importBtn.disabled = true;
     status(`Importing ${plural(p.copies, "card", "cards")}…`);
     try {
-      const r = await whileRunning(api("POST", gameAPI("/import/commit"), lot ? { token: p.token, lot: lot.id } : { token: p.token }));
+      let tags;
+      try { tags = importTags.value(); } catch (e) { status(e.message, true); importBtn.disabled = false; return; }
+      const body = { token: p.token, tags };
+      if (lot) body.lot = lot.id;
+      const r = await whileRunning(api("POST", gameAPI("/import/commit"), body));
       status(`Imported ${plural(r.cards, "card", "cards")} from ${r.format}${lot ? ` into ${lot.name}` : ""}.`, false, r.undo);
       if (done) done(r);
       fill(out, h("h2", "Import Complete"), h("pre.summary", r.summary));
@@ -1970,13 +2227,15 @@ function showImportPreview(out, p, fileName, cancel, lot, done) {
     unmatched ? h("details", h("summary", "Show the unmatched rows"),
       h("pre.raw", p.unmatched.map((u) => `Line ${u.line}: ${u.text}`).join("\n"))) : null,
     p.notes.length ? h("pre.summary", p.notes.join("\n")) : null,
+    p.copies ? h("div.import-tags", h("label", "Tag every card in this import (optional)"), importTags.el) : null,
     h("div.buttons", h("div.right", p.copies ? importBtn : null, h("button", { type: "button", onclick: cancel }, "Cancel"))));
 }
 
 // Backups: the collection as it was before each import, bulk change and restore.
 async function viewBackups() {
   const list = await api("GET", gameAPI("/backups"));
-  const why = { import: "Before an import", "bulk-edit": "Before a bulk edit", "bulk-delete": "Before a bulk delete", restore: "Before a restore", merge: "Before a merge", move: "Before a move" };
+  const why = { import: "Before an import", "bulk-edit": "Before a bulk edit", "bulk-delete": "Before a bulk delete", restore: "Before a restore", merge: "Before a merge", move: "Before a move",
+    "tag-rename": "Before renaming a tag", "tag-delete": "Before deleting a tag" };
   const restore = async (b, button) => {
     if (!(await confirmDialog(`Replace your collection with the backup from ${b.date} (${plural(b.cards, "unique card", "unique cards")})? Your current collection is backed up first, so you can come back to it.`, { action: "Restore" }))) return;
     button.disabled = true;
@@ -2224,6 +2483,7 @@ async function viewTools() {
       toolRow(h("button", { type: "button", onclick: (e) => exportCollection(e.currentTarget, "report") }, "Valuation report"), `Save a page listing every card by set with its value, to ${where}. Open it in a browser to print it or save it as a PDF, for insurance or your records.`),
       toolRow(h("button", { type: "button", onclick: () => { go("collection"); setTimeout(showBulkEdit, 50); } }, "Bulk edit…"),
         "Change the condition, finish, price paid or date of many cards at once, or delete them. Tick the cards in the collection list (filter it, then Select all shown); Bulk edit is also below the list."),
+      toolRow(h("a.button", { href: "#/tags" }, "Tags…"), "Every tag on your cards, with how many cards and copies carry it and what they're worth. Rename or delete a tag everywhere at once."),
       toolRow(h("a.button", { href: "#/stats" }, "Statistics…"), "Your collection broken down by rarity, finish, condition, language, release year, color and card type, by price band, and by month acquired."),
       toolRow(h("a.button", { href: "#/lists" }, "Lists…"), "Decks and want lists: the cards you want, how many you own already, and what the rest would cost."),
       toolRow(h("a.button", { href: "#/sealed" }, "Sealed product…"), "Boxes, bundles and decks you keep unopened: what you paid and what they're worth. There's no free price source for sealed product, so you enter each value yourself."),
@@ -2330,7 +2590,7 @@ async function route() {
   const [path, qs] = location.hash.replace(/^#\/?/, "").split("?");
   const view = path || "home";
   if (state.scanStop && view !== "scan") { state.scanStop(); state.scanStop = null; }
-  const active = ["import", "backups", "lots", "earnings", "watchlist", "sealed"].includes(view) ? "tools" : view === "scan" ? "add" : view;
+  const active = ["import", "backups", "lots", "earnings", "watchlist", "sealed", "tags"].includes(view) ? "tools" : view === "scan" ? "add" : view;
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === active));
   // The tab bar has no Lists or Statistics tab: they're reached from Tools there.
   document.querySelectorAll(".tabbar a").forEach((a) => a.classList.toggle("active", a.dataset.view === (["lists", "stats"].includes(active) ? "tools" : active)));
@@ -2347,6 +2607,7 @@ async function route() {
     else if (view === "watchlist") await viewWatchlist();
     else if (view === "sealed") await viewSealed();
     else if (view === "stats") await viewStats();
+    else if (view === "tags") await viewTags();
     else if (view === "tools") await viewTools();
     else if (view === "settings") await viewSettings();
     else await viewHome();
