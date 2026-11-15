@@ -16,6 +16,7 @@ use std::sync::Mutex;
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
+use tcgbinder_core::collection::Breakdown;
 use tcgbinder_core::collection::{Card, CatalogUpdate, Purchase, SetInfo};
 use tcgbinder_core::dates;
 use tcgbinder_core::game::{self, DailyPriceMap, Filter, Game, ImportReport, PriceHistorySource, Progress, Row, SearchPage};
@@ -347,11 +348,17 @@ impl Game for Magic {
     }
 
     fn filters(&self) -> Vec<Filter> {
-        const COLORS: &[&str] = &["W", "U", "B", "R", "G", COLOR_MULTICOLOR, COLOR_COLORLESS];
         vec![
             Filter { name: "Color", options: COLORS, matches: matches_color },
             Filter { name: "Color identity", options: COLORS, matches: matches_color_identity },
             Filter { name: "Mana value", options: &["0", "1", "2", "3", "4", "5", "6", "7+"], matches: matches_mana_value },
+        ]
+    }
+
+    fn breakdowns(&self) -> Vec<Breakdown> {
+        vec![
+            Breakdown { name: "Color", param: Some("f.Color"), order: COLORS, labels: color_labels },
+            Breakdown { name: "Card type", param: Some("card_type"), order: CARD_TYPES, labels: type_labels },
         ]
     }
 
@@ -391,6 +398,29 @@ impl Game for Magic {
 
 const COLOR_MULTICOLOR: &str = "Multicolor";
 const COLOR_COLORLESS: &str = "Colorless";
+const COLORS: &[&str] = &["W", "U", "B", "R", "G", COLOR_MULTICOLOR, COLOR_COLORLESS];
+/// The main card types, as the Statistics page groups them.
+const CARD_TYPES: &[&str] = &["Creature", "Instant", "Sorcery", "Artifact", "Enchantment", "Planeswalker", "Land", "Battle"];
+
+/// A card's colors for the Statistics page, as the Color filter matches them: each of
+/// its colors, plus Multicolor for two or more, or Colorless for none.
+fn color_labels(c: &Card) -> Vec<String> {
+    let colors = c.attr_strings("colors");
+    let mut out: Vec<String> =
+        COLORS[..5].iter().filter(|x| colors.iter().any(|c| c.eq_ignore_ascii_case(x))).map(|x| x.to_string()).collect();
+    match out.len() {
+        0 => out.push(COLOR_COLORLESS.into()),
+        1 => {}
+        _ => out.push(COLOR_MULTICOLOR.into()),
+    }
+    out
+}
+
+/// The main types in a card's type line (an artifact creature counts under both).
+fn type_labels(c: &Card) -> Vec<String> {
+    let line = c.type_line.split('—').next().unwrap_or("");
+    CARD_TYPES.iter().filter(|t| line.split_whitespace().any(|w| w.eq_ignore_ascii_case(t))).map(|t| t.to_string()).collect()
+}
 
 /// A single color also matches the multicolor cards that include it.
 fn matches_color(c: &Card, want: &str) -> bool {
@@ -497,6 +527,19 @@ mod tests {
         }
         assert_eq!(Magic::default().finish_name("nonfoil"), "Normal");
         assert_eq!(Magic::default().finish_name("etched"), "Etched");
+    }
+
+    #[test]
+    fn statistics_labels() {
+        let mut c = Card { type_line: "Legendary Artifact Creature — Golem".into(), ..Card::default() };
+        c.set_attr("colors", vec!["U", "W"]);
+        assert_eq!(color_labels(&c), ["W", "U", COLOR_MULTICOLOR]);
+        assert_eq!(type_labels(&c), ["Creature", "Artifact"]);
+        c.set_attr("colors", Vec::<String>::new());
+        c.type_line = "Basic Land — Island".into();
+        assert_eq!((color_labels(&c), type_labels(&c)), (vec![COLOR_COLORLESS.to_string()], vec!["Land".to_string()]));
+        c.type_line = "Creature — Landfall Elemental".into();
+        assert_eq!(type_labels(&c), ["Creature"], "a subtype is not a type");
     }
 
     #[test]

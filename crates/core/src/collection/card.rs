@@ -24,6 +24,10 @@ pub enum Condition {
 
 impl Condition {
     /// The short code stored and shown, e.g. "NM".
+    /// Every condition, best first.
+    pub const ALL: [Condition; 5] =
+        [Condition::NearMint, Condition::LightPlay, Condition::Moderate, Condition::HeavyPlay, Condition::Damaged];
+
     pub fn code(self) -> &'static str {
         match self {
             Condition::NearMint => "NM",

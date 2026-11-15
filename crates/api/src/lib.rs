@@ -27,8 +27,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use tcgbinder_core::collection::{
-    self, BulkChange, Card, Condition, Query, SortKey, card_key, compute_stats, is_any, round_cents, set_options, sort_cards, top_by_each,
-    unique_cards, with_printing, write_csv,
+    self, BulkChange, Card, Condition, Query, SortKey, card_key, compute_stats, is_any, round_cents, set_options, sort_cards, statistics,
+    top_by_each, unique_cards, with_printing, write_csv,
 };
 use tcgbinder_core::game::finish_names;
 use tcgbinder_core::scan::Reading;
@@ -304,6 +304,7 @@ impl Api {
                 match (m.as_str(), rest) {
                     ("GET", ["home"]) => Ok(self.home(g, q.get("range").map_or("", String::as_str))),
                     ("GET", ["filters"]) => Ok(self.filters(g)),
+                    ("GET", ["stats"]) => Ok(self.statistics(g)),
                     ("GET", ["cards"]) => self.cards(g, &q),
                     ("POST", ["cards"]) => self.add_card(g, body),
                     ("GET", ["card"]) => self.card(g, key),
@@ -466,6 +467,20 @@ impl Api {
             },
             "canLoadHistory": src.is_some(), "historyLoaded": g.prices.history_loaded_on(),
             "historyInfo": src.map_or("", |s| s.info()),
+        }))
+    }
+
+    /// The Statistics page: breakdowns (each with the collection list's filter
+    /// parameter for its rows), value bands, copies and money by month acquired, and
+    /// the cards with the most copies.
+    fn statistics(&self, g: &GameService) -> Reply {
+        let cards = g.store.cards();
+        let s = statistics(&cards, &g.game.breakdowns(), g.game.rarities(), g.game.finishes());
+        let mut most: Vec<&Card> = cards.iter().filter(|c| c.copy_count() > 1).collect();
+        most.sort_by(|a, b| b.copy_count().cmp(&a.copy_count()).then_with(|| a.name.cmp(&b.name)));
+        let most: Vec<Card> = most.into_iter().take(10).cloned().collect();
+        Reply::Json(json!({
+            "breakdowns": s.breakdowns, "bands": s.bands, "byMonth": s.by_month, "undated": s.undated, "mostCopies": views(&most),
         }))
     }
 

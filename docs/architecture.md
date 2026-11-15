@@ -214,6 +214,7 @@ Code uses the UI's words, so a label on screen leads straight to the code behind
 | Bulk edit | `collection::BulkChange`, `Store::bulk_edit` |
 | Load / Update price history | `GameService::load_price_history`, `PriceHistory::history_loaded_on` |
 | Card order (Settings) | `Settings::card_order`, `SortKey::from_card_order` |
+| Statistics page | `collection::statistics` (breakdowns, value bands, by month), `Game::breakdowns` (Magic's Color and Card type) |
 | Collection list: Sort menu | `collection::SortKey`, `collection::sort_cards` (key, direction, the game's rarity order) |
 | Export CSV | `collection::write_csv`, `Game::catalog_id_label`; read back by the importer's "TCG Binder CSV" profile |
 | Valuation report | `crates/api/src/report.rs` (`valuation`, and `escape` for every piece of card text) |

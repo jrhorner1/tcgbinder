@@ -1,6 +1,7 @@
 //! The game-neutral collection model: cards and their copies, the JSON file store (one
 //! per game), price history, filtering, and value and completion statistics.
 
+mod breakdown;
 mod card;
 mod copies;
 mod csv_export;
@@ -10,6 +11,7 @@ mod price_history;
 mod stats;
 mod store;
 
+pub use breakdown::{Breakdown, BreakdownRow, BreakdownTable, MonthRow, Statistics, ValueBand, statistics};
 pub use card::{Card, CatalogUpdate, Condition, SetInfo};
 pub use copies::{Copies, Purchase, PurchaseRow};
 pub use csv_export::{CSV_COLUMNS, write_csv};

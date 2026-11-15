@@ -1206,6 +1206,67 @@ async function viewSealed() {
     d.items.length ? h("div.card-box", d.items.map(row)) : h("p.muted", "No sealed product yet."));
 }
 
+// statLabel names a statistics row: a rarity, finish, condition, language or color.
+function statLabel(id, key) {
+  switch (id) {
+    case "rarity": return title(key || "unknown");
+    case "finish": return fname(key);
+    case "condition": return choiceNames.default_condition[key] || key;
+    case "language": return languageName(key);
+    case "Color": return { W: "White", U: "Blue", B: "Black", R: "Red", G: "Green" }[key] || key;
+    default: return key;
+  }
+}
+
+// viewStats is the Statistics page.
+async function viewStats() {
+  const s = await api("GET", gameAPI("/stats"));
+  const filter = (params) => () => go("collection", new URLSearchParams(params));
+  const breakdown = (t) => {
+    const max = Math.max(1, ...t.rows.map((r) => r.cards));
+    return h("div.card-box",
+      h("h2", { style: "margin-top:0" }, t.name),
+      t.rows.length ? bars(t.rows.map((r) => ({
+        label: statLabel(t.id, r.key),
+        value: r.cards,
+        text: `${r.cards.toLocaleString()} · ${usd(r.value)}`,
+        onclick: t.param ? filter({ [t.param]: r.key }) : null,
+      })), max, "var(--blue)") : h("p.muted", "No cards."));
+  };
+  const bandMax = Math.max(0.01, ...s.bands.map((b) => b.value));
+  const bands = bars(s.bands.map((b) => {
+    const params = {};
+    if (b.min !== null) params.price_min = b.min;
+    if (b.max !== null) params.price_max = (b.max - 0.01).toFixed(2);
+    return {
+      label: b.label,
+      value: b.value,
+      text: `${b.cards.toLocaleString()} · ${usd(b.value)} · ${Math.round(b.share * 100)}%`,
+      onclick: b.label === "No price" ? filter({ unpriced: "1" }) : filter(params),
+    };
+  }), bandMax, "var(--amber)");
+  const months = [...s.byMonth].reverse();
+  const monthTable = (rows) => h("table.months",
+    h("thead", h("tr", h("th", "Month"), h("th.n", "Copies"), h("th.n", "Spent"))),
+    h("tbody", rows.map((m) => h("tr", h("td", m.month), h("td.n", m.cards.toLocaleString()), h("td.n", usd(m.paid))))));
+  const monthBox = h("div.card-box.wide");
+  const showMonths = (all) => fill(monthBox, monthTable(all ? months : months.slice(0, 12)),
+    !all && months.length > 12 ? h("button.link", { type: "button", onclick: () => showMonths(true) }, `Show all ${months.length} months`) : null);
+  showMonths(false);
+  fill($("#main"),
+    h("h1", "Statistics"),
+    h("p.muted", "Counts are copies. Each bar's figures are copies and market value (and, by price, the share of the collection's value). Click a row to see those cards in the collection list."),
+    h("h2", "By Price of One Copy"),
+    h("div.card-box", bands),
+    h("div.two-col.stats", s.breakdowns.map(breakdown)),
+    h("div.two-col",
+      h("div", h("h2", "By Month Acquired"),
+        months.length ? monthBox : h("p.muted", "No acquired dates recorded."),
+        s.undated ? h("p.note", `${plural(s.undated, "copy has", "copies have")} no acquired date and aren't counted here.`) : null),
+      h("div", h("h2", "Most Copies"),
+        s.mostCopies.length ? h("div.card-box", cardRows(s.mostCopies, (c) => c.market_value)) : h("p.muted", "No card has more than one copy."))));
+}
+
 // addInDialog shows a catalog card's add form in the dialog, leaving the page as it is.
 function addInDialog(c, added) {
   const dlg = $("#dialog");
@@ -2111,6 +2172,7 @@ async function viewTools() {
       toolRow(h("button", { type: "button", onclick: (e) => exportCollection(e.currentTarget, "report") }, "Valuation report"), `Save a page listing every card by set with its value, to ${where}. Open it in a browser to print it or save it as a PDF, for insurance or your records.`),
       toolRow(h("button", { type: "button", onclick: () => { go("collection"); setTimeout(showBulkEdit, 50); } }, "Bulk edit…"),
         "Change the condition, finish, price paid or date of many cards at once, or delete them. Tick the cards in the collection list (filter it, then Select all shown); Bulk edit is also below the list."),
+      toolRow(h("a.button", { href: "#/stats" }, "Statistics…"), "Your collection broken down by rarity, finish, condition, language, release year, color and card type, by price band, and by month acquired."),
       toolRow(h("a.button", { href: "#/lists" }, "Lists…"), "Decks and want lists: the cards you want, how many you own already, and what the rest would cost."),
       toolRow(h("a.button", { href: "#/sealed" }, "Sealed product…"), "Boxes, bundles and decks you keep unopened: what you paid and what they're worth. There's no free price source for sealed product, so you enter each value yourself."),
       toolRow(h("a.button", { href: "#/watchlist" }, "Watchlist…"), "Cards whose price you're watching, with an alert when one moves by a percentage or crosses a price. Prices are checked when the app refreshes them, so alerts appear while the app is open or the next time you open it."),
@@ -2216,8 +2278,8 @@ async function route() {
   if (state.scanStop && view !== "scan") { state.scanStop(); state.scanStop = null; }
   const active = ["import", "backups", "lots", "earnings", "watchlist", "sealed"].includes(view) ? "tools" : view === "scan" ? "add" : view;
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === active));
-  // The tab bar has no Lists tab: Lists is reached from Tools there.
-  document.querySelectorAll(".tabbar a").forEach((a) => a.classList.toggle("active", a.dataset.view === (active === "lists" ? "tools" : active)));
+  // The tab bar has no Lists or Statistics tab: they're reached from Tools there.
+  document.querySelectorAll(".tabbar a").forEach((a) => a.classList.toggle("active", a.dataset.view === (["lists", "stats"].includes(active) ? "tools" : active)));
   try {
     if (view === "collection") await viewCollection(qs || "");
     else if (view === "add") viewAdd(qs || "");
@@ -2230,6 +2292,7 @@ async function route() {
     else if (view === "lists") await viewLists(qs || "");
     else if (view === "watchlist") await viewWatchlist();
     else if (view === "sealed") await viewSealed();
+    else if (view === "stats") await viewStats();
     else if (view === "tools") await viewTools();
     else if (view === "settings") await viewSettings();
     else await viewHome();

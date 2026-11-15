@@ -7,6 +7,7 @@ use std::path::Path;
 use anyhow::Result;
 use serde::Serialize;
 
+use crate::collection::Breakdown;
 use crate::collection::{Card, CatalogUpdate, SetInfo};
 use crate::scan::Reading;
 use crate::sealed::SealedProduct;
@@ -71,6 +72,10 @@ pub trait Game: Send + Sync {
     }
     /// Extra filters shown with set, rarity and finish.
     fn filters(&self) -> Vec<Filter>;
+    /// The game's own groupings on the Statistics page (e.g. Magic's colors).
+    fn breakdowns(&self) -> Vec<Breakdown> {
+        Vec::new()
+    }
     /// Extra rows in the card editor.
     fn details(&self, c: &Card) -> Vec<Row>;
     /// The sealed products the catalog lists for a set (boxes, bundles, decks), for

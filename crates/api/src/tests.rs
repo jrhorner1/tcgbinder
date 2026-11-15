@@ -625,6 +625,31 @@ fn sealed_product() {
 }
 
 #[test]
+fn statistics_page() {
+    let f = fixture();
+    let s = get(&f.api, "/api/games/mtg/stats");
+    let table = |id: &str| s["breakdowns"].as_array().unwrap().iter().find(|t| t["id"] == id).unwrap().clone();
+    let ids: Vec<&str> = s["breakdowns"].as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["rarity", "finish", "condition", "language", "year", "Color", "Card type"]);
+    // Shock: 2 non-foil NM ($0.20, paid $0.25, 2018-08-08); Opt: 1 foil LP, unpriced, undated.
+    assert_eq!(table("rarity")["rows"][0], json!({"key": "common", "cards": 3, "unique": 2, "value": 0.4, "paid": 0.5}));
+    assert_eq!(table("finish")["param"], "finish");
+    assert_eq!(table("Color")["param"], "f.Color");
+    let color = table("Color");
+    let colors: Vec<&str> = color["rows"].as_array().unwrap().iter().map(|r| r["key"].as_str().unwrap()).collect();
+    assert_eq!(colors, ["U", "R"], "the game's order");
+    assert_eq!(table("Card type")["rows"][0]["key"], "Instant");
+    assert!(table("year")["param"].is_null());
+    assert_eq!(s["byMonth"], json!([{"month": "2018-08", "cards": 2, "paid": 0.5}]));
+    assert_eq!(s["undated"], 1);
+    let under = s["bands"].as_array().unwrap().iter().find(|b| b["label"] == "Under $1").unwrap().clone();
+    assert_eq!((under["cards"].as_i64(), under["share"].as_f64(), under["max"].as_f64()), (Some(2), Some(1.0), Some(1.0)));
+    assert_eq!(s["bands"].as_array().unwrap().last().unwrap()["label"], "No price");
+    assert_eq!(s["mostCopies"][0]["name"], "Shock", "Opt has one copy, so isn't listed");
+    assert_eq!(s["mostCopies"].as_array().unwrap().len(), 1);
+}
+
+#[test]
 fn changes_need_the_client_header() {
     let f = fixture();
     // A cross-site form or fetch can't add the header, so it must be refused.

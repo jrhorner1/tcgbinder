@@ -200,6 +200,25 @@ only the record and leaves them sold.
 
 Deleting a card is still the way to correct a mistake; it records no sale.
 
+## Statistics
+
+**Statistics** (in the sidebar; on a phone, **Tools → Statistics…**) breaks the
+collection down:
+
+- **By price of one copy:** under $1, $1 to $5, $5 to $20, $20 to $100, and $100 and
+  up (plus cards with no price), each with its copies, market value and share of the
+  collection's value.
+- **Rarity, finish, condition, language, release year, color and card type:** copies
+  and market value for each. A card counts under each color and type it has, plus
+  Multicolor for two or more colors. Finish and condition count the copies in each.
+- **By month acquired:** copies and money spent, newest first (the last 12 months,
+  with **Show all**). Copies without an acquired date are left out, and the page
+  says how many.
+- **Most copies:** the 10 cards you have the most copies of.
+
+Click a row (all but release year) to see those cards in the collection list, with
+the matching filter.
+
 ## Lists and decks
 
 **Lists** (in the sidebar; on a phone, **Tools → Lists…**) keeps decks and want
