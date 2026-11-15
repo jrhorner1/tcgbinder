@@ -20,5 +20,6 @@ pub mod scan;
 pub mod service;
 pub mod settings;
 pub mod version;
+pub mod watchlist;
 
 pub use collection::{Card, Condition, Copies, Purchase};

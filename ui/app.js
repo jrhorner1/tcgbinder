@@ -393,6 +393,7 @@ async function viewHome() {
   fill($("#main"),
     h("h1", o.name),
     dataNotices(df, o),
+    priceAlerts(o.alerts || []),
     h("div.tiles",
       tile("CARDS", o.cards.toLocaleString(), `${plural(o.uniqueCards, "unique card", "unique cards")} · ${plural(o.sets, "set", "sets")}`),
       tile("PRICE PAID", usd(o.pricePaid), o.pricePaidUnknown ? `${plural(o.pricePaidUnknown, "card", "cards")} without a price paid` : "every card has a price paid"),
@@ -998,6 +999,100 @@ async function viewList(id) {
       : h("p.muted", "No cards yet. Add some from the Add page (Add to list…), from a set's Missing Cards, or with Paste a list…"));
 }
 
+// ruleText describes a watch's rule: "a 20% move", "at or above $5.00".
+function ruleText(r) {
+  if (r.kind === "percent") return `a ${r.value}% move either way`;
+  return `${r.kind === "above" ? "at or above" : "at or below"} ${usd(r.value)}`;
+}
+
+// The watch's change since its baseline: "+$0.05 (+25%)".
+const watchChange = (w) => (w.change === null ? "" : `${signedUsd(w.change)} (${w.changePercent > 0 ? "+" : ""}${w.changePercent}%)`);
+
+const ALERT_NOTE = "Prices are checked when the app refreshes them (each day, or as Settings says), so alerts appear while the app is open or the next time you open it. There is no email or text message.";
+
+// showWatch starts watching catalog card `c` (in `finish`, if given), or changes its
+// alert when `w` (a watch) is given.
+function showWatch(c, finish, w) {
+  const dlg = h("dialog.ask");
+  const priced = (c.finishes && c.finishes.length ? c.finishes : Object.keys(c.market || {}));
+  const fin = h("select", { "aria-label": "Finish", disabled: !!w },
+    (w ? [w.finish] : priced).map((f) => h("option", { value: f, selected: f === (w ? w.finish : finish) },
+      `${fname(f)}${c.market && c.market[f] ? ` · ${usd(c.market[f])}` : " · no price"}`)));
+  const kind = h("select", { "aria-label": "Alert when" },
+    [["percent", "It moves by (%)"], ["above", "It reaches or passes ($)"], ["below", "It falls to or under ($)"]]
+      .map(([v, label]) => h("option", { value: v, selected: v === (w ? w.rule.kind : "percent") }, label)));
+  const value = h("input", { type: "number", min: 0, step: "0.01", value: w ? w.rule.value : 20, "aria-label": "Amount" });
+  const err = h("p.error");
+  const close = () => { dlg.close(); dlg.remove(); };
+  const save = async () => {
+    err.textContent = "";
+    const v = parseFloat(value.value);
+    if (!(v > 0)) { err.textContent = "Type a number above 0."; value.focus(); return; }
+    const rule = { kind: kind.value, value: v };
+    try {
+      if (w) await api("PUT", gameAPI(`/watchlist?key=${encodeURIComponent(w.key)}`), { rule });
+      else await api("POST", gameAPI("/watchlist"), { card: c, finish: fin.value, rule });
+      close();
+      status(w ? `Changed the alert for ${c.name}.` : `Watching ${c.name} (${fname(fin.value)}). See Tools → Watchlist.`);
+      if (w) route();
+    } catch (e) { err.textContent = e.message; }
+  };
+  fill(dlg, h("div.dlg", h("header", h("h2", w ? "Change the alert" : "Watch the price"), h("p.muted", { style: "margin:4px 0 0" }, `${c.name} · ${sn(c)}`)),
+    h("div.body", h("div.form", h("label", "Finish"), fin, h("label", "Alert when"), kind, h("label", "Amount"), value),
+      h("p.note", ALERT_NOTE), err),
+    h("footer", h("button", { type: "button", onclick: close }, "Cancel"), h("button.primary", { type: "button", onclick: save }, w ? "Save" : "Watch"))));
+  dlg.addEventListener("close", () => dlg.remove());
+  document.body.append(dlg);
+  dlg.showModal();
+  value.focus();
+}
+
+// watchAction dismisses or resets a watch's alert, or removes the watch.
+async function watchAction(w, action) {
+  try {
+    if (action === "remove") await api("DELETE", gameAPI(`/watchlist?key=${encodeURIComponent(w.key)}`));
+    else await api("PUT", gameAPI(`/watchlist?key=${encodeURIComponent(w.key)}`), { action });
+    status({ dismiss: `Dismissed the alert for ${w.card.name}.`, reset: `${w.card.name} is now measured from today's price.`, remove: `Stopped watching ${w.card.name}.` }[action]);
+    route();
+  } catch (e) { status(e.message, true); }
+}
+
+// priceAlerts is Home's box of triggered watches.
+function priceAlerts(alerts) {
+  if (!alerts.length) return null;
+  return h("div.card-box.notice",
+    h("h2", "Price alerts"),
+    alerts.map((w) => h("div.alert-row",
+      h("div.text", h("span.name", `${w.card.name} · ${fname(w.finish)}`),
+        h("span.meta", `${usd(w.baseline)} on ${w.baseline_date} → ${usd(w.triggered.price)} on ${w.triggered.date}${w.change !== null ? ` · ${watchChange(w)}` : ""} · alert: ${ruleText(w.rule)}`)),
+      h("div.row-actions",
+        h("button", { type: "button", title: "Hide this alert; it comes back if the price returns and crosses again", onclick: () => watchAction(w, "dismiss") }, "Dismiss"),
+        h("button", { type: "button", title: "Measure from today's price from now on", onclick: () => watchAction(w, "reset") }, "Reset")))),
+    h("p.note", h("a", { href: "#/watchlist" }, "Watchlist"), ` · ${ALERT_NOTE}`));
+}
+
+// viewWatchlist lists the watched cards: price, baseline, change and alert.
+async function viewWatchlist() {
+  const list = await api("GET", gameAPI("/watchlist"));
+  const row = (w) => h("div.list-entry" + (w.triggered ? ".alerted" : ""),
+    thumbnail(w.card, false),
+    h("div.text",
+      h("span.name", `${w.card.name}`),
+      h("span.meta", [sn(w.card), fname(w.finish), `since ${w.baseline_date}: ${w.baseline ? usd(w.baseline) : "no price"} → ${w.price !== null ? usd(w.price) : "no price"}`].join(" · ")),
+      h("span.meta", `Alert: ${ruleText(w.rule)}${w.triggered ? ` · triggered ${w.triggered.date} at ${usd(w.triggered.price)}` : ""}`)),
+    h("div.entry-controls",
+      h("span.change" + (w.change > 0 ? ".up" : w.change < 0 ? ".down" : ""), watchChange(w) || "—"),
+      h("button", { type: "button", onclick: () => showWatch(w.card, w.finish, w) }, "Change…"),
+      w.triggered ? h("button", { type: "button", onclick: () => watchAction(w, "dismiss") }, "Dismiss") : null,
+      h("button", { type: "button", title: "Measure from today's price", onclick: () => watchAction(w, "reset") }, "Reset"),
+      h("button", { type: "button", "aria-label": `Stop watching ${w.card.name}`, title: "Stop watching", onclick: () => watchAction(w, "remove") }, "✕")));
+  fill($("#main"),
+    h("h1", "Watchlist"),
+    h("p.muted", ALERT_NOTE),
+    list.length ? h("div.card-box", list.map(row))
+      : h("p.muted", "Nothing watched yet. Choose Watch… on the Add page's card form, or Watch price… on a card you own."));
+}
+
 // addInDialog shows a catalog card's add form in the dialog, leaving the page as it is.
 function addInDialog(c, added) {
   const dlg = $("#dialog");
@@ -1143,7 +1238,8 @@ async function renderCard(container, key) {
     h("p.muted", [c.set_name, sn(c), title(c.rarity)].filter(Boolean).join(" · ")),
     h("div.detail-body",
       h("div", cardImage(c, true),
-        d.link.url ? h("p", { style: "text-align:center" }, h("a", { href: d.link.url, target: "_blank", rel: "noopener noreferrer" }, d.link.label)) : null),
+        d.link.url ? h("p", { style: "text-align:center" }, h("a", { href: d.link.url, target: "_blank", rel: "noopener noreferrer" }, d.link.label)) : null,
+        h("p", { style: "text-align:center" }, h("button", { type: "button", onclick: () => showWatch(c) }, "Watch price…"))),
       h("div",
         h("div.tiles", { style: "grid-template-columns:repeat(auto-fit,minmax(140px,1fr))" },
           tile("MARKET VALUE", c.market_value ? usd(c.market_value) : "—", c.market_value ? [valueDet, englishPrice(c)].filter(Boolean).join(" · ") : "no market price yet", "var(--blue)"),
@@ -1252,7 +1348,8 @@ function addForm(container, c, owned, onAdded, lot) {
       h("div", c.type_line ? h("p", h("strong", c.type_line)) : null, c.oracle_text ? h("p.rules", c.oracle_text) : null,
         h("div.form", h("label", "Quantity"), qty, h("label", "Finish"), finish, h("label", "Condition"), cond,
           lot ? [h("label", "Price and date"), h("span.muted", `Set by the lot “${lot.name}”`)] : [h("label", "Price paid (each)"), price, h("label", "Acquired"), date]),
-        err, h("div.buttons", h("button", { type: "button", onclick: () => addToList(c, parseInt(qty.value, 10) || 1) }, "Add to list…"),
+        err, h("div.buttons", h("div", h("button", { type: "button", onclick: () => addToList(c, parseInt(qty.value, 10) || 1) }, "Add to list…"), " ",
+          h("button", { type: "button", onclick: () => showWatch(c, finish.value) }, "Watch…")),
           h("button.primary", { type: "button", onclick: add }, "Add to collection"))))));
   return { add };
 }
@@ -1902,6 +1999,7 @@ async function viewTools() {
       toolRow(h("button", { type: "button", onclick: () => { go("collection"); setTimeout(showBulkEdit, 50); } }, "Bulk edit…"),
         "Change the condition, finish, price paid or date of many cards at once, or delete them. Tick the cards in the collection list (filter it, then Select all shown); Bulk edit is also below the list."),
       toolRow(h("a.button", { href: "#/lists" }, "Lists…"), "Decks and want lists: the cards you want, how many you own already, and what the rest would cost."),
+      toolRow(h("a.button", { href: "#/watchlist" }, "Watchlist…"), "Cards whose price you're watching, with an alert when one moves by a percentage or crosses a price. Prices are checked when the app refreshes them, so alerts appear while the app is open or the next time you open it."),
       toolRow(h("a.button", { href: "#/earnings" }, "Earnings…"), "Cards you've sold: what they sold for, what they cost, fees, and the gain, by month and year. Sell copies with Sell… on a card's purchase."),
       toolRow(h("a.button", { href: "#/lots" }, "Lots…"), "Cards bought together for one price, such as a bulk lot or a bundle: what each lot cost and what its cards are worth now."),
       toolRow(h("a.button", { href: "#/backups" }, "Restore a backup…"), "Go back to the collection as it was before a recent import, bulk edit or bulk delete. The last 10 backups are kept."),
@@ -2002,7 +2100,7 @@ async function route() {
   const [path, qs] = location.hash.replace(/^#\/?/, "").split("?");
   const view = path || "home";
   if (state.scanStop && view !== "scan") { state.scanStop(); state.scanStop = null; }
-  const active = ["import", "backups", "lots", "earnings"].includes(view) ? "tools" : view === "scan" ? "add" : view;
+  const active = ["import", "backups", "lots", "earnings", "watchlist"].includes(view) ? "tools" : view === "scan" ? "add" : view;
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === active));
   // The tab bar has no Lists tab: Lists is reached from Tools there.
   document.querySelectorAll(".tabbar a").forEach((a) => a.classList.toggle("active", a.dataset.view === (active === "lists" ? "tools" : active)));
@@ -2016,6 +2114,7 @@ async function route() {
     else if (view === "lots") await viewLots(qs || "");
     else if (view === "earnings") await viewEarnings(qs || "");
     else if (view === "lists") await viewLists(qs || "");
+    else if (view === "watchlist") await viewWatchlist();
     else if (view === "tools") await viewTools();
     else if (view === "settings") await viewSettings();
     else await viewHome();

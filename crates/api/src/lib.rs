@@ -11,6 +11,7 @@ mod lots;
 mod report;
 mod sales;
 mod views;
+mod watchlist;
 
 pub use folders::{Folders, PickFolder, Restart};
 
@@ -311,6 +312,10 @@ impl Api {
                     ("PUT", ["card", "printing"]) => self.change_printing(g, key, body),
                     ("POST", ["card", "sell"]) => self.sell(g, key, body),
                     ("GET", ["sales"]) => self.sales(g, &q),
+                    ("GET", ["watchlist"]) => Ok(self.watchlist(g)),
+                    ("POST", ["watchlist"]) => self.add_watch(g, body),
+                    ("PUT", ["watchlist"]) => self.change_watch(g, &q, body),
+                    ("DELETE", ["watchlist"]) => self.delete_watch(g, &q),
                     ("GET", ["lists"]) => match q.get("id") {
                         Some(_) => self.list(g, &q),
                         None => Ok(self.lists(g)),
@@ -446,6 +451,7 @@ impl Api {
             "pricePaid": round_cents(st.price_paid), "pricePaidUnknown": st.price_paid_unknown,
             "marketValue": round_cents(st.market_value), "unpriced": st.unpriced, "pricesAsOf": st.prices_as_of,
             "realisedThisYear": round_cents(sales::realised_this_year(g)), "hasSales": !g.sales.all().is_empty(),
+            "alerts": watchlist::alerts(g),
             "bySet": sets, "topCards": top,
             "chart": {
                 "range": range, "from": date_or_empty(vc.from), "to": dates::format(vc.to),

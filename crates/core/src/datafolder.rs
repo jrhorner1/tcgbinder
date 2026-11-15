@@ -13,6 +13,7 @@ use crate::datadir::{COLLECTION_FILE, PRICE_HISTORY_FILE};
 use crate::lists::LISTS_FILE;
 use crate::lots::LOTS_FILE;
 use crate::sales::SALES_FILE;
+use crate::watchlist::WATCHLIST_FILE;
 
 /// The folder of backups in each game's data folder.
 const BACKUPS: &str = "backups";
@@ -97,7 +98,7 @@ pub fn check_target(from: &Path, to: &Path) -> Result<PathBuf> {
 }
 
 /// Switches the data from `from` to `to` for the games: with [`Mode::Move`] or
-/// [`Mode::Copy`], each game's collection, price history, lots, sales, lists and backups are copied and
+/// [`Mode::Copy`], each game's collection, price history, lots, sales, lists, watchlist and backups are copied and
 /// checked (and, for a move, then deleted from `from`). Refused if `to` already holds
 /// a collection for any of them.
 pub fn transfer(from: &Path, to: &Path, game_ids: &[&str], mode: Mode) -> Result<()> {
@@ -118,7 +119,7 @@ pub fn transfer(from: &Path, to: &Path, game_ids: &[&str], mode: Mode) -> Result
             continue;
         }
         fs::create_dir_all(&dst)?;
-        for name in [COLLECTION_FILE, PRICE_HISTORY_FILE, LOTS_FILE, SALES_FILE, LISTS_FILE] {
+        for name in [COLLECTION_FILE, PRICE_HISTORY_FILE, LOTS_FILE, SALES_FILE, LISTS_FILE, WATCHLIST_FILE] {
             if src.join(name).is_file() {
                 copy_checked(&src.join(name), &dst.join(name))?;
                 copied.push(src.join(name));
@@ -155,7 +156,8 @@ fn copy_checked(src: &Path, dst: &Path) -> Result<()> {
 }
 
 /// The conflict copies in a game's data folder: files named like `collection*.json`,
-/// `lots*.json`, `sales*.json` or `lists*.json` other than those files themselves, as sync services name the
+/// `lots*.json`, `sales*.json`, `lists*.json` or `watchlist*.json` other than those
+/// files themselves, as sync services name the
 /// version they didn't keep ("collection 2.json", "collection (conflicted copy).json",
 /// "lots-LAPTOP.json", "collection (1).json"). Sorted by name.
 pub fn conflict_copies(game_dir: &Path) -> Vec<String> {
@@ -166,9 +168,15 @@ pub fn conflict_copies(game_dir: &Path) -> Vec<String> {
         .filter_map(|e| e.file_name().into_string().ok())
         .filter(|n| {
             n.ends_with(".json")
-                && [("collection", COLLECTION_FILE), ("lots", LOTS_FILE), ("sales", SALES_FILE), ("lists", LISTS_FILE)]
-                    .iter()
-                    .any(|(stem, file)| n.starts_with(stem) && n != file)
+                && [
+                    ("collection", COLLECTION_FILE),
+                    ("lots", LOTS_FILE),
+                    ("sales", SALES_FILE),
+                    ("lists", LISTS_FILE),
+                    ("watchlist", WATCHLIST_FILE),
+                ]
+                .iter()
+                .any(|(stem, file)| n.starts_with(stem) && n != file)
         })
         .collect();
     names.sort();
@@ -242,6 +250,8 @@ mod tests {
             "sales (conflicted copy).json",
             "lists.json",
             "lists-LAPTOP.json",
+            "watchlist.json",
+            "watchlist 2.json",
         ] {
             fs::write(dir.path().join(name), "{}").unwrap();
         }
@@ -252,7 +262,8 @@ mod tests {
                 "collection 2.json",
                 "lists-LAPTOP.json",
                 "lots 2.json",
-                "sales (conflicted copy).json"
+                "sales (conflicted copy).json",
+                "watchlist 2.json"
             ]
         );
         assert!(conflict_copies(&dir.path().join("missing")).is_empty());

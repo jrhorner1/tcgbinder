@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
@@ -18,6 +18,7 @@ use crate::lists::{ListEntry, ListsStore};
 use crate::lots::{Lot, LotCopy, LotPrices, LotSplit, LotsStore, lot_prices};
 use crate::sales::{CardRef, Sale, SalesStore};
 use crate::settings::{Settings, SettingsStore};
+use crate::watchlist::{Watch, WatchStore};
 use crate::{datadir, dates};
 
 /// How often running apps check whether prices need refreshing. Prices refresh at most
@@ -26,6 +27,9 @@ pub const PRICE_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 /// Names collection files written by this app in import reports.
 pub const APP_FILE_FORMAT: &str = "TCG Binder collection file";
+
+/// Told about a watch that triggered: the game's ID and the watch.
+pub type AlertHook = Box<dyn Fn(&str, &Watch) + Send + Sync>;
 
 /// One game with its open collection and price history.
 pub struct GameService {
@@ -38,6 +42,10 @@ pub struct GameService {
     pub sales: SalesStore,
     /// Lists and decks.
     pub lists: ListsStore,
+    /// Watched prices.
+    pub watchlist: WatchStore,
+    /// Told about each watch that triggers (the apps post a system notification).
+    alert_hook: OnceLock<AlertHook>,
     /// The app settings (price refresh frequency, automatic price history). Without
     /// them, prices refresh daily and price history loads automatically.
     pub settings: Option<Arc<SettingsStore>>,
@@ -64,6 +72,7 @@ impl GameService {
         let lots = LotsStore::open(&dir)?;
         let sales = SalesStore::open(&dir)?;
         let lists = ListsStore::open(&dir)?;
+        let watchlist = WatchStore::open(&dir)?;
         let path = store.file_path().with_file_name(datadir::PRICE_HISTORY_FILE);
         let prices = match PriceHistory::open(&path) {
             Ok((prices, warning)) => {
@@ -79,7 +88,24 @@ impl GameService {
                 PriceHistory::in_memory()
             }
         };
-        Ok(GameService { game, store, prices, lots, sales, lists, settings: None, auto_history: true, sets: Mutex::default() })
+        Ok(GameService {
+            game,
+            store,
+            prices,
+            lots,
+            sales,
+            lists,
+            watchlist,
+            alert_hook: OnceLock::new(),
+            settings: None,
+            auto_history: true,
+            sets: Mutex::default(),
+        })
+    }
+
+    /// Sets what is told about each price alert (once; later calls are ignored).
+    pub fn set_alert_hook(&self, hook: AlertHook) {
+        let _ = self.alert_hook.set(hook);
     }
 
     /// A lot's copies, for working out its prices.
@@ -246,6 +272,9 @@ impl GameService {
         if let Err(e) = self.prices.refresh() {
             tracing::debug!(game = self.game.id(), error = %e, "price history not refreshed");
         }
+        if let Err(e) = self.watchlist.refresh() {
+            tracing::debug!(game = self.game.id(), error = %e, "watchlist not refreshed");
+        }
         if let Err(e) = self.lists.refresh() {
             tracing::debug!(game = self.game.id(), error = %e, "lists not refreshed");
         }
@@ -280,12 +309,19 @@ impl GameService {
         // The lists' cards too, in the same request.
         let mut ids = self.store.ids();
         ids.extend(self.lists.ids());
+        ids.extend(self.watchlist.ids());
         ids.sort();
         ids.dedup();
         let updates = self.game.refresh(&ids, progress)?;
         let today = dates::today_string();
         let n = self.store.update_catalog(&updates, &today)?;
         self.lists.update_catalog(&updates, &today)?;
+        for w in self.watchlist.apply_prices(&updates, &today)? {
+            tracing::info!(game = self.game.id(), card = w.card.name, finish = w.finish, price = w.price(), "price alert");
+            if let Some(hook) = self.alert_hook.get() {
+                hook(self.game.id(), &w);
+            }
+        }
         self.prices.record_current(&self.store.cards(), &today);
         self.prices.save()?;
         Ok(n)

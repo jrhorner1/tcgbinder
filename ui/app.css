@@ -180,7 +180,7 @@ details.more .note { margin: 6px 0 0; }
 .counts .money-line { white-space: nowrap; }
 /* Lists */
 .list-entry { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
-.list-entry .entry-controls { display: flex; gap: 8px; align-items: center; margin-left: auto; }
+.list-entry .entry-controls { display: flex; gap: 6px; align-items: center; margin-left: auto; }
 .list-entry:last-child { border-bottom: 0; }
 .list-entry .thumb { width: 34px; aspect-ratio: 488 / 680; object-fit: cover; border-radius: 3px; flex: none; }
 .list-entry .text { flex: 1 1 180px; min-width: 0; display: flex; flex-direction: column; }
@@ -195,6 +195,14 @@ details.more .note { margin: 6px 0 0; }
 .row-actions { display: flex; gap: 6px; }
 dialog.ask textarea { width: 100%; font: inherit; }
 dialog.ask .body input[type=text] { width: 100%; }
+/* Watchlist and price alerts */
+.alert-row { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.alert-row .text { flex: 1 1 220px; min-width: 0; display: flex; flex-direction: column; }
+.alert-row .meta, .list-entry .meta + .meta { color: var(--muted); font-size: 13px; }
+.list-entry.alerted { box-shadow: inset 3px 0 0 var(--amber); padding-left: 8px; }
+.list-entry .change { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.list-entry .change.up { color: var(--green); }
+.list-entry .change.down { color: var(--red); }
 /* Earnings */
 .sale { display: flex; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .sale:last-child { border-bottom: 0; }

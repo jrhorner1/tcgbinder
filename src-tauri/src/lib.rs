@@ -216,6 +216,7 @@ pub fn run(opts: Options) {
         }))
         .plugin(tauri_plugin_dialog::init());
     builder
+        .plugin(tauri_plugin_notification::init())
         .register_asynchronous_uri_scheme_protocol(SCHEME, |ctx, request, responder| {
             let served = ctx.app_handle().state::<Served>();
             match served.inner() {
@@ -238,6 +239,9 @@ pub fn run(opts: Options) {
             };
             let served = match open(&opts, local, if cfg!(mobile) { "phone" } else { "desktop" }, cfg!(desktop)) {
                 Ok(started) => {
+                    for g in &started.games {
+                        g.set_alert_hook(alert_notifier(app.handle().clone()));
+                    }
                     let api = started.api(client, export_dir);
                     #[cfg(desktop)]
                     let api = desktop_hooks(api, app.handle().clone());
@@ -268,6 +272,20 @@ pub fn run(opts: Options) {
         .run(tauri::generate_context!())
         .expect("error while running TCG Binder");
     tracing::info!("exiting");
+}
+
+/// Posts a price alert as a system notification.
+fn alert_notifier(app: tauri::AppHandle) -> tcgbinder_core::service::AlertHook {
+    use tauri_plugin_notification::NotificationExt;
+    Box::new(move |_game, w| {
+        let price = |v: f64| format!("${v:.2}");
+        let now = w.price().map(price).unwrap_or_default();
+        let was = if w.baseline > 0.0 { format!(", from {} on {}", price(w.baseline), w.baseline_date) } else { String::new() };
+        let body = format!("{} ({}) is now {now}{was}.", w.card.name, w.finish);
+        if let Err(e) = app.notification().builder().title("Price alert").body(body).show() {
+            tracing::warn!(error = %e, "could not post the price alert");
+        }
+    })
 }
 
 /// The desktop app's folder picker and restart, for Settings → Data.

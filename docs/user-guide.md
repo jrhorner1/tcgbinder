@@ -220,6 +220,27 @@ cost at market price, and what the whole list is worth.
 
 The cards on lists get their prices refreshed along with your collection.
 
+## Watchlist and price alerts
+
+**Watch…** on the Add page's card form, or **Watch price…** on a card you own,
+watches a card's price in one finish. Choose when to be alerted:
+
+- **It moves by (%)**: a rise or fall of that percentage from the price when you
+  started watching (or last reset);
+- **It reaches or passes ($)**, or **It falls to or under ($)**: a price line.
+
+Prices are checked when the app refreshes them (each day, or as **Settings → Update
+prices** says), so alerts appear while the app is open or the next time you open
+it. There is no email or text message. An alert fires when a refresh takes the price
+past the line; a rule the price already meets fires the next time it crosses.
+
+Alerts show in a **Price alerts** box on Home, and the desktop and iPhone apps also
+post a system notification. **Dismiss** hides an alert, keeping the starting price:
+it fires again only if the price comes back and crosses again. **Reset** measures
+from today's price from now on. **Tools → Watchlist…** lists every watched card with
+its starting price, today's price, the change and the alert, with **Change…**,
+**Reset** and ✕ (stop watching).
+
 ## Scanning cards
 
 **Scan a card** (on Add, and in the sidebar) identifies a physical card.
@@ -332,7 +353,8 @@ defaults**.
 
 Your collection is kept in the **data folder**. Each game has its own folder in it:
 `mtg/` holds `collection.json` (your cards), `price-history.json`, `lots.json`,
-`sales.json` (sold cards), `lists.json` (lists and decks) and `backups/`.
+`sales.json` (sold cards), `lists.json` (lists and decks), `watchlist.json` and
+`backups/`.
 
 By default the data folder is the app's own folder:
 
@@ -370,6 +392,7 @@ seconds. If two devices save at the same moment, the sync service keeps the othe
 version as a separate file (such as "collection 2.json"), and Home says so:
 **Merge it** adds its cards and copies to yours without counting any twice (a card
 deleted on one device comes back); **Discard it** deletes that file. A backup is
-taken before merging. The same goes for the lots, sales and lists files: merging adds
-the lots, sales or lists only the other version has (and, on a list both have, the
-cards only it has, keeping the larger number wanted). See the README for command-line options.
+taken before merging. The same goes for the lots, sales, lists and watchlist files:
+merging adds the lots, sales, lists or watches only the other version has (on a list
+both have, the cards only it has, keeping the larger number wanted; for a card both
+watch, the one reset more recently). See the README for command-line options.

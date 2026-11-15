@@ -105,6 +105,15 @@ Per game, in `<data>/<game>/`:
   import; `ImportReport::approximate` marks the cards matched by name only, which
   become any-printing entries. Conflict copies merge lists by ID and, within a list,
   entries by card, the larger quantity winning.
+- `watchlist.json`: watched prices (`core::watchlist`, a `JsonFile`). Each `Watch`
+  holds a catalog copy of the card, a finish, a baseline price and a `Rule` (a
+  percent move, or a price line). `GameService::refresh_prices` includes the watched
+  IDs and calls `WatchStore::apply_prices`, which triggers a watch when the refresh
+  takes its price from inside the line to past it (so a dismissed alert stays quiet
+  until the price comes back and crosses again), and passes each new alert to the
+  hook set with `GameService::set_alert_hook`. The desktop and iPhone apps set one
+  that posts a system notification (`tauri-plugin-notification`); `--web` has none.
+  Conflict copies merge by card and finish, the later `baseline_date` winning.
 - `backups/`: copies of `collection.json` taken before each import, bulk edit, bulk
   delete and restore (`Store::backup`), named
   `collection-YYYYMMDD-HHMMSS[-N]-<reason>.json`; the 10 newest are kept. Restoring
