@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::tags::same_tags;
 use super::{Card, Condition};
 
 /// One purchase: copies of a printing in one finish and condition, bought for the same
@@ -23,13 +24,21 @@ pub struct Purchase {
     /// The lot these copies were bought in (its ID), whose total sets their price.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub lot: String,
+    /// The owner's labels on these copies ("binder A", "elves deck"). Kept normalized:
+    /// see `normalize_tags`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
 impl Purchase {
     /// Whether `other` is the same purchase apart from its quantity, so the two can
-    /// be one: same price paid, acquired date, note and lot.
+    /// be one: same price paid, acquired date, note, lot and tags (ignoring case).
     pub fn same_as(&self, other: &Purchase) -> bool {
-        self.price_paid == other.price_paid && self.acquired_date == other.acquired_date && self.note == other.note && self.lot == other.lot
+        self.price_paid == other.price_paid
+            && self.acquired_date == other.acquired_date
+            && self.note == other.note
+            && self.lot == other.lot
+            && same_tags(&self.tags, &other.tags)
     }
 }
 
@@ -226,5 +235,22 @@ mod tests {
         assert_eq!(c.price_paid(), (2.0, 1));
         assert_eq!(c.market_value(), (3.0, 1));
         assert_eq!(c.best_price(), Some(1.5));
+    }
+
+    #[test]
+    fn tags_decide_whether_purchases_merge() {
+        let tagged = |tags: &[&str]| Purchase { tags: tags.iter().map(|t| t.to_string()).collect(), ..p(1, 1.0, "2024-01-01") };
+        assert!(tagged(&["binder A", "deck"]).same_as(&tagged(&["binder A", "deck"])));
+        assert!(tagged(&["Binder A"]).same_as(&tagged(&["binder a"])), "ignoring case");
+        assert!(!tagged(&["binder A"]).same_as(&tagged(&["binder B"])));
+        assert!(!tagged(&["binder A"]).same_as(&tagged(&[])));
+        let mut c = Card::default();
+        c.add_purchase("nonfoil", Condition::NearMint, tagged(&["deck"]));
+        c.add_purchase("nonfoil", Condition::NearMint, tagged(&["deck"]));
+        c.add_purchase("nonfoil", Condition::NearMint, tagged(&["binder"]));
+        let mut got: Vec<(i64, Vec<String>)> =
+            c.purchases("nonfoil", Condition::NearMint).into_iter().map(|p| (p.quantity, p.tags)).collect();
+        got.sort();
+        assert_eq!(got, [(1, vec!["binder".to_string()]), (2, vec!["deck".to_string()])], "the same tags merge; others don't");
     }
 }

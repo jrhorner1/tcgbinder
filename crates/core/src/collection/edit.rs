@@ -1,8 +1,10 @@
 use std::collections::HashSet;
 
+use anyhow::{Context, Result};
 use serde::Serialize;
 
 use super::copies::norm_finish;
+use super::tags::{normalize_tags, same_tag};
 use super::{Card, CardValue, Condition, filter::default_order, in_printed_set};
 
 /// Counts distinct printings (catalog IDs): several copies, finishes or conditions of
@@ -64,6 +66,11 @@ pub struct BulkChange {
     pub acquired_date: Option<String>,
     /// Set every copy's note; an empty string clears it.
     pub note: Option<String>,
+    /// Tags to put on every purchase, take off it, or (`clear_tags`) remove all of
+    /// first. Applied in that order: clear, remove, add.
+    pub add_tags: Vec<String>,
+    pub remove_tags: Vec<String>,
+    pub clear_tags: bool,
     pub delete: bool,
 }
 
@@ -86,11 +93,15 @@ impl BulkChange {
             && self.price_paid.is_none()
             && self.acquired_date.is_none()
             && self.note.is_none()
+            && self.add_tags.is_empty()
+            && self.remove_tags.is_empty()
+            && !self.clear_tags
     }
 
     /// Returns `c` with the change made (except delete), and why the finish change
-    /// was skipped if the printing doesn't come in that finish.
-    pub fn apply(&self, c: &Card) -> (Card, Option<String>) {
+    /// was skipped if the printing doesn't come in that finish. Fails, naming the
+    /// card, if a purchase would end up with too many tags.
+    pub fn apply(&self, c: &Card) -> Result<(Card, Option<String>)> {
         let mut skipped = None;
         let mut finish = self.finish.as_deref().map(norm_finish);
         if let Some(f) = &finish
@@ -118,9 +129,22 @@ impl BulkChange {
             if let Some(note) = &self.note {
                 r.purchase.note = note.trim().to_string();
             }
+            r.purchase.tags =
+                self.tags_for(&r.purchase.tags).with_context(|| format!("{} ({} · {})", c.name, c.set, c.collector_number))?;
             out.add_purchase(&r.finish, r.condition, r.purchase); // groups that end up the same merge
         }
-        (out, skipped)
+        Ok((out, skipped))
+    }
+
+    /// A purchase's tags after the change: clear, then remove, then add.
+    fn tags_for(&self, tags: &[String]) -> Result<Vec<String>> {
+        if !self.clear_tags && self.remove_tags.is_empty() && self.add_tags.is_empty() {
+            return Ok(tags.to_vec());
+        }
+        let mut out: Vec<String> = if self.clear_tags { Vec::new() } else { tags.to_vec() };
+        out.retain(|t| !self.remove_tags.iter().any(|r| same_tag(r, t)));
+        out.extend(self.add_tags.iter().cloned());
+        normalize_tags(&out)
     }
 }
 
@@ -147,25 +171,25 @@ mod tests {
     fn bulk_change_merges_groups() {
         let c = card("a", "1", &["nonfoil", "foil"]);
         let change = BulkChange { condition: Some(Condition::HeavyPlay), price_paid: Some(0.5), ..Default::default() };
-        let (out, skipped) = change.apply(&c);
+        let (out, skipped) = change.apply(&c).unwrap();
         assert!(skipped.is_none());
         assert_eq!(out.purchases("nonfoil", Condition::HeavyPlay), [Purchase { quantity: 3, price_paid: 0.5, ..Default::default() }]);
 
-        let (out, skipped) = BulkChange { finish: Some("Etched".into()), ..Default::default() }.apply(&c);
+        let (out, skipped) = BulkChange { finish: Some("Etched".into()), ..Default::default() }.apply(&c).unwrap();
         assert!(skipped.unwrap().contains("isn't printed in etched"));
         assert_eq!(out.copies, c.copies);
 
-        let (out, _) = BulkChange { finish: Some("foil".into()), ..Default::default() }.apply(&c);
+        let (out, _) = BulkChange { finish: Some("foil".into()), ..Default::default() }.apply(&c).unwrap();
         assert_eq!(out.finish_copy_count("foil"), 3);
     }
 
     #[test]
     fn bulk_note_set_and_clear() {
         let c = card("a", "1", &["nonfoil"]);
-        let (noted, _) = BulkChange { note: Some(" binder 2 ".into()), ..Default::default() }.apply(&c);
+        let (noted, _) = BulkChange { note: Some(" binder 2 ".into()), ..Default::default() }.apply(&c).unwrap();
         assert!(noted.purchase_rows().iter().all(|r| r.purchase.note == "binder 2"));
         assert_eq!(noted.copy_count(), 3);
-        let (cleared, _) = BulkChange { note: Some(String::new()), ..Default::default() }.apply(&noted);
+        let (cleared, _) = BulkChange { note: Some(String::new()), ..Default::default() }.apply(&noted).unwrap();
         assert_eq!(cleared.copies, c.copies);
         assert!(!BulkChange { note: Some(String::new()), ..Default::default() }.is_empty());
     }
@@ -182,5 +206,62 @@ mod tests {
         assert_eq!(missing(&set, std::slice::from_ref(&owned), None).iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["y", "z"]);
         assert_eq!(missing(&set, &[owned], Some(2)).iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["y"], "the printed run only");
         assert_eq!(unique_cards(&set), 3);
+    }
+
+    fn tags_of(c: &Card) -> Vec<(i64, Vec<String>)> {
+        let mut out: Vec<(i64, Vec<String>)> = c.purchase_rows().into_iter().map(|r| (r.purchase.quantity, r.purchase.tags)).collect();
+        out.sort();
+        out
+    }
+
+    fn v(t: &[&str]) -> Vec<String> {
+        t.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn bulk_tags_clear_remove_add_then_merge() {
+        // Two purchases (NM ×1 at $1, LP ×2 at $2), tagged differently.
+        let mut c = card("a", "1", &["nonfoil"]);
+        for (i, list) in c.copies.0.values_mut().flat_map(|m| m.values_mut()).enumerate() {
+            list[0].tags = if i == 0 { v(&["binder A", "old"]) } else { v(&["old"]) };
+        }
+        let change = |add: &[&str], remove: &[&str], clear: bool| BulkChange {
+            add_tags: v(add),
+            remove_tags: v(remove),
+            clear_tags: clear,
+            ..Default::default()
+        };
+        let (out, _) = change(&["deck"], &["OLD"], false).apply(&c).unwrap();
+        assert_eq!(tags_of(&out), [(1, v(&["binder A", "deck"])), (2, v(&["deck"]))], "remove ignores case");
+        let (out, _) = change(&["deck"], &[], true).apply(&c).unwrap();
+        assert_eq!(tags_of(&out), [(1, v(&["deck"])), (2, v(&["deck"]))], "clear before add");
+        let (out, _) = change(&["old"], &["old"], false).apply(&c).unwrap();
+        assert_eq!(tags_of(&out), [(1, v(&["binder A", "old"])), (2, v(&["old"]))], "remove before add");
+        // Made identical (same tags, then same price): they merge.
+        let merge = BulkChange { price_paid: Some(1.0), condition: Some(Condition::NearMint), clear_tags: true, ..Default::default() };
+        assert_eq!(tags_of(&merge.apply(&c).unwrap().0), [(3, vec![])]);
+        assert!(!change(&[], &[], true).is_empty() && !change(&["x"], &[], false).is_empty() && !change(&[], &["x"], false).is_empty());
+
+        // 19 tags already: adding 2 more fails, naming the card.
+        let mut full = card("b", "2", &["nonfoil"]);
+        for list in full.copies.0.values_mut().flat_map(|m| m.values_mut()) {
+            list[0].tags = (0..19).map(|i| format!("t{i:02}")).collect();
+        }
+        let err = change(&["x", "y"], &[], false).apply(&full).unwrap_err();
+        assert!(format!("{err:#}").contains("Card b") && format!("{err:#}").contains("at most 20"), "{err:#}");
+    }
+
+    #[test]
+    fn tags_move_with_their_copies() {
+        let mut owned = card("a", "1", &["foil"]);
+        for list in owned.copies.0.values_mut().flat_map(|m| m.values_mut()) {
+            list[0].tags = v(&["deck"]);
+        }
+        let moved = with_printing(&owned, &card("b", "7", &["nonfoil"]));
+        assert_eq!(tags_of(&moved), tags_of(&owned), "changing printing keeps tags");
+        let (refinished, _) =
+            BulkChange { finish: Some("foil".into()), condition: Some(Condition::Moderate), ..Default::default() }.apply(&owned).unwrap();
+        assert_eq!(tags_of(&refinished), [(1, v(&["deck"])), (2, v(&["deck"]))], "a finish or condition change keeps tags");
+        assert_eq!(refinished.finish_copy_count("foil"), 3);
     }
 }

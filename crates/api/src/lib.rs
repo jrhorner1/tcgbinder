@@ -589,6 +589,7 @@ impl Api {
             matches: Some(Box::new(|c: &Card| {
                 filters.iter().all(|f| params.get(&format!("f.{}", f.name)).is_none_or(|opt| is_any(opt) || (f.matches)(c, opt)))
             })),
+            ..Query::default()
         };
         let (key, descending) = match get("sort").as_str() {
             "" => SortKey::from_card_order(&self.settings.get().card_order),
@@ -818,6 +819,7 @@ impl Api {
             acquired_date: (!req.acquired_date.is_empty()).then_some(req.acquired_date),
             note: req.note,
             delete: req.delete,
+            ..BulkChange::default()
         };
         if change.is_empty() {
             return Err(bad("choose at least one change"));
@@ -1058,6 +1060,7 @@ impl PurchaseForm {
             acquired_date: self.acquired_date.clone(),
             note: self.note.trim().to_string(),
             lot: self.lot.clone(),
+            ..Purchase::default()
         };
         c.add_purchase(&finish, Condition::parse(&self.condition), p);
     }

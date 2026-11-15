@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
+use super::tags::{clean_tag, normalize_tags, same_tag, same_tags, tags_in_use, with_spellings};
 use super::{BulkChange, BulkResult, Card, CatalogUpdate, Condition, Purchase};
 use crate::dates;
 use crate::jsonfile::JsonFile;
@@ -15,6 +16,14 @@ use crate::lots::{LotCopy, LotPrices};
 /// takes in what is on disk (see [`JsonFile`]).
 pub struct Store {
     file: JsonFile<StoreData>,
+}
+
+/// What renaming or deleting a tag did: purchases changed, and the backup taken
+/// first (None when the tag wasn't in use, so nothing was done).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TagEdit {
+    pub changed: usize,
+    pub backup: Option<String>,
 }
 
 /// The collection file's contents.
@@ -31,7 +40,7 @@ struct StoreData {
 pub const BACKUPS_KEPT: usize = 10;
 
 /// Why a backup was taken, as the last part of its file name.
-pub const BACKUP_REASONS: &[&str] = &["import", "bulk-edit", "bulk-delete", "restore", "merge", "move"];
+pub const BACKUP_REASONS: &[&str] = &["import", "bulk-edit", "bulk-delete", "restore", "merge", "move", "tag-rename", "tag-delete"];
 
 /// A backup of the collection file, as listed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -197,13 +206,17 @@ impl Store {
     /// Adds copies to the collection, merging into the card for the same printing when
     /// there is one, and saves once. It returns how many new cards were created and how
     /// many cards were added to existing ones.
-    pub fn add_cards(&self, cards: Vec<Card>) -> Result<(usize, usize)> {
+    pub fn add_cards(&self, mut cards: Vec<Card>) -> Result<(usize, usize)> {
+        for c in &mut cards {
+            normalize_card_tags(c)?;
+        }
         self.file.mutate(|data| {
             let (mut created, mut merged) = (0, 0);
             for mut card in cards {
                 if card.id.is_empty() || card.copy_count() <= 0 {
                     continue;
                 }
+                use_existing_spellings(data, &mut card);
                 normalize_card(&mut card);
                 let key = card_key(&card);
                 let next = match data.cards.remove(&key) {
@@ -366,11 +379,15 @@ impl Store {
         if card.copies.0.values().flat_map(|m| m.values().flatten()).any(|p| p.quantity < 0) {
             bail!("quantity cannot be negative");
         }
+        normalize_card_tags(&mut card)?;
         normalize_card(&mut card);
         let new_key = card_key(&card);
         self.file.mutate(|data| {
             let mut merged = false;
             data.cards.remove(old_key);
+            // The spellings in the rest of the collection (this card's own may change).
+            use_existing_spellings(data, &mut card);
+            normalize_card(&mut card);
             if card.copy_count() > 0 {
                 let next = match data.cards.remove(&new_key) {
                     Some(existing) if new_key != old_key => {
@@ -397,7 +414,8 @@ impl Store {
     }
 
     /// Takes `quantity` copies out of one purchase of the card stored under `key`: the
-    /// one in `finish` and `cond` with `purchase`'s price paid, acquired date and note.
+    /// one in `finish` and `cond` with `purchase`'s price paid, acquired date, note and
+    /// tags.
     /// A card left with no copies is deleted. Returns the purchase as it was.
     pub fn take_copies(&self, key: &str, finish: &str, cond: Condition, purchase: &Purchase, quantity: i64) -> Result<Purchase> {
         if quantity <= 0 {
@@ -412,6 +430,7 @@ impl Store {
                     p.price_paid == purchase.price_paid
                         && p.acquired_date == purchase.acquired_date
                         && p.note == purchase.note
+                        && same_tags(&p.tags, &purchase.tags)
                         && p.quantity > 0
                 })
             });
@@ -430,23 +449,96 @@ impl Store {
     }
 
     /// Applies `change` to the cards with the given keys and saves.
+    /// Applies `change` to the cards with the given keys and saves. If the change
+    /// can't be made to any card (too many tags), nothing is saved.
     pub fn bulk_edit(&self, keys: &[String], change: &BulkChange) -> Result<BulkResult> {
+        let mut change = change.clone();
+        change.add_tags = normalize_tags(&change.add_tags)?;
         self.file.mutate(|data| {
+            // Tags added take the spellings already in the collection.
+            change.add_tags = with_spellings(std::mem::take(&mut change.add_tags), &tags_in_use(data.cards.values()));
             let mut res = BulkResult::default();
+            let mut edited = Vec::new();
             for key in keys {
                 let Some(c) = data.cards.get(key) else { continue };
                 if change.delete {
-                    data.cards.remove(key);
-                    res.deleted += 1;
+                    edited.push((key.clone(), None));
                     continue;
                 }
-                let (edited, skipped) = change.apply(c);
+                let (card, skipped) = change.apply(c)?;
                 res.skipped.extend(skipped);
-                data.cards.insert(key.clone(), edited);
-                res.updated += 1;
+                edited.push((key.clone(), Some(card)));
+            }
+            // Only once every card could be changed.
+            for (key, card) in edited {
+                match card {
+                    Some(card) => {
+                        data.cards.insert(key, card);
+                        res.updated += 1;
+                    }
+                    None => {
+                        data.cards.remove(&key);
+                        res.deleted += 1;
+                    }
+                }
             }
             Ok(res)
         })
+    }
+
+    /// Every tag in use, sorted ignoring case.
+    pub fn tag_names(&self) -> Vec<String> {
+        self.file.read(|data| tags_in_use(data.cards.values()))
+    }
+
+    /// `tags` with each replaced by the spelling already in the collection when one
+    /// matches ignoring case.
+    pub fn canonical_tags(&self, tags: Vec<String>) -> Vec<String> {
+        with_spellings(tags, &self.tag_names())
+    }
+
+    /// Renames a tag on every purchase that has it (after a backup). If `to` is
+    /// already a tag, the two become one with `to`'s existing spelling, unless `from`
+    /// and `to` differ only in case, when `to`'s new spelling is used everywhere.
+    /// Purchases made identical merge.
+    pub fn rename_tag(&self, from: &str, to: &str) -> Result<TagEdit> {
+        let Some(to) = clean_tag(to) else { bail!("that tag can't be used: {:?}", to.trim()) };
+        let target = if same_tag(from, &to) { to } else { self.tag_names().into_iter().find(|t| same_tag(t, &to)).unwrap_or(to) };
+        self.edit_tag(from, "tag-rename", |tags| tags.push(target.clone()))
+    }
+
+    /// Removes a tag from every purchase that has it (after a backup).
+    pub fn delete_tag(&self, name: &str) -> Result<TagEdit> {
+        self.edit_tag(name, "tag-delete", |_| {})
+    }
+
+    /// Takes `name` off every purchase that has it, lets `then` change those
+    /// purchases' tags, and merges purchases made identical. Backs up first when the
+    /// tag is in use.
+    fn edit_tag(&self, name: &str, reason: &str, then: impl Fn(&mut Vec<String>)) -> Result<TagEdit> {
+        if !self.tag_names().iter().any(|t| same_tag(t, name)) {
+            return Ok(TagEdit::default());
+        }
+        let backup = self.backup(reason)?;
+        let changed = self.file.mutate(|data| {
+            let mut changed = 0;
+            for c in data.cards.values_mut() {
+                let mut copies = super::Copies::default();
+                for (f, cond, p) in c.copies.each() {
+                    let mut p = p.clone();
+                    if p.tags.iter().any(|t| same_tag(t, name)) {
+                        p.tags.retain(|t| !same_tag(t, name));
+                        then(&mut p.tags);
+                        p.tags = normalize_tags(&p.tags)?;
+                        changed += 1;
+                    }
+                    copies.add(f, cond, p);
+                }
+                c.copies = copies;
+            }
+            Ok(changed)
+        })?;
+        Ok(TagEdit { changed, backup: Some(backup) })
     }
 
     /// Whether any card's market prices were last refreshed before today.
@@ -541,6 +633,37 @@ fn normalize_card(c: &mut Card) {
         copies.add(f, cond, p.clone());
     }
     c.copies = copies;
+}
+
+/// Normalizes every purchase's tags (see `normalize_tags`).
+fn normalize_card_tags(c: &mut Card) -> Result<()> {
+    for by_cond in c.copies.0.values_mut() {
+        for list in by_cond.values_mut() {
+            for p in list.iter_mut() {
+                p.tags = normalize_tags(&p.tags)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Gives `card`'s tags the spellings already in the collection, and one spelling
+/// across its own purchases. Call `normalize_card` after, to merge purchases this
+/// made identical.
+fn use_existing_spellings(data: &StoreData, card: &mut Card) {
+    let mut known = tags_in_use(data.cards.values());
+    for t in tags_in_use(std::iter::once(&*card)) {
+        if !known.iter().any(|k| same_tag(k, &t)) {
+            known.push(t);
+        }
+    }
+    for by_cond in card.copies.0.values_mut() {
+        for list in by_cond.values_mut() {
+            for p in list.iter_mut() {
+                p.tags = with_spellings(std::mem::take(&mut p.tags), &known);
+            }
+        }
+    }
 }
 
 /// Adds `incoming`'s purchases to an existing card for the same printing (identical
@@ -807,5 +930,136 @@ mod tests {
         assert_eq!((game.as_str(), cards.len()), ("mtg", 1));
         assert!(read_export(b"{}").is_err());
         assert!(read_export(b"name,qty").is_err());
+    }
+
+    fn tagged(id: &str, qty: i64, tags: &[&str]) -> Card {
+        let mut c = card(id, 0);
+        c.add_purchase(
+            "nonfoil",
+            Condition::NearMint,
+            Purchase { quantity: qty, price_paid: 1.0, tags: tags.iter().map(|t| t.to_string()).collect(), ..Default::default() },
+        );
+        c
+    }
+
+    fn tags_of(s: &Store, key: &str) -> Vec<(i64, Vec<String>)> {
+        let mut out: Vec<(i64, Vec<String>)> =
+            s.get(key).unwrap().purchase_rows().into_iter().map(|r| (r.purchase.quantity, r.purchase.tags)).collect();
+        out.sort();
+        out
+    }
+
+    fn v(t: &[&str]) -> Vec<String> {
+        t.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn tags_keep_one_spelling() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path().join("c.json"), "mtg").unwrap();
+        s.add_cards(vec![tagged("a", 1, &["Binder A"])]).unwrap();
+        s.add_cards(vec![tagged("b", 1, &["  binder   a", "Deck"]), tagged("c", 1, &["deck"])]).unwrap();
+        assert_eq!(tags_of(&s, "b"), [(1, v(&["Binder A", "Deck"]))], "the collection's spelling; cleaned");
+        assert_eq!(tags_of(&s, "c"), [(1, v(&["Deck"]))], "one spelling within one save too");
+        assert_eq!(s.tag_names(), ["Binder A", "Deck"]);
+        assert_eq!(s.canonical_tags(v(&["DECK", "new"])), ["Deck", "new"]);
+        assert!(s.add_cards(vec![tagged("d", 1, &["a,b"])]).is_err(), "invalid tags are refused");
+
+        // Saving a card takes the rest of the collection's spelling...
+        let mut c = s.get("c").unwrap();
+        c.copies.0.get_mut("nonfoil").unwrap().get_mut(&Condition::NearMint).unwrap()[0].tags = v(&["binder a"]);
+        s.save_card("c", c).unwrap();
+        assert_eq!(tags_of(&s, "c"), [(1, v(&["Binder A"]))]);
+        // ...but a tag only this card has keeps the spelling it's saved with.
+        let mut b = s.get("b").unwrap();
+        b.copies.0.get_mut("nonfoil").unwrap().get_mut(&Condition::NearMint).unwrap()[0].tags = v(&["Binder A", "DECK"]);
+        s.save_card("b", b).unwrap();
+        assert_eq!(tags_of(&s, "b"), [(1, v(&["Binder A", "DECK"]))]);
+        // Purchases made identical by a spelling merge.
+        s.add_cards(vec![tagged("b", 2, &["binder a", "deck"])]).unwrap();
+        assert_eq!(tags_of(&s, "b"), [(3, v(&["Binder A", "DECK"]))]);
+    }
+
+    #[test]
+    fn bulk_tags_fail_whole_or_apply() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path().join("c.json"), "mtg").unwrap();
+        let nineteen: Vec<String> = (0..19).map(|i| format!("t{i:02}")).collect();
+        let full = tagged("full", 1, &nineteen.iter().map(String::as_str).collect::<Vec<_>>());
+        s.add_cards(vec![tagged("a", 1, &["Deck"]), full]).unwrap();
+        let keys = v(&["a", "full"]);
+        let two = BulkChange { add_tags: v(&["x", "y"]), ..Default::default() };
+        assert!(s.bulk_edit(&keys, &two).is_err());
+        assert_eq!(tags_of(&s, "a"), [(1, v(&["Deck"]))], "nothing saved");
+        let one = BulkChange { add_tags: v(&["deck", "x"]), remove_tags: v(&["t00"]), ..Default::default() };
+        assert_eq!(s.bulk_edit(&keys, &one).unwrap().updated, 2);
+        assert_eq!(tags_of(&s, "a"), [(1, v(&["Deck", "x"]))], "added in the collection's spelling");
+        assert!(s.bulk_edit(&keys, &BulkChange { add_tags: v(&["a;b"]), ..Default::default() }).is_err());
+    }
+
+    #[test]
+    fn rename_and_delete_tags() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path().join("c.json"), "mtg").unwrap();
+        s.add_cards(vec![tagged("a", 1, &["elves"]), tagged("a", 2, &["Binder A"]), tagged("b", 1, &["elves", "keep"])]).unwrap();
+        assert_eq!(s.rename_tag("nope", "x").unwrap(), TagEdit::default(), "not in use: nothing, no backup");
+        assert!(s.rename_tag("elves", "a;b").is_err());
+
+        let r = s.rename_tag("ELVES", "elf deck").unwrap();
+        assert_eq!(r.changed, 2);
+        assert!(r.backup.unwrap().ends_with("-tag-rename.json"));
+        assert_eq!(s.tag_names(), ["Binder A", "elf deck", "keep"]);
+
+        // Into an existing tag: one tag, the existing spelling; purchases made identical merge.
+        assert_eq!(s.rename_tag("elf deck", "binder a").unwrap().changed, 2);
+        assert_eq!(tags_of(&s, "a"), [(3, v(&["Binder A"]))]);
+        assert_eq!(tags_of(&s, "b"), [(1, v(&["Binder A", "keep"]))]);
+
+        // Case only: the new spelling everywhere.
+        s.rename_tag("binder a", "BINDER A").unwrap();
+        assert_eq!(s.tag_names(), ["BINDER A", "keep"]);
+
+        let d = s.delete_tag("keep").unwrap();
+        assert_eq!(d.changed, 1);
+        assert!(d.backup.unwrap().ends_with("-tag-delete.json"));
+        assert_eq!(s.tag_names(), ["BINDER A"]);
+    }
+
+    #[test]
+    fn tags_in_files_merges_lots_and_sales() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.json");
+        // An old file with no tags loads, and an untagged purchase writes no tags key.
+        std::fs::write(&path, r#"{"game":"mtg","cards":{"a":{"id":"a","copies":{"nonfoil":{"NM":[{"quantity":1}]}}}}}"#).unwrap();
+        let s = Store::open(&path, "mtg").unwrap();
+        assert!(s.get("a").unwrap().purchase_rows()[0].purchase.tags.is_empty());
+        s.add_cards(vec![tagged("b", 1, &[])]).unwrap();
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("tags"));
+
+        // A conflict copy: purchases with the same tags count once; different tags are kept.
+        s.add_cards(vec![tagged("c", 2, &["deck"])]).unwrap();
+        s.merge_copy(vec![tagged("c", 1, &["Deck"]), tagged("c", 1, &["binder"])]).unwrap();
+        assert_eq!(tags_of(&s, "c"), [(1, v(&["binder"])), (2, v(&["deck"]))]);
+
+        // Taking copies out (a sale) needs the tags to match.
+        let p = Purchase { price_paid: 1.0, tags: v(&["deck"]), ..Default::default() };
+        assert!(s.take_copies("c", "nonfoil", Condition::NearMint, &Purchase { tags: v(&["other"]), ..p.clone() }, 1).is_err());
+        assert_eq!(s.take_copies("c", "nonfoil", Condition::NearMint, &p, 1).unwrap().tags, ["deck"]);
+
+        // Repricing a lot keeps tags.
+        let mut in_lot = card("d", 0);
+        in_lot.add_purchase(
+            "nonfoil",
+            Condition::NearMint,
+            Purchase { quantity: 2, lot: "L".into(), tags: v(&["deck"]), ..Default::default() },
+        );
+        s.add_cards(vec![in_lot]).unwrap();
+        let prices = crate::lots::LotPrices {
+            each: [(("d".to_string(), "nonfoil".to_string(), Condition::NearMint), 1.5)].into(),
+            ..Default::default()
+        };
+        s.reprice_lot("L", &prices, "2026-11-15").unwrap();
+        let p = &s.get("d").unwrap().purchase_rows()[0].purchase;
+        assert_eq!((p.price_paid, p.tags.clone()), (1.5, v(&["deck"])));
     }
 }

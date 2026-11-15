@@ -192,6 +192,7 @@ impl GameService {
                 acquired_date: sale.acquired_date.clone(),
                 note: sale.purchase_note.clone(),
                 lot: sale.lot.clone(),
+                ..Purchase::default()
             };
             let existing = self.store.cards_where(|c| c.id == sale.card.id);
             let mut card = match existing.into_iter().next() {

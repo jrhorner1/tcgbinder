@@ -10,6 +10,7 @@ mod filter;
 mod price_history;
 mod stats;
 mod store;
+mod tags;
 
 pub use breakdown::{Breakdown, BreakdownRow, BreakdownTable, MonthRow, Statistics, ValueBand, statistics};
 pub use card::{Card, CatalogUpdate, Condition, SetInfo, in_printed_set};
@@ -21,4 +22,8 @@ pub use filter::{
 };
 pub use price_history::{DailyPrices, PriceHistory};
 pub use stats::{CardValue, SetStats, Stats, TimePoint, compute_stats, compute_stats_at, round_cents};
-pub use store::{Store, card_key, read_export};
+pub use store::{Store, TagEdit, card_key, read_export};
+pub use tags::{
+    MAX_TAG_LEN, MAX_TAGS, TagSummaries, TagSummary, card_tags, clean_tag, normalize_tags, same_tag, split_tags, tag_summaries,
+    tags_in_use, with_spellings,
+};

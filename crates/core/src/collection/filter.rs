@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
+use super::tags::same_tag;
 use super::{Card, Condition};
 
 /// The "no filter" choice in filter menus.
@@ -18,7 +19,7 @@ pub type CardMatch<'a> = Box<dyn Fn(&Card) -> bool + 'a>;
 #[derive(Default)]
 pub struct Query<'a> {
     /// Whitespace-separated terms; every term must match the name, set code, set name,
-    /// collector number or a purchase's note.
+    /// collector number, or a purchase's note or tags.
     pub text: String,
     /// Set code (case-insensitive); "" or [`FILTER_ANY`] for all.
     pub set: String,
@@ -49,11 +50,31 @@ pub struct Query<'a> {
     pub no_price_paid: bool,
     /// Only cards with a copy whose finish has no market price.
     pub unpriced: bool,
+    /// Tags the card must have. With `tags_any` false (the default) it must have all
+    /// of them; with it true, at least one. A card "has" a tag when any of its
+    /// purchases with copies carries it.
+    pub tags: Vec<String>,
+    pub tags_any: bool,
+    /// Tags the card must not have on any purchase.
+    pub tags_not: Vec<String>,
+    /// Only cards with at least one purchase that has no tags.
+    pub untagged: bool,
     /// An extra, game-specific condition (e.g. Magic's color filter).
     pub matches: Option<CardMatch<'a>>,
 }
 
 impl Query<'_> {
+    /// Whether a card passes the tag filters.
+    fn tags_match(&self, c: &Card) -> bool {
+        if self.tags.is_empty() && self.tags_not.is_empty() && !self.untagged {
+            return true;
+        }
+        let has = |want: &str| c.copies.each().any(|(_, _, p)| p.tags.iter().any(|t| same_tag(t, want)));
+        let wanted =
+            self.tags.is_empty() || if self.tags_any { self.tags.iter().any(|t| has(t)) } else { self.tags.iter().all(|t| has(t)) };
+        wanted && !self.tags_not.iter().any(|t| has(t)) && (!self.untagged || c.copies.each().any(|(_, _, p)| p.tags.is_empty()))
+    }
+
     /// Tells whether a card matches the query.
     pub fn matcher(&self) -> impl Fn(&Card) -> bool + '_ {
         let terms: Vec<String> = self.text.to_lowercase().split_whitespace().map(str::to_string).collect();
@@ -80,11 +101,12 @@ impl Query<'_> {
                 && self.min_copies.is_none_or(|n| c.copy_count() >= n)
                 && (!self.no_price_paid || c.price_paid().1 > 0)
                 && (!self.unpriced || c.market_value().1 > 0)
+                && self.tags_match(c)
                 && self.matches.as_ref().is_none_or(|m| m(c))
                 // Each term in the name, set code, set name, number or a purchase's note.
                 && terms.iter().all(|t| {
                     [&c.name, &c.set, &c.set_name, &c.collector_number].iter().any(|field| contains_fold(field, t))
-                        || c.copies.each().any(|(_, _, p)| contains_fold(&p.note, t))
+                        || c.copies.each().any(|(_, _, p)| contains_fold(&p.note, t) || p.tags.iter().any(|tag| contains_fold(tag, t)))
                 })
         }
     }
@@ -183,6 +205,8 @@ pub enum SortKey {
     Released,
     /// The game's rarity order, lowest first; unknown rarities after.
     Rarity,
+    /// The card's first tag alphabetically (ignoring case); untagged cards last.
+    Tag,
 }
 
 impl SortKey {
@@ -198,6 +222,7 @@ impl SortKey {
         ("acquired", SortKey::Acquired),
         ("released", SortKey::Released),
         ("rarity", SortKey::Rarity),
+        ("tag", SortKey::Tag),
     ];
 
     pub fn parse(s: &str) -> Option<SortKey> {
@@ -216,6 +241,11 @@ impl SortKey {
     }
 }
 
+/// A card's first tag alphabetically, lower-cased (for sorting).
+fn first_tag(c: &Card) -> Option<String> {
+    c.copies.each().flat_map(|(_, _, p)| p.tags.iter()).map(|t| t.to_lowercase()).min()
+}
+
 /// The earliest dated purchase.
 fn first_acquired(c: &Card) -> Option<&str> {
     c.copies.each().map(|(_, _, p)| p.acquired_date.as_str()).filter(|d| !d.is_empty()).min()
@@ -224,7 +254,8 @@ fn first_acquired(c: &Card) -> Option<&str> {
 /// Sorts by `key`, descending if asked. Only the key itself is reversed: cards that
 /// tie on it stay in [`default_order`] (for `Set`, only the release date is reversed,
 /// so a set's cards stay in number order), and cards with nothing to sort by
-/// (undated for `Acquired`, no price paid for `Gain`) come last either way.
+/// (undated for `Acquired`, no price paid for `Gain`, untagged for `Tag`) come last
+/// either way.
 /// `rarity_order` is the game's rarities, lowest first.
 pub fn sort_cards(mut cards: Vec<Card>, key: SortKey, descending: bool, rarity_order: &[&str]) -> Vec<Card> {
     let dir = |o: Ordering| if descending { o.reverse() } else { o };
@@ -259,6 +290,10 @@ pub fn sort_cards(mut cards: Vec<Card>, key: SortKey, descending: bool, rarity_o
             SortKey::Acquired => {
                 let (x, y) = (first_acquired(a), first_acquired(b));
                 last(x.zip(y).map(|(x, y)| x.cmp(y)), x.is_some(), y.is_some())
+            }
+            SortKey::Tag => {
+                let (x, y) = (first_tag(a), first_tag(b));
+                last(x.as_ref().zip(y.as_ref()).map(|(x, y)| x.cmp(y)), x.is_some(), y.is_some())
             }
         };
         primary.then_with(|| default_order(a, b))
@@ -395,7 +430,20 @@ mod tests {
         let mut zap = make("Zap", "M19", "10", "2018-07-13", "special");
         zap.market.insert("nonfoil".into(), 0.5);
         zap.add_purchase("nonfoil", Condition::NearMint, buy(3, 0.1, "2021-03-03"));
+        // Tags: Bolt "zoo", Shock "burn", Zap "Alpha"; Opal none.
+        tag(&mut bolt, &["zoo"]);
+        tag(&mut shock, &["burn"]);
+        tag(&mut zap, &["Alpha"]);
         vec![bolt, opal, shock, zap]
+    }
+
+    /// Puts `tags` on every purchase of `c`.
+    fn tag(c: &mut Card, tags: &[&str]) {
+        for list in c.copies.0.values_mut().flat_map(|m| m.values_mut()) {
+            for p in list {
+                p.tags = tags.iter().map(|t| t.to_string()).collect();
+            }
+        }
     }
 
     #[test]
@@ -422,6 +470,8 @@ mod tests {
             ("released", "Opal,Bolt,Shock,Zap", "Shock,Zap,Bolt,Opal"),
             // Zap's rarity isn't in the game's order: after the known ones.
             ("rarity", "Bolt,Shock,Opal,Zap", "Zap,Opal,Shock,Bolt"),
+            // First tag ignoring case: Alpha, burn, zoo; Opal is untagged: last both ways.
+            ("tag", "Zap,Shock,Bolt,Opal", "Bolt,Shock,Zap,Opal"),
         ];
         assert_eq!(cases.len(), SortKey::ALL.len());
         for (key, asc, desc) in cases {
@@ -483,5 +533,47 @@ mod tests {
         assert_eq!(q(&|q| q.min_copies = Some(3)), "Bolt,Shock,Zap");
         assert_eq!(q(&|q| q.no_price_paid = true), "Bolt,Shock,Zap", "any copy without a price paid");
         assert_eq!(q(&|q| q.unpriced = true), "Shock,Zap", "Zap's foil has no price");
+    }
+
+    #[test]
+    fn tag_filters() {
+        // Bolt: one purchase "elves deck", another "Binder A". Shock: "binder a" and an
+        // untagged purchase. Opal: untagged. Zap: "for sale".
+        let mut bolt = card("Bolt", "M11", "149", "common", "nonfoil");
+        tag(&mut bolt, &["elves deck"]);
+        bolt.add_purchase("foil", Condition::NearMint, Purchase { quantity: 1, tags: vec!["Binder A".into()], ..Default::default() });
+        let mut shock = card("Shock", "M19", "156", "common", "nonfoil");
+        shock.add_purchase("foil", Condition::NearMint, Purchase { quantity: 1, tags: vec!["binder a".into()], ..Default::default() });
+        let opal = card("Opal", "USG", "10", "rare", "nonfoil");
+        let mut zap = card("Zap", "M19", "10", "common", "nonfoil");
+        tag(&mut zap, &["for sale"]);
+        let cards = [bolt, shock, opal, zap];
+        let q = |f: &dyn Fn(&mut Query)| {
+            let mut q = Query::default();
+            f(&mut q);
+            let m = q.matcher();
+            names(&cards.iter().filter(|c| m(c)).cloned().collect::<Vec<_>>()).join(",")
+        };
+        let v = |t: &[&str]| t.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(q(&|q| q.tags = v(&["BINDER A"])), "Bolt,Shock", "ignoring case");
+        assert_eq!(q(&|q| q.tags = v(&["elves deck", "binder a"])), "Bolt", "all, across purchases");
+        assert_eq!(
+            q(&|q| {
+                q.tags = v(&["elves deck", "for sale"]);
+                q.tags_any = true
+            }),
+            "Bolt,Zap"
+        );
+        assert_eq!(q(&|q| q.tags_not = v(&["binder a"])), "Opal,Zap");
+        assert_eq!(
+            q(&|q| {
+                q.tags = v(&["binder a"]);
+                q.tags_not = v(&["elves deck"])
+            }),
+            "Shock"
+        );
+        assert_eq!(q(&|q| q.untagged = true), "Shock,Opal", "a purchase with no tags");
+        assert_eq!(q(&|q| q.tags = v(&["nobody"])), "");
+        assert_eq!(q(&|q| q.text = "sale".into()), "Zap", "search matches tags");
     }
 }
