@@ -246,7 +246,7 @@ function dataNotices(df, home) {
       if (what === "discard" && !(await confirmDialog(`Delete ${c.name}? Its changes are lost.`, { danger: true, action: "Discard it" }))) return;
       try {
         const r = await api("POST", gameAPI(`/conflicts/${what}`), { name: c.name });
-        const unit = { lots: ["lot", "lots"], sales: ["sale", "sales"] }[c.kind] || ["card", "cards"];
+        const unit = { lots: ["lot", "lots"], sales: ["sale", "sales"], lists: ["list", "lists"] }[c.kind] || ["card", "cards"];
         status(what === "merge" ? `Merged ${c.name}: ${plural(r.changed, ...unit)} changed.` : `Discarded ${c.name}.`, false, r.undo);
         await loadFilters();
         route();
@@ -255,6 +255,7 @@ function dataNotices(df, home) {
     const about = {
       lots: ["your lots", "Merging adds the lots only it has; where both have a lot, the newer one is kept."],
       sales: ["your sales", "Merging adds the sales only it has; none is counted twice."],
+      lists: ["your lists", "Merging adds the lists and cards only it has; where both have a card on a list, the larger quantity is kept."],
     }[c.kind] || ["your collection", "Merging adds its cards and copies to yours without counting any twice; a card deleted on one device comes back."];
     out.push(h("div.card-box.notice",
       h("h2", `Another device saved a different version of ${about[0]}`),
@@ -718,7 +719,8 @@ async function renderSet(container, code) {
             h("a.rowlink", { href: `#/add?${new URLSearchParams({ text: c.name, set: code })}` },
               h("span.num", c.collector_number), h("span.text", h("span.name", c.name),
                 h("span.meta", [title(c.rarity), anyPrice(c) ? usd(anyPrice(c)) : ""].filter(Boolean).join(" · ")))),
-            h("button", { type: "button", onclick: () => addInDialog(c, () => row.remove()) }, "Add…"));
+            h("div.row-actions", h("button", { type: "button", onclick: () => addToList(c, 1) }, "To list…"),
+              h("button", { type: "button", onclick: () => addInDialog(c, () => row.remove()) }, "Add…")));
           return row;
         }));
       showMissing.remove();
@@ -840,6 +842,160 @@ async function viewEarnings(qs) {
     h("h2", "Sales"),
     d.sales.length ? h("div.card-box", d.sales.map(sale))
       : h("p.muted", year ? `No sales in ${year}.` : "No sales yet. To sell copies, open a card and choose Sell… on the purchase they came from."));
+}
+
+// addToList puts catalog card `c` on a list (or a new one), in a dialog of its own so it
+// can open over another.
+async function addToList(c, quantity) {
+  const lists = await api("GET", gameAPI("/lists")).catch(() => []);
+  const dlg = h("dialog.ask");
+  const NEW = "\u0000new";
+  const last = store("lastList");
+  const which = h("select", { "aria-label": "List", onchange: () => { name.hidden = which.value !== NEW; if (!name.hidden) name.focus(); } },
+    lists.map((l) => h("option", { value: l.id, selected: l.id === last }, l.name)), h("option", { value: NEW, selected: !lists.length }, "New list…"));
+  const name = h("input", { type: "text", placeholder: "Name, e.g. Mono-red burn", "aria-label": "New list's name", hidden: lists.length > 0 });
+  const qty = h("input", { type: "number", min: 1, step: 1, value: quantity || 1, "aria-label": "Copies wanted" });
+  const any = h("input", { type: "checkbox", checked: true });
+  const err = h("p.error");
+  const close = () => { dlg.close(); dlg.remove(); };
+  const save = async () => {
+    err.textContent = "";
+    const q = parseInt(qty.value, 10);
+    if (!Number.isInteger(q) || q < 1) { err.textContent = "Want at least 1 copy."; qty.focus(); return; }
+    try {
+      let id = which.value;
+      if (id === NEW) {
+        if (!name.value.trim()) { err.textContent = "Name the new list."; name.focus(); return; }
+        id = (await api("POST", gameAPI("/lists"), { name: name.value.trim() })).id;
+      }
+      const t = await api("POST", gameAPI(`/lists/entries?id=${encodeURIComponent(id)}`), { card: c, quantity: q, any_printing: any.checked });
+      store("lastList", id);
+      close();
+      status(`Added ${plural(q, "copy", "copies")} of ${c.name} to ${t.name}.`);
+    } catch (e) { err.textContent = e.message; }
+  };
+  fill(dlg, h("div.dlg", h("header", h("h2", "Add to a list"), h("p.muted", { style: "margin:4px 0 0" }, `${c.name} · ${sn(c)}`)),
+    h("div.body", h("div.form", h("label", "List"), h("div.stack", which, name), h("label", "Copies wanted"), qty,
+      h("label", ""), h("label.check", { style: "display:flex;gap:8px;align-items:center;text-align:left" }, any, "Any printing counts as owned")),
+      h("p.note", "Untick to count only this printing as owned."), err),
+    h("footer", h("button", { type: "button", onclick: close }, "Cancel"), h("button.primary", { type: "button", onclick: save }, "Add to list"))));
+  dlg.addEventListener("close", () => dlg.remove());
+  document.body.append(dlg);
+  dlg.showModal();
+  (lists.length ? qty : name).focus();
+}
+
+// viewLists shows every list, or one list (`id`).
+async function viewLists(qs) {
+  const id = new URLSearchParams(qs).get("id");
+  if (id) return viewList(id);
+  const lists = await api("GET", gameAPI("/lists"));
+  const create = async () => {
+    const name = await askName("New list", "");
+    if (!name) return;
+    try {
+      const l = await api("POST", gameAPI("/lists"), { name });
+      go("lists", new URLSearchParams({ id: l.id }));
+    } catch (e) { status(e.message, true); }
+  };
+  fill($("#main"),
+    h("div.section-head", h("h1", "Lists"), h("button.primary", { type: "button", onclick: create }, "New list")),
+    h("p.muted", "Decks and want lists. Each shows how many of its cards you own and what the rest would cost. Add cards from the Add page or a set's Missing Cards, or paste a decklist."),
+    lists.length ? h("div.card-box", h("div.rows", lists.map((l) => h("a.row", { href: `#/lists?id=${encodeURIComponent(l.id)}` },
+      h("span.name", l.name),
+      h("span.where", `${l.owned} of ${plural(l.cards, "card", "cards")} owned${l.missing ? ` · ${usd(l.missingCost)} to complete` : " · complete"}`),
+      h("span.amt", usd(l.marketValue))))))
+      : h("p.muted", "No lists yet."));
+}
+
+// askName asks for a list's name in a dialog; null if cancelled.
+function askName(title, value) {
+  return new Promise((resolve) => {
+    const dlg = h("dialog.ask");
+    const input = h("input", { type: "text", value, "aria-label": "Name", placeholder: "e.g. Mono-red burn" });
+    let done = false;
+    const finish = (v) => { if (done) return; done = true; dlg.close(); dlg.remove(); resolve(v); };
+    const ok = () => { if (input.value.trim()) finish(input.value.trim()); else input.focus(); };
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") ok(); });
+    fill(dlg, h("div.dlg", h("header", h("h2", title)), h("div.body", input),
+      h("footer", h("button", { type: "button", onclick: () => finish(null) }, "Cancel"), h("button.primary", { type: "button", onclick: ok }, "Save"))));
+    dlg.addEventListener("close", () => finish(null));
+    document.body.append(dlg);
+    dlg.showModal();
+    input.focus();
+  });
+}
+
+// viewList is one list: totals, entries (owned of wanted, price), and its actions.
+async function viewList(id) {
+  const d = await api("GET", gameAPI(`/lists?id=${encodeURIComponent(id)}`));
+  const l = d.list;
+  const entries = d.entries;
+  const put = async (body, done) => {
+    try { await api("PUT", gameAPI(`/lists?id=${encodeURIComponent(id)}`), body); if (done) status(done); route(); } catch (e) { status(e.message, true); }
+  };
+  const forms = () => entries.map((e) => ({ card: e.card, quantity: e.quantity, any_printing: e.any_printing, finish: e.finish }));
+  const saveEntries = (change, done) => { const next = forms(); change(next); put({ entries: next.filter(Boolean) }, done); };
+  const rename = async () => { const name = await askName("Rename the list", l.name); if (name) put({ name }); };
+  const editNotes = async () => {
+    const box = h("textarea", { rows: 4, "aria-label": "Notes" }, l.notes || "");
+    const v = await askDialog("Notes", [box], [{ label: "Save", value: "save", primary: true }]);
+    if (v) put({ notes: box.value });
+  };
+  const del = async () => {
+    if (!(await confirmDialog(`Delete the list ${l.name}? The cards in your collection stay.`, { danger: true, action: "Delete" }))) return;
+    try { await api("DELETE", gameAPI(`/lists?id=${encodeURIComponent(id)}`)); status(`Deleted ${l.name}.`); go("lists"); } catch (e) { status(e.message, true); }
+  };
+  const paste = async () => {
+    const box = h("textarea", { rows: 10, "aria-label": "Card list", placeholder: "4 Lightning Bolt (M11) 149\n2 Opt\n1 Shock *F*" });
+    const v = await askDialog("Paste a card list", [
+      "One card per line, as Moxfield, Archidekt or MTG Arena export them. A line with a set (and number) wants that printing; a line with just a name counts any printing as owned.",
+      box,
+    ], [{ label: "Add to list", value: "add", primary: true }]);
+    if (!v || !box.value.trim()) return;
+    try {
+      const r = await whileRunning(api("POST", gameAPI(`/lists/import?id=${encodeURIComponent(id)}`), new Blob([box.value])));
+      status(`Added ${plural(r.added, "card", "cards")} to ${l.name}.${r.unmatched.length ? ` Not found: ${r.unmatched.join("; ")}` : ""}`, r.unmatched.length > 0);
+      route();
+    } catch (e) { status(e.message, true); }
+  };
+  const exportList = () => { location.href = gameAPI(`/lists/export?id=${encodeURIComponent(id)}`); };
+
+  const row = (e, i) => {
+    const c = e.card;
+    const have = Math.min(e.owned, e.quantity);
+    const qty = h("input", { type: "number", min: 1, step: 1, value: e.quantity, "aria-label": `Copies of ${c.name} wanted`,
+      onchange: () => { const q = parseInt(qty.value, 10); if (q >= 1) saveEntries((n) => { n[i].quantity = q; }); } });
+    const any = h("input", { type: "checkbox", checked: e.any_printing, "aria-label": "Any printing counts",
+      onchange: () => saveEntries((n) => { n[i].any_printing = any.checked; }) });
+    return h("div.list-entry" + (have >= e.quantity ? ".have" : ""),
+      thumbnail(c, false),
+      h("div.text",
+        h("span.name", c.name),
+        h("span.meta", [e.any_printing ? "any printing" : sn(c), e.finish ? fname(e.finish) : "", e.price !== null ? `${usd(e.price)} each` : "no price"].filter(Boolean).join(" · ")),
+        h("label.check.small", any, "Any printing")),
+      h("div.entry-controls",
+        h("span.owned-count", { title: "Owned of wanted" }, `${have} / ${e.quantity}`),
+        qty,
+        have < e.quantity ? h("button", { type: "button", onclick: () => addInDialog(c, () => route()) }, "Add…") : h("span.done", "✓"),
+        h("button", { type: "button", "aria-label": `Remove ${c.name} from the list`, title: "Remove from the list",
+          onclick: () => saveEntries((n) => { n[i] = null; }, `Removed ${c.name} from ${l.name}.`) }, "✕")));
+  };
+
+  fill($("#main"),
+    h("p", h("a", { href: "#/lists" }, "← Lists")),
+    h("div.section-head", h("h1", l.name), h("div.buttons",
+      h("button", { type: "button", onclick: rename }, "Rename"), h("button", { type: "button", onclick: editNotes }, "Notes"),
+      h("button", { type: "button", onclick: paste }, "Paste a list…"), h("button", { type: "button", onclick: exportList }, "Export"),
+      h("button.danger", { type: "button", onclick: del }, "Delete"))),
+    l.notes ? h("p.list-notes", l.notes) : null,
+    h("div.tiles",
+      tile("CARDS", l.cards.toLocaleString(), plural(l.entries, "entry", "entries")),
+      tile("OWNED", `${l.owned}`, l.cards ? `${Math.round((l.owned / l.cards) * 100)}% of the list` : ""),
+      tile("TO COMPLETE", usd(l.missingCost), l.missing ? `${plural(l.missing, "card", "cards")} missing, at market price` : "you own every card", "var(--blue)"),
+      tile("LIST VALUE", usd(l.marketValue), "every card, at market price")),
+    entries.length ? h("div.card-box", entries.map(row))
+      : h("p.muted", "No cards yet. Add some from the Add page (Add to list…), from a set's Missing Cards, or with Paste a list…"));
 }
 
 // addInDialog shows a catalog card's add form in the dialog, leaving the page as it is.
@@ -1096,7 +1252,8 @@ function addForm(container, c, owned, onAdded, lot) {
       h("div", c.type_line ? h("p", h("strong", c.type_line)) : null, c.oracle_text ? h("p.rules", c.oracle_text) : null,
         h("div.form", h("label", "Quantity"), qty, h("label", "Finish"), finish, h("label", "Condition"), cond,
           lot ? [h("label", "Price and date"), h("span.muted", `Set by the lot “${lot.name}”`)] : [h("label", "Price paid (each)"), price, h("label", "Acquired"), date]),
-        err, h("button.primary", { type: "button", onclick: add }, "Add to collection")))));
+        err, h("div.buttons", h("button", { type: "button", onclick: () => addToList(c, parseInt(qty.value, 10) || 1) }, "Add to list…"),
+          h("button.primary", { type: "button", onclick: add }, "Add to collection"))))));
   return { add };
 }
 
@@ -1744,6 +1901,7 @@ async function viewTools() {
       toolRow(h("button", { type: "button", onclick: (e) => exportCollection(e.currentTarget, "report") }, "Valuation report"), `Save a page listing every card by set with its value, to ${where}. Open it in a browser to print it or save it as a PDF, for insurance or your records.`),
       toolRow(h("button", { type: "button", onclick: () => { go("collection"); setTimeout(showBulkEdit, 50); } }, "Bulk edit…"),
         "Change the condition, finish, price paid or date of many cards at once, or delete them. Tick the cards in the collection list (filter it, then Select all shown); Bulk edit is also below the list."),
+      toolRow(h("a.button", { href: "#/lists" }, "Lists…"), "Decks and want lists: the cards you want, how many you own already, and what the rest would cost."),
       toolRow(h("a.button", { href: "#/earnings" }, "Earnings…"), "Cards you've sold: what they sold for, what they cost, fees, and the gain, by month and year. Sell copies with Sell… on a card's purchase."),
       toolRow(h("a.button", { href: "#/lots" }, "Lots…"), "Cards bought together for one price, such as a bulk lot or a bundle: what each lot cost and what its cards are worth now."),
       toolRow(h("a.button", { href: "#/backups" }, "Restore a backup…"), "Go back to the collection as it was before a recent import, bulk edit or bulk delete. The last 10 backups are kept."),
@@ -1845,7 +2003,9 @@ async function route() {
   const view = path || "home";
   if (state.scanStop && view !== "scan") { state.scanStop(); state.scanStop = null; }
   const active = ["import", "backups", "lots", "earnings"].includes(view) ? "tools" : view === "scan" ? "add" : view;
-  document.querySelectorAll("#nav a, .tabbar a").forEach((a) => a.classList.toggle("active", a.dataset.view === active));
+  document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === active));
+  // The tab bar has no Lists tab: Lists is reached from Tools there.
+  document.querySelectorAll(".tabbar a").forEach((a) => a.classList.toggle("active", a.dataset.view === (active === "lists" ? "tools" : active)));
   try {
     if (view === "collection") await viewCollection(qs || "");
     else if (view === "add") viewAdd(qs || "");
@@ -1855,6 +2015,7 @@ async function route() {
     else if (view === "backups") await viewBackups();
     else if (view === "lots") await viewLots(qs || "");
     else if (view === "earnings") await viewEarnings(qs || "");
+    else if (view === "lists") await viewLists(qs || "");
     else if (view === "tools") await viewTools();
     else if (view === "settings") await viewSettings();
     else await viewHome();

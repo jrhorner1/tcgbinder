@@ -249,6 +249,7 @@ impl Game for Magic {
             notes: parsed.warnings,
             unmatched: Vec::new(),
             header: parsed.header,
+            approximate: Vec::new(),
         };
         if parsed.rows.is_empty() {
             bail!("no card rows found in this {format} file");
@@ -265,6 +266,7 @@ impl Game for Magic {
                 continue;
             };
             if r.approximate {
+                report.approximate.push(cards.len());
                 approx.push(format!("  {} → {} · {}", r.row.describe(), sc.set.to_uppercase(), sc.collector_number));
             }
             let mut card = from_scryfall(sc);

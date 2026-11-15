@@ -6,6 +6,7 @@
 //! See docs/web-api.md for the endpoints.
 
 mod folders;
+mod lists;
 mod lots;
 mod report;
 mod sales;
@@ -310,6 +311,16 @@ impl Api {
                     ("PUT", ["card", "printing"]) => self.change_printing(g, key, body),
                     ("POST", ["card", "sell"]) => self.sell(g, key, body),
                     ("GET", ["sales"]) => self.sales(g, &q),
+                    ("GET", ["lists"]) => match q.get("id") {
+                        Some(_) => self.list(g, &q),
+                        None => Ok(self.lists(g)),
+                    },
+                    ("POST", ["lists"]) => self.create_list(g, body),
+                    ("PUT", ["lists"]) => self.update_list(g, &q, body),
+                    ("DELETE", ["lists"]) => self.delete_list(g, &q),
+                    ("POST", ["lists", "entries"]) => self.add_list_entry(g, &q, body),
+                    ("GET", ["lists", "export"]) => self.export_list(g, &q),
+                    ("POST", ["lists", "import"]) => self.import_list(g, &q, body),
                     ("DELETE", ["sales"]) => self.delete_sale(g, &q),
                     ("POST", ["bulk"]) => self.bulk_edit(g, body),
                     ("GET", ["lots"]) => match q.get("id") {

@@ -150,6 +150,8 @@ pub struct ImportReport {
     pub unmatched: Vec<UnmatchedRow>,
     /// The file's header line, to put above the unmatched rows.
     pub header: String,
+    /// The returned cards (by index) matched by name only, so any printing may be meant.
+    pub approximate: Vec<usize>,
 }
 
 /// A line of an import file that matched no card.

@@ -468,6 +468,66 @@ fn sell_and_earnings() {
 }
 
 #[test]
+fn lists_and_decks() {
+    let f = fixture();
+    let (status, v) = call(&f.api, "POST", "/api/games/mtg/lists", Some(json!({"name": " "})));
+    assert_eq!(status, 400, "{v}");
+    let (status, deck) = call(&f.api, "POST", "/api/games/mtg/lists", Some(json!({"name": "Burn", "notes": "Modern"})));
+    assert_eq!(status, 200, "{deck}");
+    let id = deck["id"].as_str().unwrap().to_string();
+    let path = |p: &str| format!("/api/games/mtg/lists{p}?id={id}");
+
+    // Add the owned Shock (2 non-foil held) as 4 wanted, from its catalog card.
+    let shock = get(&f.api, &format!("/api/games/mtg/card?key={SHOCK}"))["card"].clone();
+    let (status, t) = call(&f.api, "POST", &path("/entries"), Some(json!({"card": shock, "quantity": 4})));
+    assert_eq!(status, 200, "{t}");
+    assert_eq!((t["cards"].as_i64(), t["owned"].as_i64(), t["missing"].as_i64()), (Some(4), Some(2), Some(2)));
+    assert_eq!((t["marketValue"].as_f64(), t["missingCost"].as_f64()), (Some(0.8), Some(0.4)), "4 and 2 at $0.20");
+    assert_eq!(call(&f.api, "POST", &path("/entries"), Some(json!({"card": shock, "quantity": 0}))).0, 400);
+
+    // A pasted list: an exact line and a name-only line (any printing).
+    let resp = f.api.handle(&request("POST", &path("/import"), b"2 Lightning Bolt (LEA) 1\n1 Opt\n1 Nonexistent Card\n".to_vec()));
+    let v: Value = serde_json::from_slice(resp.body()).unwrap();
+    assert_eq!(resp.status(), 200, "{v}");
+    assert_eq!(v["added"], 3);
+    assert_eq!(v["unmatched"], json!(["1 Nonexistent Card"]));
+
+    let one = get(&f.api, &format!("/api/games/mtg/lists?id={id}"));
+    let entries = one["entries"].as_array().unwrap();
+    let find = |name: &str| entries.iter().find(|e| e["card"]["name"] == name).unwrap().clone();
+    assert_eq!((find("Shock")["owned"].as_i64(), find("Shock")["any_printing"].as_bool()), (Some(2), Some(false)));
+    assert_eq!(find("Lightning Bolt")["any_printing"], false);
+    // Opt matched by name as the M19 printing; the DOM Opt held counts, since any printing does.
+    assert_eq!((find("Opt")["any_printing"].as_bool(), find("Opt")["owned"].as_i64()), (Some(true), Some(1)));
+    assert_eq!(one["list"]["notes"], "Modern");
+
+    let resp = f.api.handle(&request("GET", &path("/export"), Vec::new()));
+    let text = String::from_utf8(resp.body().clone()).unwrap();
+    assert!(resp.headers()[header::CONTENT_DISPOSITION].to_str().unwrap().contains("Burn.txt"));
+    assert!(text.contains("4 Shock (M19) 156\n") && text.contains("2 Lightning Bolt (LEA) 1\n") && text.contains("1 Opt\n"), "{text}");
+
+    // Replacing the entries and renaming.
+    let keep: Vec<Value> = entries
+        .iter()
+        .filter(|e| e["card"]["name"] != "Opt")
+        .map(|e| json!({"card": e["card"], "quantity": e["quantity"], "any_printing": e["any_printing"], "finish": e["finish"]}))
+        .collect();
+    let (status, t) = call(&f.api, "PUT", &path(""), Some(json!({"name": "Burn v2", "entries": keep})));
+    assert_eq!(status, 200, "{t}");
+    assert_eq!((t["name"].as_str(), t["entries"].as_i64()), (Some("Burn v2"), Some(2)));
+    let all = get(&f.api, "/api/games/mtg/lists");
+    assert_eq!(all[0]["name"], "Burn v2");
+
+    // Price refreshes reach list cards too.
+    f.svc.refresh_prices(&mut |_, _| {}).unwrap();
+    let bolt = f.svc.lists.get(&id).unwrap().entries.into_iter().find(|e| e.card.name == "Lightning Bolt").unwrap();
+    assert_eq!(bolt.card.prices_updated, tcgbinder_core::dates::today_string(), "refreshed with the collection");
+
+    assert_eq!(call(&f.api, "DELETE", &path(""), None).0, 200);
+    assert_eq!(call(&f.api, "GET", &path(""), None).0, 404);
+}
+
+#[test]
 fn changes_need_the_client_header() {
     let f = fixture();
     // A cross-site form or fetch can't add the header, so it must be refused.
@@ -843,13 +903,13 @@ fn paste_a_list() {
     let resp = f.api.handle(&request("POST", "/api/games/mtg/import?preview=1", list.as_bytes().to_vec()));
     assert_eq!(resp.status(), 200);
     let p: Value = serde_json::from_slice(resp.body()).unwrap();
-    // Opt has no number, so it's matched by name, which this fake Scryfall can't do.
-    assert_eq!((p["format"].as_str(), p["rows"].as_u64(), p["copies"].as_i64()), (Some("Card list"), Some(4), Some(5)));
+    // Opt has no number, so it's matched by name (the fake's M19 printing).
+    assert_eq!((p["format"].as_str(), p["rows"].as_u64(), p["copies"].as_i64()), (Some("Card list"), Some(4), Some(7)));
     let lines: Vec<u64> = p["unmatched"].as_array().unwrap().iter().map(|u| u["line"].as_u64().unwrap()).collect();
-    assert_eq!(lines, [3, 7]);
-    assert_eq!(p["unmatched"][1]["text"], "1 Not a Card (ZZZ) 9");
+    assert_eq!(lines, [7]);
+    assert_eq!(p["unmatched"][0]["text"], "1 Not a Card (ZZZ) 9");
     let (status, done) = commit(&f, &p["token"]);
-    assert_eq!((status, done["cards"].as_i64()), (200, Some(5)));
+    assert_eq!((status, done["cards"].as_i64()), (200, Some(7)));
     assert_eq!(f.svc.store.get("aaaaaaaa-0000-4000-8000-000000000001").unwrap().finish_copy_count("foil"), 1);
 }
 

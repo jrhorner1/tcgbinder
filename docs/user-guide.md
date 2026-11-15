@@ -200,6 +200,26 @@ only the record and leaves them sold.
 
 Deleting a card is still the way to correct a mistake; it records no sale.
 
+## Lists and decks
+
+**Lists** (in the sidebar; on a phone, **Tools → Lists…**) keeps decks and want
+lists. Each list shows how many of its cards you own, what the missing ones would
+cost at market price, and what the whole list is worth.
+
+- **New list** makes one. **Add to list…** on the Add page's card form, or **To
+  list…** on a set's Missing Cards, puts a card on a list (or a new one).
+- **Paste a list…** on a list's page adds a decklist as Moxfield, Archidekt or MTG
+  Arena export it. A line with a set (and number) wants that printing; a line with
+  just a name counts any printing as owned.
+- Each entry says how many you own of how many you want. With **Any printing**
+  ticked, every printing with the card's name counts; otherwise only that printing
+  (and, for a foil entry, only foil copies). Change the number wanted in place, or
+  remove an entry with ✕. **Add…** on a missing entry opens the add form.
+- **Rename**, **Notes**, **Export** (the list as decklist text, which Paste a list
+  reads back) and **Delete** (the cards in your collection stay).
+
+The cards on lists get their prices refreshed along with your collection.
+
 ## Scanning cards
 
 **Scan a card** (on Add, and in the sidebar) identifies a physical card.
@@ -312,7 +332,7 @@ defaults**.
 
 Your collection is kept in the **data folder**. Each game has its own folder in it:
 `mtg/` holds `collection.json` (your cards), `price-history.json`, `lots.json`,
-`sales.json` (sold cards) and `backups/`.
+`sales.json` (sold cards), `lists.json` (lists and decks) and `backups/`.
 
 By default the data folder is the app's own folder:
 
@@ -350,5 +370,6 @@ seconds. If two devices save at the same moment, the sync service keeps the othe
 version as a separate file (such as "collection 2.json"), and Home says so:
 **Merge it** adds its cards and copies to yours without counting any twice (a card
 deleted on one device comes back); **Discard it** deletes that file. A backup is
-taken before merging. The same goes for the lots and sales files: merging adds the
-lots or sales only the other version has. See the README for command-line options.
+taken before merging. The same goes for the lots, sales and lists files: merging adds
+the lots, sales or lists only the other version has (and, on a list both have, the
+cards only it has, keeping the larger number wanted). See the README for command-line options.

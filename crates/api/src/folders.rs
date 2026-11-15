@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 
 use tcgbinder_core::collection::read_export;
 use tcgbinder_core::datafolder::{self, Mode};
+use tcgbinder_core::lists::ListsData;
 use tcgbinder_core::lots::LotsData;
 use tcgbinder_core::sales::SalesData;
 use tcgbinder_core::service::GameService;
@@ -85,7 +86,7 @@ impl Api {
             .iter()
             .flat_map(|g| {
                 datafolder::conflict_copies(game_dir(g)).into_iter().map(move |name| {
-                    let kind = ["lots", "sales"].into_iter().find(|k| name.starts_with(k)).unwrap_or("collection");
+                    let kind = ["lots", "sales", "lists"].into_iter().find(|k| name.starts_with(k)).unwrap_or("collection");
                     let cards = std::fs::read(game_dir(g).join(&name)).ok().and_then(|b| read_export(&b).ok()).map(|(_, c)| c.len());
                     json!({ "game": g.game.id(), "name": name, "kind": kind, "cards": cards })
                 })
@@ -167,8 +168,8 @@ impl Api {
         Ok(game_dir(g).join(name))
     }
 
-    /// Merges a conflict copy into the collection (after a backup), the lots or the
-    /// sales, then deletes it.
+    /// Merges a conflict copy into the collection (after a backup), the lots, the sales
+    /// or the lists, then deletes it.
     pub(crate) fn merge_conflict(&self, g: &GameService, body: &[u8]) -> Result {
         let req: NameReq = decode(body)?;
         let path = Self::conflict_path(g, &req.name)?;
@@ -178,6 +179,13 @@ impl Api {
             let changed = g.lots.merge_copy(theirs).map_err(internal)?;
             std::fs::remove_file(&path).map_err(|e| internal(e.into()))?;
             tracing::info!(game = g.game.id(), copy = req.name, changed, "lots conflict copy merged");
+            return Ok(Reply::Json(json!({ "changed": changed })));
+        }
+        if req.name.starts_with("lists") {
+            let theirs: ListsData = serde_json::from_slice(&data).map_err(|e| bad(format!("{} can't be read: {e}", req.name)))?;
+            let changed = g.lists.merge_copy(theirs).map_err(internal)?;
+            std::fs::remove_file(&path).map_err(|e| internal(e.into()))?;
+            tracing::info!(game = g.game.id(), copy = req.name, changed, "lists conflict copy merged");
             return Ok(Reply::Json(json!({ "changed": changed })));
         }
         if req.name.starts_with("sales") {

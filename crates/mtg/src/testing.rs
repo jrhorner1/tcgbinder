@@ -69,7 +69,8 @@ impl FakeServer {
 /// printings in pages of three (anything else matches nothing, as a 404), "e:<set>"
 /// lists that set's cards (Lightning Bolt 1, Opt 60, Shock 156), and "oracleid:..."
 /// (every printing of a card) is treated as Lightning Bolt. /cards/collection finds
-/// those three by set code and collector number, in any set.
+/// those three by set code and collector number, in any set, and by name alone (as
+/// the "m19" printing).
 pub fn search_server() -> (crate::scryfall::Client, FakeServer) {
     use crate::scryfall::{Card, CollectionResponse, Prices, SearchResponse};
     let set_cards = |code: &str| -> Vec<Card> {
@@ -100,6 +101,14 @@ pub fn search_server() -> (crate::scryfall::Client, FakeServer) {
             let mut resp = CollectionResponse::default();
             for id in body["identifiers"].as_array().cloned().unwrap_or_default() {
                 let (set, number) = (id["set"].as_str().unwrap_or(""), id["collector_number"].as_str().unwrap_or(""));
+                // By name alone: the printing in "m19".
+                if let Some(name) = id["name"].as_str().filter(|_| set.is_empty()) {
+                    match set_cards("m19").into_iter().find(|c| c.name.eq_ignore_ascii_case(name)) {
+                        Some(c) => resp.data.push(c),
+                        None => resp.not_found.push(id.as_object().cloned().unwrap_or_default()),
+                    }
+                    continue;
+                }
                 match set_cards(set).into_iter().find(|c| !set.is_empty() && c.collector_number == number) {
                     Some(c) => resp.data.push(c),
                     None => resp.not_found.push(id.as_object().cloned().unwrap_or_default()),

@@ -12,6 +12,7 @@ pub mod dates;
 pub mod game;
 pub mod instance;
 pub mod jsonfile;
+pub mod lists;
 pub mod logging;
 pub mod lots;
 pub mod sales;

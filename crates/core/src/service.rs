@@ -14,6 +14,7 @@ use chrono::{Months, NaiveDate};
 use crate::collection::Purchase;
 use crate::collection::{Card, PriceHistory, SetInfo, Stats, Store, TimePoint, read_export};
 use crate::game::{Game, ImportReport};
+use crate::lists::{ListEntry, ListsStore};
 use crate::lots::{Lot, LotCopy, LotPrices, LotSplit, LotsStore, lot_prices};
 use crate::sales::{CardRef, Sale, SalesStore};
 use crate::settings::{Settings, SettingsStore};
@@ -35,6 +36,8 @@ pub struct GameService {
     pub lots: LotsStore,
     /// Sold cards.
     pub sales: SalesStore,
+    /// Lists and decks.
+    pub lists: ListsStore,
     /// The app settings (price refresh frequency, automatic price history). Without
     /// them, prices refresh daily and price history loads automatically.
     pub settings: Option<Arc<SettingsStore>>,
@@ -60,6 +63,7 @@ impl GameService {
         let dir = store.file_path().parent().unwrap_or(Path::new(".")).to_path_buf();
         let lots = LotsStore::open(&dir)?;
         let sales = SalesStore::open(&dir)?;
+        let lists = ListsStore::open(&dir)?;
         let path = store.file_path().with_file_name(datadir::PRICE_HISTORY_FILE);
         let prices = match PriceHistory::open(&path) {
             Ok((prices, warning)) => {
@@ -75,7 +79,7 @@ impl GameService {
                 PriceHistory::in_memory()
             }
         };
-        Ok(GameService { game, store, prices, lots, sales, settings: None, auto_history: true, sets: Mutex::default() })
+        Ok(GameService { game, store, prices, lots, sales, lists, settings: None, auto_history: true, sets: Mutex::default() })
     }
 
     /// A lot's copies, for working out its prices.
@@ -194,6 +198,29 @@ impl GameService {
         Ok(sale)
     }
 
+    /// Reads a pasted card list (or any import file) as list entries. Lines matched
+    /// by name only count any printing; a finish other than the usual one is kept.
+    pub fn list_entries(&self, data: &[u8], progress: &mut dyn FnMut(usize, usize)) -> Result<(Vec<ListEntry>, ImportReport)> {
+        let (cards, report) = self.game.import(data, progress)?;
+        let usual = self.game.finishes().first().copied().unwrap_or("");
+        let entries = cards
+            .into_iter()
+            .enumerate()
+            .flat_map(|(i, c)| {
+                let any = report.approximate.contains(&i);
+                let mut by_finish: Vec<(String, i64)> = Vec::new();
+                for (f, _, p) in c.copies.each() {
+                    match by_finish.iter_mut().find(|(x, _)| x == f) {
+                        Some((_, q)) => *q += p.quantity,
+                        None => by_finish.push((f.to_string(), p.quantity)),
+                    }
+                }
+                by_finish.into_iter().map(|(f, q)| ListEntry::new(c.clone(), q, any, if f == usual { "" } else { &f })).collect::<Vec<_>>()
+            })
+            .collect();
+        Ok((entries, report))
+    }
+
     /// The set sizes for completion stats, loaded once.
     pub fn sets(&self) -> Result<Arc<HashMap<String, SetInfo>>> {
         let mut cached = self.sets.lock().unwrap();
@@ -218,6 +245,9 @@ impl GameService {
         }
         if let Err(e) = self.prices.refresh() {
             tracing::debug!(game = self.game.id(), error = %e, "price history not refreshed");
+        }
+        if let Err(e) = self.lists.refresh() {
+            tracing::debug!(game = self.game.id(), error = %e, "lists not refreshed");
         }
         if let Err(e) = self.sales.refresh() {
             tracing::debug!(game = self.game.id(), error = %e, "sales not refreshed");
@@ -247,9 +277,15 @@ impl GameService {
     /// Fetches current prices from the game's catalog, saves them and records today's
     /// prices. Returns the number of cards updated.
     pub fn refresh_prices(&self, progress: &mut dyn FnMut(usize, usize)) -> Result<usize> {
-        let updates = self.game.refresh(&self.store.ids(), progress)?;
+        // The lists' cards too, in the same request.
+        let mut ids = self.store.ids();
+        ids.extend(self.lists.ids());
+        ids.sort();
+        ids.dedup();
+        let updates = self.game.refresh(&ids, progress)?;
         let today = dates::today_string();
         let n = self.store.update_catalog(&updates, &today)?;
+        self.lists.update_catalog(&updates, &today)?;
         self.prices.record_current(&self.store.cards(), &today);
         self.prices.save()?;
         Ok(n)

@@ -96,6 +96,15 @@ Per game, in `<data>/<game>/`:
   from its `CardRef` and refreshing its catalog data. `sales_totals` adds up proceeds,
   fees, cost and gain, leaving sales of unknown cost out of cost and gain. Conflict
   copies merge by sale ID.
+- `lists.json`: lists and decks (`core::lists`, a `JsonFile`). Each `ListEntry`
+  holds a catalog copy of the card (no copies), so a list shows images and prices
+  without a lookup; `GameService::refresh_prices` refreshes the collection's and the
+  lists' cards in one `Game::refresh`. `ListEntry::owned` counts the collection's
+  copies of that printing, or with `any_printing` of every printing with the name.
+  `GameService::list_entries` turns a pasted list into entries through the game's
+  import; `ImportReport::approximate` marks the cards matched by name only, which
+  become any-printing entries. Conflict copies merge lists by ID and, within a list,
+  entries by card, the larger quantity winning.
 - `backups/`: copies of `collection.json` taken before each import, bulk edit, bulk
   delete and restore (`Store::backup`), named
   `collection-YYYYMMDD-HHMMSS[-N]-<reason>.json`; the 10 newest are kept. Restoring
