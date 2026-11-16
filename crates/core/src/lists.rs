@@ -4,21 +4,13 @@
 //! or with `any_printing`, of every printing with the card's name.
 
 use std::collections::HashMap;
-use std::path::Path;
 
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::collection::{Card, CatalogUpdate, Copies};
-use crate::jsonfile::JsonFile;
-use crate::lots::new_id;
-
-/// The lists file in each game's data folder.
-pub const LISTS_FILE: &str = "lists.json";
-
-fn is_false(b: &bool) -> bool {
-    !*b
-}
+use crate::records::{Record, Records, new_id};
+use crate::serde_skip::is_false;
 
 /// A card on a list.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -113,65 +105,40 @@ impl List {
     }
 }
 
-/// The lists file's contents.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ListsData {
-    pub lists: Vec<List>,
-}
-
-/// One game's lists, kept in `lists.json` (changed by other devices too, through
-/// [`JsonFile`]).
-pub struct ListsStore {
-    file: JsonFile<ListsData>,
-}
-
-impl ListsStore {
-    /// Opens (or starts) the lists file in a game's data folder.
-    pub fn open(game_dir: &Path) -> Result<ListsStore> {
-        Ok(ListsStore { file: JsonFile::open(game_dir.join(LISTS_FILE), true)? })
+impl Record for List {
+    const FILE: &'static str = "lists.json";
+    const NAME: &'static str = "list";
+    fn id(&self) -> String {
+        self.id.clone()
     }
-
-    /// Every list, by name.
-    pub fn all(&self) -> Vec<List> {
-        let mut lists = self.file.read(|d| d.lists.clone());
-        lists.sort_by_key(|l| l.name.to_lowercase());
-        lists
+    /// A new list gets an ID and a creation time.
+    fn assign_id(&mut self) {
+        self.id = new_id();
+        self.created = chrono::Local::now().to_rfc3339();
     }
-
-    pub fn get(&self, id: &str) -> Option<List> {
-        self.file.read(|d| d.lists.iter().find(|l| l.id == id).cloned())
+    fn check(&mut self) -> Result<()> {
+        self.validate()
     }
-
-    /// Adds a new list (giving it an ID and creation time) and returns it.
-    pub fn create(&self, mut list: List) -> Result<List> {
-        list.validate()?;
-        list.id = new_id();
-        list.created = chrono::Local::now().to_rfc3339();
-        self.file.mutate(|d| {
-            d.lists.push(list.clone());
-            Ok(())
-        })?;
-        Ok(list)
+    /// By name.
+    fn order(a: &Self, b: &Self) -> std::cmp::Ordering {
+        a.name.to_lowercase().cmp(&b.name.to_lowercase())
     }
-
-    /// Saves a changed list (matched by ID), returning it as saved.
-    pub fn save(&self, mut list: List) -> Result<List> {
-        list.validate()?;
-        self.file.mutate(|d| match d.lists.iter_mut().find(|l| l.id == list.id) {
-            Some(l) => {
-                *l = list.clone();
-                Ok(())
+    /// Both sides' entries, the larger quantity where both have one.
+    fn merge(&mut self, theirs: Self) {
+        for e in theirs.entries {
+            match self.entries.iter_mut().find(|o| o.same_as(&e)) {
+                Some(o) => o.quantity = o.quantity.max(e.quantity),
+                None => self.entries.push(e),
             }
-            None => bail!("there is no list {:?}", list.id),
-        })?;
-        Ok(list)
+        }
     }
+}
 
+/// One game's lists, kept in `lists.json`.
+impl Records<List> {
     /// Adds entries to a list, returning it as saved.
     pub fn add_entries(&self, id: &str, entries: Vec<ListEntry>) -> Result<List> {
-        self.file.mutate(|d| {
-            let Some(l) = d.lists.iter_mut().find(|l| l.id == id) else { bail!("there is no list {id:?}") };
+        self.update(id, |l| {
             for e in entries {
                 if e.quantity <= 0 || e.card.id.is_empty() {
                     bail!("an entry needs a card and a quantity of at least 1");
@@ -182,17 +149,9 @@ impl ListsStore {
         })
     }
 
-    /// Deletes a list.
-    pub fn remove(&self, id: &str) -> Result<()> {
-        self.file.mutate(|d| {
-            d.lists.retain(|l| l.id != id);
-            Ok(())
-        })
-    }
-
     /// The catalog IDs on every list, for the price refresh.
     pub fn ids(&self) -> Vec<String> {
-        let mut ids: Vec<String> = self.file.read(|d| d.lists.iter().flat_map(|l| l.entries.iter().map(|e| e.card.id.clone())).collect());
+        let mut ids: Vec<String> = self.read(|all| all.iter().flat_map(|l| l.entries.iter().map(|e| e.card.id.clone())).collect());
         ids.sort();
         ids.dedup();
         ids
@@ -200,12 +159,12 @@ impl ListsStore {
 
     /// Applies a price refresh to the lists' cards. Returns how many entries changed.
     pub fn update_catalog(&self, updates: &HashMap<String, CatalogUpdate>, date: &str) -> Result<usize> {
-        if self.file.read(|d| d.lists.iter().all(|l| l.entries.iter().all(|e| !updates.contains_key(&e.card.id)))) {
+        if self.read(|all| all.iter().all(|l| l.entries.iter().all(|e| !updates.contains_key(&e.card.id)))) {
             return Ok(0);
         }
-        self.file.mutate(|d| {
+        self.update_all(|all| {
             let mut n = 0;
-            for e in d.lists.iter_mut().flat_map(|l| l.entries.iter_mut()) {
+            for e in all.iter_mut().flat_map(|l| l.entries.iter_mut()) {
                 let Some(u) = updates.get(&e.card.id) else { continue };
                 e.card.market = u.market.clone();
                 e.card.price_from = u.price_from.clone();
@@ -214,45 +173,6 @@ impl ListsStore {
             }
             Ok(n)
         })
-    }
-
-    /// Merges a conflict copy of the lists file: lists by ID; within a list both
-    /// sides' entries, the larger quantity where both have one. Returns how many
-    /// lists changed.
-    pub fn merge_copy(&self, theirs: ListsData) -> Result<usize> {
-        self.file.mutate(|d| {
-            let mut changed = 0;
-            for list in theirs.lists {
-                match d.lists.iter_mut().find(|l| l.id == list.id) {
-                    None => {
-                        d.lists.push(list);
-                        changed += 1;
-                    }
-                    Some(ours) => {
-                        let before = ours.entries.clone();
-                        for e in list.entries {
-                            match ours.entries.iter_mut().find(|o| o.same_as(&e)) {
-                                Some(o) => o.quantity = o.quantity.max(e.quantity),
-                                None => ours.entries.push(e),
-                            }
-                        }
-                        if ours.entries != before {
-                            changed += 1;
-                        }
-                    }
-                }
-            }
-            Ok(changed)
-        })
-    }
-
-    /// Takes in changes another device made.
-    pub fn refresh(&self) -> Result<bool> {
-        self.file.refresh()
-    }
-
-    pub fn path(&self) -> &Path {
-        self.file.path()
     }
 }
 
@@ -306,8 +226,8 @@ mod tests {
     #[test]
     fn store_refresh_and_conflict_merge() {
         let dir = tempfile::tempdir().unwrap();
-        let s = ListsStore::open(dir.path()).unwrap();
-        let deck = s.create(List { name: "Deck".into(), ..List::default() }).unwrap();
+        let s: Records<List> = Records::open(dir.path()).unwrap();
+        let deck = s.add(List { name: "Deck".into(), ..List::default() }).unwrap();
         assert_eq!(deck.id.len(), 16);
         let deck = s
             .add_entries(
@@ -333,13 +253,13 @@ mod tests {
         let other = List { id: "other".into(), name: "Other".into(), ..List::default() };
         let mut bigger = deck.clone();
         bigger.entries[0].quantity = 6;
-        assert_eq!(s.merge_copy(ListsData { lists: vec![theirs, other] }).unwrap(), 2);
+        assert_eq!(s.merge_copy(vec![theirs, other]).unwrap(), 2);
         let merged = s.get(&deck.id).unwrap();
         assert_eq!(
             merged.entries.iter().map(|e| (e.card.id.as_str(), e.quantity)).collect::<Vec<_>>(),
             [("bolt", 4), ("opt", 2), ("shock", 1)]
         );
-        assert_eq!(s.merge_copy(ListsData { lists: vec![bigger] }).unwrap(), 1);
+        assert_eq!(s.merge_copy(vec![bigger]).unwrap(), 1);
         assert_eq!(s.get(&deck.id).unwrap().entries[0].quantity, 6);
         assert_eq!(s.all().iter().map(|l| l.name.as_str()).collect::<Vec<_>>(), ["Deck", "Other"]);
         s.remove("other").unwrap();

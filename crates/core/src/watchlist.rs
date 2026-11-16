@@ -4,16 +4,12 @@
 //! Kept in `watchlist.json` beside the collection.
 
 use std::collections::HashMap;
-use std::path::Path;
 
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::collection::{Card, CatalogUpdate, Copies};
-use crate::jsonfile::JsonFile;
-
-/// The watchlist file in each game's data folder.
-pub const WATCHLIST_FILE: &str = "watchlist.json";
+use crate::records::{Record, Records};
 
 /// When a watch triggers.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -108,38 +104,32 @@ pub enum WatchChange {
     Reset,
 }
 
-/// The watchlist file's contents.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct WatchData {
-    pub watches: Vec<Watch>,
+impl Record for Watch {
+    const FILE: &'static str = "watchlist.json";
+    const NAME: &'static str = "watch";
+    /// A watch's ID is its key: catalog ID and finish.
+    fn id(&self) -> String {
+        self.key()
+    }
+    fn check(&mut self) -> Result<()> {
+        self.rule.validate()
+    }
+    /// Triggered ones first, then by name.
+    fn order(a: &Self, b: &Self) -> std::cmp::Ordering {
+        b.triggered.is_some().cmp(&a.triggered.is_some()).then_with(|| a.card.name.cmp(&b.card.name))
+    }
+    /// Where both have a watch, the later `baseline_date` wins.
+    fn merge(&mut self, theirs: Self) {
+        if theirs.baseline_date > self.baseline_date {
+            *self = theirs;
+        }
+    }
 }
 
-/// One game's watchlist, kept in `watchlist.json` (changed by other devices too,
-/// through [`JsonFile`]).
-pub struct WatchStore {
-    file: JsonFile<WatchData>,
-}
-
-impl WatchStore {
-    /// Opens (or starts) the watchlist in a game's data folder.
-    pub fn open(game_dir: &Path) -> Result<WatchStore> {
-        Ok(WatchStore { file: JsonFile::open(game_dir.join(WATCHLIST_FILE), true)? })
-    }
-
-    /// Every watch: triggered ones first, then by name.
-    pub fn all(&self) -> Vec<Watch> {
-        let mut all = self.file.read(|d| d.watches.clone());
-        all.sort_by(|a, b| b.triggered.is_some().cmp(&a.triggered.is_some()).then_with(|| a.card.name.cmp(&b.card.name)));
-        all
-    }
-
-    pub fn get(&self, key: &str) -> Option<Watch> {
-        self.file.read(|d| d.watches.iter().find(|w| w.key() == key).cloned())
-    }
-
+/// One game's watchlist, kept in `watchlist.json`.
+impl Records<Watch> {
     /// Starts watching `card` in `finish` from its current price (`date` is today).
-    pub fn add(&self, mut card: Card, finish: &str, rule: Rule, date: &str) -> Result<Watch> {
+    pub fn watch(&self, mut card: Card, finish: &str, rule: Rule, date: &str) -> Result<Watch> {
         rule.validate()?;
         card.copies = Copies::default();
         let finish = finish.trim().to_lowercase();
@@ -151,11 +141,11 @@ impl WatchStore {
             bail!("there's no market price for this finish yet, so a percent change can't be measured; watch for a price instead");
         }
         let watch = Watch { card, finish, added: date.into(), baseline, baseline_date: date.into(), rule, triggered: None };
-        self.file.mutate(|d| {
-            if d.watches.iter().any(|w| w.key() == watch.key()) {
+        self.update_all(|all| {
+            if all.iter().any(|w| w.key() == watch.key()) {
                 bail!("{} is already on the watchlist; change its alert there", watch.card.name);
             }
-            d.watches.push(watch.clone());
+            all.push(watch.clone());
             Ok(())
         })?;
         Ok(watch)
@@ -166,8 +156,8 @@ impl WatchStore {
         if let WatchChange::Rule(r) = change {
             r.validate()?;
         }
-        self.file.mutate(|d| {
-            let Some(w) = d.watches.iter_mut().find(|w| w.key() == key) else { bail!("that card isn't on the watchlist") };
+        self.update_all(|all| {
+            let Some(w) = all.iter_mut().find(|w| w.key() == key) else { bail!("that card isn't on the watchlist") };
             match change {
                 WatchChange::Rule(r) => w.rule = r,
                 WatchChange::Dismiss => w.triggered = None,
@@ -181,16 +171,9 @@ impl WatchStore {
         })
     }
 
-    pub fn remove(&self, key: &str) -> Result<()> {
-        self.file.mutate(|d| {
-            d.watches.retain(|w| w.key() != key);
-            Ok(())
-        })
-    }
-
     /// The watched catalog IDs, for the price refresh.
     pub fn ids(&self) -> Vec<String> {
-        let mut ids: Vec<String> = self.file.read(|d| d.watches.iter().map(|w| w.card.id.clone()).collect());
+        let mut ids: Vec<String> = self.read(|all| all.iter().map(|w| w.card.id.clone()).collect());
         ids.sort();
         ids.dedup();
         ids
@@ -199,12 +182,12 @@ impl WatchStore {
     /// Applies a price refresh and checks every watch. Returns the watches that newly
     /// triggered: their price was inside the rule's line and now is past it.
     pub fn apply_prices(&self, updates: &HashMap<String, CatalogUpdate>, date: &str) -> Result<Vec<Watch>> {
-        if self.file.read(|d| d.watches.iter().all(|w| !updates.contains_key(&w.card.id))) {
+        if self.read(|all| all.iter().all(|w| !updates.contains_key(&w.card.id))) {
             return Ok(Vec::new());
         }
-        self.file.mutate(|d| {
+        self.update_all(|all| {
             let mut fired = Vec::new();
-            for w in &mut d.watches {
+            for w in all.iter_mut() {
                 let Some(u) = updates.get(&w.card.id) else { continue };
                 let before = w.price();
                 w.card.market = u.market.clone();
@@ -219,37 +202,6 @@ impl WatchStore {
             }
             Ok(fired)
         })
-    }
-
-    /// Merges a conflict copy of the watchlist: by card and finish; where both have a
-    /// watch, the later `baseline_date` wins. Returns how many watches changed.
-    pub fn merge_copy(&self, theirs: WatchData) -> Result<usize> {
-        self.file.mutate(|d| {
-            let mut changed = 0;
-            for w in theirs.watches {
-                match d.watches.iter_mut().find(|o| o.key() == w.key()) {
-                    Some(ours) if w.baseline_date > ours.baseline_date => {
-                        *ours = w;
-                        changed += 1;
-                    }
-                    Some(_) => {}
-                    None => {
-                        d.watches.push(w);
-                        changed += 1;
-                    }
-                }
-            }
-            Ok(changed)
-        })
-    }
-
-    /// Takes in changes another device made.
-    pub fn refresh(&self) -> Result<bool> {
-        self.file.refresh()
-    }
-
-    pub fn path(&self) -> &Path {
-        self.file.path()
     }
 }
 
@@ -280,12 +232,12 @@ mod tests {
     #[test]
     fn alerts_fire_once_on_crossing() {
         let dir = tempfile::tempdir().unwrap();
-        let s = WatchStore::open(dir.path()).unwrap();
-        let w = s.add(card("a", 10.0), "nonfoil", Rule::Percent(20.0), "2026-11-01").unwrap();
+        let s: Records<Watch> = Records::open(dir.path()).unwrap();
+        let w = s.watch(card("a", 10.0), "nonfoil", Rule::Percent(20.0), "2026-11-01").unwrap();
         assert_eq!((w.baseline, w.key().as_str()), (10.0, "a/nonfoil"));
-        assert!(s.add(card("a", 10.0), "nonfoil", Rule::Above(1.0), "2026-11-01").is_err(), "already watched");
-        assert!(s.add(card("b", 0.0), "foil", Rule::Percent(10.0), "2026-11-01").is_err(), "no price to measure from");
-        s.add(card("b", 0.0), "foil", Rule::Above(3.0), "2026-11-01").unwrap();
+        assert!(s.watch(card("a", 10.0), "nonfoil", Rule::Above(1.0), "2026-11-01").is_err(), "already watched");
+        assert!(s.watch(card("b", 0.0), "foil", Rule::Percent(10.0), "2026-11-01").is_err(), "no price to measure from");
+        s.watch(card("b", 0.0), "foil", Rule::Above(3.0), "2026-11-01").unwrap();
         assert_eq!(s.ids(), ["a", "b"]);
 
         assert!(s.apply_prices(&price("a", 11.0), "2026-11-02").unwrap().is_empty(), "10% is not 20%");
@@ -315,14 +267,14 @@ mod tests {
     #[test]
     fn conflict_merge_keeps_the_later_baseline() {
         let dir = tempfile::tempdir().unwrap();
-        let s = WatchStore::open(dir.path()).unwrap();
-        let ours = s.add(card("a", 10.0), "nonfoil", Rule::Percent(20.0), "2026-11-01").unwrap();
+        let s: Records<Watch> = Records::open(dir.path()).unwrap();
+        let ours = s.watch(card("a", 10.0), "nonfoil", Rule::Percent(20.0), "2026-11-01").unwrap();
         let newer = Watch { baseline: 12.0, baseline_date: "2026-11-09".into(), ..ours.clone() };
         let older = Watch { baseline: 1.0, baseline_date: "2026-01-01".into(), ..ours.clone() };
         let other = Watch { card: card("b", 1.0), finish: "nonfoil".into(), ..ours.clone() };
-        assert_eq!(s.merge_copy(WatchData { watches: vec![newer, other] }).unwrap(), 2);
+        assert_eq!(s.merge_copy(vec![newer, other]).unwrap(), 2);
         assert_eq!(s.get("a/nonfoil").unwrap().baseline, 12.0);
-        assert_eq!(s.merge_copy(WatchData { watches: vec![older] }).unwrap(), 0);
+        assert_eq!(s.merge_copy(vec![older]).unwrap(), 0);
         assert_eq!(s.all().len(), 2);
     }
 }

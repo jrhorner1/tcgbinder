@@ -2,28 +2,15 @@
 //! them, so the owner enters each item's value by hand. Kept in `sealed.json` beside
 //! the collection.
 
-use std::path::Path;
-
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::collection::round_cents;
-use crate::jsonfile::JsonFile;
-use crate::lots::new_id;
-
-/// The sealed product file in each game's data folder.
-pub const SEALED_FILE: &str = "sealed.json";
+use crate::records::{Record, new_id};
+use crate::serde_skip::{is_zero, is_zero_i};
 
 /// Days after which a hand-entered value is marked as old.
 pub const VALUE_STALE_DAYS: i64 = 90;
-
-fn is_zero(v: &f64) -> bool {
-    *v == 0.0
-}
-
-fn is_zero_i(v: &i64) -> bool {
-    *v == 0
-}
 
 /// A product as the catalog lists it (MTGJSON's sealed products, for Magic).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,93 +126,28 @@ pub fn sealed_totals(items: &[SealedItem], today: &str) -> SealedTotals {
     t
 }
 
-/// The sealed file's contents.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct SealedData {
-    pub items: Vec<SealedItem>,
-}
-
-/// One game's sealed product, kept in `sealed.json` (changed by other devices too,
-/// through [`JsonFile`]).
-pub struct SealedStore {
-    file: JsonFile<SealedData>,
-}
-
-impl SealedStore {
-    pub fn open(game_dir: &Path) -> Result<SealedStore> {
-        Ok(SealedStore { file: JsonFile::open(game_dir.join(SEALED_FILE), true)? })
+impl Record for SealedItem {
+    const FILE: &'static str = "sealed.json";
+    const NAME: &'static str = "sealed item";
+    fn id(&self) -> String {
+        self.id.clone()
     }
-
-    /// Every item, by set then name.
-    pub fn all(&self) -> Vec<SealedItem> {
-        let mut items = self.file.read(|d| d.items.clone());
-        items.sort_by(|a, b| a.set.cmp(&b.set).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
-        items
+    fn assign_id(&mut self) {
+        self.id = new_id();
     }
-
-    pub fn get(&self, id: &str) -> Option<SealedItem> {
-        self.file.read(|d| d.items.iter().find(|i| i.id == id).cloned())
+    fn check(&mut self) -> Result<()> {
+        self.validate()
     }
-
-    /// Adds an item, giving it an ID; returns it as saved.
-    pub fn add(&self, mut item: SealedItem) -> Result<SealedItem> {
-        item.validate()?;
-        item.id = new_id();
-        self.file.mutate(|d| {
-            d.items.push(item.clone());
-            Ok(())
-        })?;
-        Ok(item)
-    }
-
-    /// Saves a changed item (matched by ID); returns it as saved.
-    pub fn save(&self, mut item: SealedItem) -> Result<SealedItem> {
-        item.validate()?;
-        self.file.mutate(|d| match d.items.iter_mut().find(|i| i.id == item.id) {
-            Some(i) => {
-                *i = item.clone();
-                Ok(())
-            }
-            None => bail!("there is no sealed item {:?}", item.id),
-        })?;
-        Ok(item)
-    }
-
-    pub fn remove(&self, id: &str) -> Result<()> {
-        self.file.mutate(|d| {
-            d.items.retain(|i| i.id != id);
-            Ok(())
-        })
-    }
-
-    /// Merges a conflict copy: the union of both, by ID. Returns how many were added.
-    pub fn merge_copy(&self, theirs: SealedData) -> Result<usize> {
-        self.file.mutate(|d| {
-            let mut added = 0;
-            for item in theirs.items {
-                if !d.items.iter().any(|i| i.id == item.id) {
-                    d.items.push(item);
-                    added += 1;
-                }
-            }
-            Ok(added)
-        })
-    }
-
-    /// Takes in changes another device made.
-    pub fn refresh(&self) -> Result<bool> {
-        self.file.refresh()
-    }
-
-    pub fn path(&self) -> &Path {
-        self.file.path()
+    /// By set, then name.
+    fn order(a: &Self, b: &Self) -> std::cmp::Ordering {
+        a.set.cmp(&b.set).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::records::Records;
 
     fn item(name: &str, q: i64, paid: f64, value: f64, value_date: &str) -> SealedItem {
         SealedItem { name: name.into(), quantity: q, price_paid: paid, value, value_date: value_date.into(), ..SealedItem::default() }
@@ -259,17 +181,17 @@ mod tests {
     #[test]
     fn store_and_conflict_merge() {
         let dir = tempfile::tempdir().unwrap();
-        let s = SealedStore::open(dir.path()).unwrap();
+        let s: Records<SealedItem> = Records::open(dir.path()).unwrap();
         let a = s.add(item("Bundle", 1, 40.0, 0.0, "")).unwrap();
         assert_eq!(a.id.len(), 16);
         let mut changed = a.clone();
         changed.value = 55.0;
         changed.value_date = "2026-11-14".into();
         s.save(changed).unwrap();
-        assert_eq!(SealedStore::open(dir.path()).unwrap().get(&a.id).unwrap().value, 55.0);
+        assert_eq!(Records::<SealedItem>::open(dir.path()).unwrap().get(&a.id).unwrap().value, 55.0);
         assert!(s.save(SealedItem { id: "nope".into(), ..item("x", 1, 0.0, 0.0, "") }).is_err());
         let theirs = SealedItem { id: "theirs".into(), ..item("Box", 1, 0.0, 0.0, "") };
-        assert_eq!(s.merge_copy(SealedData { items: vec![a.clone(), theirs] }).unwrap(), 1);
+        assert_eq!(s.merge_copy(vec![a.clone(), theirs]).unwrap(), 1);
         assert_eq!(s.all().iter().map(|i| i.name.as_str()).collect::<Vec<_>>(), ["Box", "Bundle"]);
         s.remove(&a.id).unwrap();
         assert_eq!(s.all().len(), 1);

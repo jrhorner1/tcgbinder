@@ -49,7 +49,7 @@ impl Api {
             rule: Rule,
         }
         let req: Req = decode(body)?;
-        let w = g.watchlist.add(req.card, &req.finish, req.rule, &dates::today_string()).map_err(|e| bad(e.to_string()))?;
+        let w = g.watchlist.watch(req.card, &req.finish, req.rule, &dates::today_string()).map_err(|e| bad(e.to_string()))?;
         tracing::info!(game = g.game.id(), card = w.card.name, finish = w.finish, "watching");
         Ok(Reply::Json(watch_json(&w)))
     }

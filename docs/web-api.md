@@ -24,7 +24,7 @@ Errors are `{"error": "..."}` with a 4xx/5xx status.
 | Method & path | Purpose |
 |---|---|
 | `GET /api/info` | app name, version, games (`ID`, `Name`, and `Scan`: whether card scanning works here), chart ranges, `client` (`desktop`, `phone` or `web`), `saveExports`, `opensLinks` (links to other sites go through `POST /api/open`) |
-| `GET /api/status` | `{"revision"}`: changes whenever a collection is saved or reloaded, so open pages can refresh after background work. Each call first checks every game's files for changes another device made |
+| `GET /api/status` | `{"revision"}`: changes whenever any of a game's files (the collection, price history, lots, sales, lists, watchlist or sealed product) is saved or reloaded, so open pages can refresh after background work. Each call first checks every game's files for changes another device made |
 | `GET /api/search?q=` | search every game's collection |
 | `GET /api/data-folder` | the data folder: `path`, `isDefault`, `defaultPath`, `fixed` (set by `--data-dir` or `TCGBINDER_DATA_DIR`), `firstRun`, `canPick` (a folder picker exists here), `restartsItself`, and `conflicts`: `[{"game", "name", "kind", "cards"}]`, conflict copies (`kind`: `collection`, `lots`, `sales`, `lists`, `watchlist` or `sealed`; `cards` only for a collection) |
 | `POST /api/open` | `{"url"}`: open an http or https link in the system's browser (the apps' web views drop links that open a new window); `400` for any other address, `501` where there is no opener (`--web`) |

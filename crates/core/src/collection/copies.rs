@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::tags::same_tags;
 use super::{Card, Condition};
+use crate::serde_skip::is_zero;
 
 /// One purchase: copies of a printing in one finish and condition, bought for the same
 /// price on the same date, with the same note.
@@ -40,10 +41,6 @@ impl Purchase {
             && self.lot == other.lot
             && same_tags(&self.tags, &other.tags)
     }
-}
-
-fn is_zero(v: &f64) -> bool {
-    *v == 0.0
 }
 
 /// The copies of one printing owned: finish → condition → purchases. Each purchase

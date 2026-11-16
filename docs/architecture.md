@@ -81,13 +81,23 @@ Per game, in `<data>/<game>/`:
   file is set aside at startup rather than overwritten. Before each change and save,
   prices another device saved to the file are taken in (days already recorded here
   keep their price), so two devices recording prices never lose days.
-- `lots.json`: lots, cards bought together for one price (`core::lots`, a
-  `JsonFile`). A purchase's `lot` names its lot. `lots::lot_prices` (pure) works out
+- The five records files below (`lots.json`, `sales.json`, `lists.json`,
+  `watchlist.json`, `sealed.json`) share one shape and one store,
+  `core::records::Records<T>`: each file is `{"records": [...]}`, read and saved
+  through a `JsonFile`. A record type says its file name, its ID, how a new one gets
+  its ID, how it is checked, the order it is listed in, and how two versions merge
+  (`core::records::Record`); a feature's own operations are `impl Records<Thing>`
+  blocks in its module. `GameService::files()` lists every file the service keeps
+  (`core::records::DataFile`: the collection, the price history and the records),
+  so refreshing them after another device's changes and the revision `/api/status`
+  reports are one loop, and `datadir::DATA_FILES` names them for moving the data
+  folder and finding conflict copies.
+- `lots.json`: lots, cards bought together for one price (`core::lots`). A purchase's `lot` names its lot. `lots::lot_prices` (pure) works out
   each copy's price from the lot's total: evenly, or by market value once the lot is
   finished; `Store::reprice_lot` saves them, and `GameService::save_lot` refreshes
   stale prices before a value split. Conflict copies merge by lot ID, the later
   `created` winning.
-- `sales.json`: sold cards (`core::sales`, a `JsonFile`). Each `Sale` keeps a
+- `sales.json`: sold cards (`core::sales`). Each `Sale` keeps a
   `CardRef` (the card's catalog fields), the purchase it came from (cost, date, note,
   lot) and the sale. `GameService::sell` records the sale first and then takes the
   copies out (`Store::take_copies`): if the second write fails the sale and the copies
@@ -96,7 +106,7 @@ Per game, in `<data>/<game>/`:
   from its `CardRef` and refreshing its catalog data. `sales_totals` adds up proceeds,
   fees, cost and gain, leaving sales of unknown cost out of cost and gain. Conflict
   copies merge by sale ID.
-- `lists.json`: lists and decks (`core::lists`, a `JsonFile`). Each `ListEntry`
+- `lists.json`: lists and decks (`core::lists`). Each `ListEntry`
   holds a catalog copy of the card (no copies), so a list shows images and prices
   without a lookup; `GameService::refresh_prices` refreshes the collection's and the
   lists' cards in one `Game::refresh`. `ListEntry::owned` counts the collection's
@@ -105,16 +115,16 @@ Per game, in `<data>/<game>/`:
   import; `ImportReport::approximate` marks the cards matched by name only, which
   become any-printing entries. Conflict copies merge lists by ID and, within a list,
   entries by card, the larger quantity winning.
-- `watchlist.json`: watched prices (`core::watchlist`, a `JsonFile`). Each `Watch`
+- `watchlist.json`: watched prices (`core::watchlist`). Each `Watch`
   holds a catalog copy of the card, a finish, a baseline price and a `Rule` (a
   percent move, or a price line). `GameService::refresh_prices` includes the watched
-  IDs and calls `WatchStore::apply_prices`, which triggers a watch when the refresh
+  IDs and calls `Records<Watch>::apply_prices`, which triggers a watch when the refresh
   takes its price from inside the line to past it (so a dismissed alert stays quiet
   until the price comes back and crosses again), and passes each new alert to the
   hook set with `GameService::set_alert_hook`. The desktop and iPhone apps set one
   that posts a system notification (`tauri-plugin-notification`); `--web` has none.
   Conflict copies merge by card and finish, the later `baseline_date` winning.
-- `sealed.json`: sealed product (`core::sealed`, a `JsonFile`), valued by hand since no
+- `sealed.json`: sealed product (`core::sealed`), valued by hand since no
   free source prices it. `Game::sealed_products` lists a set's products for choosing;
   Magic reads `sealedProduct` from MTGJSON's set file (`mtgjson::Client::sealed_products`,
   cached per set for the session). Each item keeps MTGJSON's `product_uuid` (the key

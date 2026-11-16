@@ -123,10 +123,8 @@ impl Api {
             notes: String,
         }
         let req: Req = decode(body)?;
-        let list = g
-            .lists
-            .create(List { name: req.name, notes: req.notes.trim().to_string(), ..List::default() })
-            .map_err(|e| bad(e.to_string()))?;
+        let list =
+            g.lists.add(List { name: req.name, notes: req.notes.trim().to_string(), ..List::default() }).map_err(|e| bad(e.to_string()))?;
         tracing::info!(game = g.game.id(), list = list.name, "list created");
         Ok(Reply::Json(totals(g, &list, &g.store.cards())))
     }

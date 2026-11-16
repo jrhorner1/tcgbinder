@@ -10,12 +10,13 @@ use serde_json::{Value, json};
 
 use tcgbinder_core::collection::read_export;
 use tcgbinder_core::datafolder::{self, Mode};
-use tcgbinder_core::lists::ListsData;
-use tcgbinder_core::lots::LotsData;
-use tcgbinder_core::sales::SalesData;
-use tcgbinder_core::sealed::SealedData;
+use tcgbinder_core::lists::List;
+use tcgbinder_core::lots::Lot;
+use tcgbinder_core::records::{Record, Records};
+use tcgbinder_core::sales::Sale;
+use tcgbinder_core::sealed::SealedItem;
 use tcgbinder_core::service::GameService;
-use tcgbinder_core::watchlist::WatchData;
+use tcgbinder_core::watchlist::Watch;
 
 use crate::{Api, Error, Reply, Result, bad, decode, internal, not_found, undo};
 
@@ -88,8 +89,7 @@ impl Api {
             .iter()
             .flat_map(|g| {
                 datafolder::conflict_copies(game_dir(g)).into_iter().map(move |name| {
-                    let kind =
-                        ["lots", "sales", "lists", "watchlist", "sealed"].into_iter().find(|k| name.starts_with(k)).unwrap_or("collection");
+                    let kind = copy_kind(&name);
                     let cards = std::fs::read(game_dir(g).join(&name)).ok().and_then(|b| read_export(&b).ok()).map(|(_, c)| c.len());
                     json!({ "game": g.game.id(), "name": name, "kind": kind, "cards": cards })
                 })
@@ -177,39 +177,10 @@ impl Api {
         let req: NameReq = decode(body)?;
         let path = Self::conflict_path(g, &req.name)?;
         let data = std::fs::read(&path).map_err(|e| internal(e.into()))?;
-        if req.name.starts_with("lots") {
-            let theirs: LotsData = serde_json::from_slice(&data).map_err(|e| bad(format!("{} can't be read: {e}", req.name)))?;
-            let changed = g.lots.merge_copy(theirs).map_err(internal)?;
+        if let Some(merged) = merge_record_copy(g, &req.name, &data) {
+            let changed = merged?;
             std::fs::remove_file(&path).map_err(|e| internal(e.into()))?;
-            tracing::info!(game = g.game.id(), copy = req.name, changed, "lots conflict copy merged");
-            return Ok(Reply::Json(json!({ "changed": changed })));
-        }
-        if req.name.starts_with("sealed") {
-            let theirs: SealedData = serde_json::from_slice(&data).map_err(|e| bad(format!("{} can't be read: {e}", req.name)))?;
-            let changed = g.sealed.merge_copy(theirs).map_err(internal)?;
-            std::fs::remove_file(&path).map_err(|e| internal(e.into()))?;
-            tracing::info!(game = g.game.id(), copy = req.name, changed, "sealed product conflict copy merged");
-            return Ok(Reply::Json(json!({ "changed": changed })));
-        }
-        if req.name.starts_with("watchlist") {
-            let theirs: WatchData = serde_json::from_slice(&data).map_err(|e| bad(format!("{} can't be read: {e}", req.name)))?;
-            let changed = g.watchlist.merge_copy(theirs).map_err(internal)?;
-            std::fs::remove_file(&path).map_err(|e| internal(e.into()))?;
-            tracing::info!(game = g.game.id(), copy = req.name, changed, "watchlist conflict copy merged");
-            return Ok(Reply::Json(json!({ "changed": changed })));
-        }
-        if req.name.starts_with("lists") {
-            let theirs: ListsData = serde_json::from_slice(&data).map_err(|e| bad(format!("{} can't be read: {e}", req.name)))?;
-            let changed = g.lists.merge_copy(theirs).map_err(internal)?;
-            std::fs::remove_file(&path).map_err(|e| internal(e.into()))?;
-            tracing::info!(game = g.game.id(), copy = req.name, changed, "lists conflict copy merged");
-            return Ok(Reply::Json(json!({ "changed": changed })));
-        }
-        if req.name.starts_with("sales") {
-            let theirs: SalesData = serde_json::from_slice(&data).map_err(|e| bad(format!("{} can't be read: {e}", req.name)))?;
-            let changed = g.sales.merge_copy(theirs).map_err(internal)?;
-            std::fs::remove_file(&path).map_err(|e| internal(e.into()))?;
-            tracing::info!(game = g.game.id(), copy = req.name, changed, "sales conflict copy merged");
+            tracing::info!(game = g.game.id(), copy = req.name, changed, "conflict copy merged");
             return Ok(Reply::Json(json!({ "changed": changed })));
         }
         let (game, cards) = read_export(&data).map_err(|e| bad(format!("{} can't be read: {e:#}", req.name)))?;
@@ -231,4 +202,42 @@ impl Api {
         tracing::info!(game = g.game.id(), copy = req.name, "conflict copy discarded");
         Ok(Reply::Json(json!({ "discarded": req.name })))
     }
+}
+
+/// The stem of a records file name: "lots" for "lots.json".
+fn stem<T: Record>() -> &'static str {
+    T::FILE.trim_end_matches(".json")
+}
+
+/// What a conflict copy is a copy of: "lots", "sales", "lists", "watchlist", "sealed"
+/// or "collection".
+fn copy_kind(name: &str) -> &'static str {
+    [stem::<Lot>(), stem::<Sale>(), stem::<List>(), stem::<Watch>(), stem::<SealedItem>()]
+        .into_iter()
+        .find(|k| name.starts_with(k))
+        .unwrap_or("collection")
+}
+
+/// Merges a conflict copy of a records file into the game's records of that kind,
+/// returning how many changed. None if `name` isn't a copy of a records file.
+fn merge_record_copy(g: &GameService, name: &str, data: &[u8]) -> Option<Result<usize>> {
+    fn merge<T: Record>(records: &Records<T>, name: &str, data: &[u8]) -> Result<usize> {
+        let theirs: tcgbinder_core::records::RecordsFile<T> =
+            serde_json::from_slice(data).map_err(|e| bad(format!("{name} can't be read: {e}")))?;
+        records.merge_copy(theirs.records).map_err(internal)
+    }
+    let kind = copy_kind(name);
+    Some(if kind == stem::<Lot>() {
+        merge(&g.lots, name, data)
+    } else if kind == stem::<Sale>() {
+        merge(&g.sales, name, data)
+    } else if kind == stem::<List>() {
+        merge(&g.lists, name, data)
+    } else if kind == stem::<Watch>() {
+        merge(&g.watchlist, name, data)
+    } else if kind == stem::<SealedItem>() {
+        merge(&g.sealed, name, data)
+    } else {
+        return None;
+    })
 }

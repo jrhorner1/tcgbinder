@@ -1,20 +1,16 @@
 //! Lots: cards bought together for one price (a 500-card lot, a bundle). The cards
 //! added under a lot point to it (`Purchase::lot`), and the lot's total is split
 //! among them: evenly, or by each card's market value. The lot record lives in
-//! `lots.json` beside the collection; its cards' prices are worked out here, as a
+//! `lots.json` beside the collection (a [`Records`](crate::records::Records) file); its cards' prices are worked out here, as a
 //! pure function, and saved to the collection by `Store::reprice_lot`.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
 
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::collection::Condition;
-use crate::jsonfile::JsonFile;
-
-/// The lots file in each game's data folder.
-pub const LOTS_FILE: &str = "lots.json";
+use crate::records::{Record, new_id};
 
 /// How many cards a lot holds, which the even split divides by.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -217,119 +213,39 @@ pub fn lot_prices(lot: &Lot, copies: &[LotCopy]) -> LotPrices {
     out
 }
 
-/// The lots file's contents.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct LotsData {
-    pub lots: Vec<Lot>,
-}
-
-/// One game's lots, kept in `lots.json` (changed by other devices too, through
-/// [`JsonFile`]).
-pub struct LotsStore {
-    file: JsonFile<LotsData>,
-}
-
-impl LotsStore {
-    /// Opens (or starts) the lots file in a game's data folder.
-    pub fn open(game_dir: &Path) -> Result<LotsStore> {
-        Ok(LotsStore { file: JsonFile::open(game_dir.join(LOTS_FILE), true)? })
+impl Record for Lot {
+    const FILE: &'static str = "lots.json";
+    const NAME: &'static str = "lot";
+    fn id(&self) -> String {
+        self.id.clone()
     }
-
-    /// Every lot, newest first.
-    pub fn all(&self) -> Vec<Lot> {
-        let mut lots = self.file.read(|d| d.lots.clone());
-        lots.sort_by(|a, b| b.created.cmp(&a.created));
-        lots
+    /// A new lot gets an ID and a creation time, and starts open, with no split worked
+    /// out.
+    fn assign_id(&mut self) {
+        self.id = new_id();
+        self.created = chrono::Local::now().to_rfc3339();
+        self.open = true;
+        self.split_date.clear();
     }
-
-    /// The lot with this ID.
-    pub fn get(&self, id: &str) -> Option<Lot> {
-        self.file.read(|d| d.lots.iter().find(|l| l.id == id).cloned())
+    fn check(&mut self) -> Result<()> {
+        self.validate()
     }
-
-    /// Adds a new lot (giving it an ID and creation time) and returns it.
-    pub fn create(&self, mut lot: Lot) -> Result<Lot> {
-        lot.validate()?;
-        lot.id = new_id();
-        lot.created = chrono::Local::now().to_rfc3339();
-        lot.open = true;
-        lot.split_date.clear();
-        self.file.mutate(|d| {
-            d.lots.push(lot.clone());
-            Ok(())
-        })?;
-        Ok(lot)
+    /// Newest first.
+    fn order(a: &Self, b: &Self) -> std::cmp::Ordering {
+        b.created.cmp(&a.created)
     }
-
-    /// Saves a changed lot (matched by ID).
-    pub fn save(&self, lot: &Lot) -> Result<()> {
-        lot.validate()?;
-        self.file.mutate(|d| match d.lots.iter_mut().find(|l| l.id == lot.id) {
-            Some(l) => {
-                *l = lot.clone();
-                Ok(())
-            }
-            None => bail!("there is no lot {:?}", lot.id),
-        })
+    /// Where both have a lot, the one created later wins.
+    fn merge(&mut self, theirs: Self) {
+        if theirs.created > self.created {
+            *self = theirs;
+        }
     }
-
-    /// Deletes a lot.
-    pub fn remove(&self, id: &str) -> Result<()> {
-        self.file.mutate(|d| {
-            d.lots.retain(|l| l.id != id);
-            Ok(())
-        })
-    }
-
-    /// Merges a conflict copy of the lots file: the union of both, by ID; where both
-    /// have a lot, the one created later wins. Returns how many lots changed.
-    pub fn merge_copy(&self, theirs: LotsData) -> Result<usize> {
-        self.file.mutate(|d| {
-            let mut changed = 0;
-            for lot in theirs.lots {
-                match d.lots.iter_mut().find(|l| l.id == lot.id) {
-                    Some(ours) if lot.created > ours.created => {
-                        *ours = lot;
-                        changed += 1;
-                    }
-                    Some(_) => {}
-                    None => {
-                        d.lots.push(lot);
-                        changed += 1;
-                    }
-                }
-            }
-            Ok(changed)
-        })
-    }
-
-    /// Takes in changes another device made.
-    pub fn refresh(&self) -> Result<bool> {
-        self.file.refresh()
-    }
-
-    /// The lots file's path.
-    pub fn path(&self) -> &Path {
-        self.file.path()
-    }
-}
-
-/// A random ID: 16 hexadecimal characters.
-pub fn new_id() -> String {
-    use std::hash::{BuildHasher, Hasher};
-    // RandomState is seeded randomly per process; mixing in the time and a counter
-    // makes each ID differ.
-    static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-    h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos()));
-    h.write_u64(COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
-    format!("{:016x}", h.finish())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::records::Records;
 
     fn copy(id: &str, finish: &str, q: i64, market: Option<f64>, rarity: &str) -> LotCopy {
         LotCopy {
@@ -443,14 +359,14 @@ mod tests {
     #[test]
     fn store_and_conflict_merge() {
         let dir = tempfile::tempdir().unwrap();
-        let s = LotsStore::open(dir.path()).unwrap();
-        let a = s.create(lot(10.0, LotCount::AsEntered, LotSplit::Even, false)).unwrap();
+        let s: Records<Lot> = Records::open(dir.path()).unwrap();
+        let a = s.add(lot(10.0, LotCount::AsEntered, LotSplit::Even, false)).unwrap();
         assert!(a.open && a.id.len() == 16 && !a.created.is_empty());
-        assert!(s.create(Lot { name: " ".into(), ..Lot::default() }).is_err());
+        assert!(s.add(Lot { name: " ".into(), ..Lot::default() }).is_err());
         let mut renamed = a.clone();
         renamed.name = "renamed".into();
-        s.save(&renamed).unwrap();
-        assert_eq!(LotsStore::open(dir.path()).unwrap().get(&a.id).unwrap().name, "renamed");
+        s.save(renamed).unwrap();
+        assert_eq!(Records::<Lot>::open(dir.path()).unwrap().get(&a.id).unwrap().name, "renamed");
 
         let mut later = a.clone();
         later.name = "theirs".into();
@@ -459,9 +375,9 @@ mod tests {
         let mut older = a.clone();
         older.name = "old".into();
         older.created = "0".into();
-        assert_eq!(s.merge_copy(LotsData { lots: vec![later, other] }).unwrap(), 2);
+        assert_eq!(s.merge_copy(vec![later, other]).unwrap(), 2);
         assert_eq!(s.get(&a.id).unwrap().name, "theirs");
-        assert_eq!(s.merge_copy(LotsData { lots: vec![older] }).unwrap(), 0);
+        assert_eq!(s.merge_copy(vec![older]).unwrap(), 0);
         assert_eq!(s.all().len(), 2);
         s.remove("other").unwrap();
         assert_eq!(s.all().len(), 1);

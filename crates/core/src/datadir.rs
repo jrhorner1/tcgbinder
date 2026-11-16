@@ -16,6 +16,7 @@
 //! ```text
 //! <data>/mtg/collection.json
 //! <data>/mtg/price-history.json
+//! <data>/mtg/lots.json, sales.json, lists.json, watchlist.json, sealed.json
 //! <data>/mtg/backups/
 //! ```
 
@@ -29,6 +30,18 @@ pub const COLLECTION_FILE: &str = "collection.json";
 
 /// The name of each game's price history file.
 pub const PRICE_HISTORY_FILE: &str = "price-history.json";
+
+/// Every file kept in a game's data folder (besides backups): the collection, the
+/// price history and the records files.
+pub const DATA_FILES: [&str; 7] = [
+    COLLECTION_FILE,
+    PRICE_HISTORY_FILE,
+    <crate::lots::Lot as crate::records::Record>::FILE,
+    <crate::sales::Sale as crate::records::Record>::FILE,
+    <crate::lists::List as crate::records::Record>::FILE,
+    <crate::watchlist::Watch as crate::records::Record>::FILE,
+    <crate::sealed::SealedItem as crate::records::Record>::FILE,
+];
 
 /// The single-instance lock for a data folder, in the local folder: named after the
 /// data folder, so two different data folders can be open at once.

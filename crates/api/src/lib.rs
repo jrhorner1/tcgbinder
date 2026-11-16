@@ -501,7 +501,7 @@ impl Api {
         for g in &self.games {
             g.refresh_files();
         }
-        let revision: u64 = self.games.iter().map(|g| g.store.revision()).sum();
+        let revision: u64 = self.games.iter().map(|g| g.revision()).sum();
         Reply::Json(json!({ "revision": revision }))
     }
 

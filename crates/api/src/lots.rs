@@ -91,7 +91,7 @@ impl Api {
     pub(crate) fn create_lot(&self, g: &GameService, body: &[u8]) -> Result {
         let change: Value = decode(body)?;
         let lot = with_changes(&Lot::default(), &change)?;
-        let lot = g.lots.create(lot).map_err(|e| bad(e.to_string()))?;
+        let lot = g.lots.add(lot).map_err(|e| bad(e.to_string()))?;
         tracing::info!(game = g.game.id(), lot = lot.name, "lot created");
         Ok(Reply::Json(summary(g, &lot)))
     }
@@ -112,7 +112,7 @@ impl Api {
             || lot.split != old.split
             || lot.open != old.open;
         if !reprice {
-            g.lots.save(&lot).map_err(|e| bad(e.to_string()))?;
+            g.lots.save(lot.clone()).map_err(|e| bad(e.to_string()))?;
             return Ok(Reply::Json(json!({ "lot": summary(g, &lot) })));
         }
         let (lot, prices) = g.save_lot(lot, recalculate).map_err(internal)?;

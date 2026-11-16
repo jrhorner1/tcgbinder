@@ -9,12 +9,7 @@ use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
 use crate::collection::read_export;
-use crate::datadir::{COLLECTION_FILE, PRICE_HISTORY_FILE};
-use crate::lists::LISTS_FILE;
-use crate::lots::LOTS_FILE;
-use crate::sales::SALES_FILE;
-use crate::sealed::SEALED_FILE;
-use crate::watchlist::WATCHLIST_FILE;
+use crate::datadir::{COLLECTION_FILE, DATA_FILES, PRICE_HISTORY_FILE};
 
 /// The folder of backups in each game's data folder.
 const BACKUPS: &str = "backups";
@@ -120,7 +115,7 @@ pub fn transfer(from: &Path, to: &Path, game_ids: &[&str], mode: Mode) -> Result
             continue;
         }
         fs::create_dir_all(&dst)?;
-        for name in [COLLECTION_FILE, PRICE_HISTORY_FILE, LOTS_FILE, SALES_FILE, LISTS_FILE, WATCHLIST_FILE, SEALED_FILE] {
+        for name in DATA_FILES {
             if src.join(name).is_file() {
                 copy_checked(&src.join(name), &dst.join(name))?;
                 copied.push(src.join(name));
@@ -168,17 +163,9 @@ pub fn conflict_copies(game_dir: &Path) -> Vec<String> {
         .filter(|e| e.path().is_file())
         .filter_map(|e| e.file_name().into_string().ok())
         .filter(|n| {
+            // Price history merges itself, so its copies aren't listed.
             n.ends_with(".json")
-                && [
-                    ("collection", COLLECTION_FILE),
-                    ("lots", LOTS_FILE),
-                    ("sales", SALES_FILE),
-                    ("lists", LISTS_FILE),
-                    ("watchlist", WATCHLIST_FILE),
-                    ("sealed", SEALED_FILE),
-                ]
-                .iter()
-                .any(|(stem, file)| n.starts_with(stem) && n != file)
+                && DATA_FILES.iter().filter(|f| **f != PRICE_HISTORY_FILE).any(|f| n.starts_with(f.trim_end_matches(".json")) && n != *f)
         })
         .collect();
     names.sort();
@@ -188,6 +175,8 @@ pub fn conflict_copies(game_dir: &Path) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SALES_FILE: &str = <crate::sales::Sale as crate::records::Record>::FILE;
 
     fn collection(dir: &Path, game: &str, cards: usize) {
         let cards: serde_json::Map<String, serde_json::Value> = (0..cards)
@@ -246,6 +235,7 @@ mod tests {
             "collection (conflicted copy 2026-11-14).json",
             "collection_abc.tmp",
             "price-history.json",
+            "price-history 2.json",
             "lots.json",
             "lots 2.json",
             "sales.json",

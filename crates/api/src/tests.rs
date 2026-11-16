@@ -1235,6 +1235,20 @@ fn merge_or_discard_conflict_copies() {
 }
 
 #[test]
+fn merge_a_records_conflict_copy() {
+    let f = folder_fixture(false);
+    let game_dir = f.local.join("mtg");
+    let theirs = json!({ "records": [{ "id": "theirs", "name": "Their deck", "created": "2026-01-01", "entries": [] }] });
+    std::fs::write(game_dir.join("lists 2.json"), theirs.to_string()).unwrap();
+    let conflicts = get(&f.api, "/api/data-folder")["conflicts"].clone();
+    assert_eq!((conflicts[0]["name"].as_str(), conflicts[0]["kind"].as_str()), (Some("lists 2.json"), Some("lists")));
+    let (status, merged) = call(&f.api, "POST", "/api/games/mtg/conflicts/merge", Some(json!({ "name": "lists 2.json" })));
+    assert_eq!((status, merged["changed"].as_u64()), (200, Some(1)));
+    assert_eq!(f.svc.lists.get("theirs").unwrap().name, "Their deck");
+    assert!(!game_dir.join("lists 2.json").exists());
+}
+
+#[test]
 fn notes_on_purchases() {
     let f = fixture();
     let rows = json!([

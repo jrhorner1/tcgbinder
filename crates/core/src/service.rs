@@ -15,12 +15,13 @@ use crate::collection::Purchase;
 use crate::collection::same_tags;
 use crate::collection::{Card, PriceHistory, SetInfo, Stats, Store, TimePoint, read_export};
 use crate::game::{Game, ImportReport};
-use crate::lists::{ListEntry, ListsStore};
-use crate::lots::{Lot, LotCopy, LotPrices, LotSplit, LotsStore, lot_prices};
-use crate::sales::{CardRef, Sale, SalesStore};
-use crate::sealed::SealedStore;
+use crate::lists::{List, ListEntry};
+use crate::lots::{Lot, LotCopy, LotPrices, LotSplit, lot_prices};
+use crate::records::{DataFile, Records};
+use crate::sales::{CardRef, Sale};
+use crate::sealed::SealedItem;
 use crate::settings::{Settings, SettingsStore};
-use crate::watchlist::{Watch, WatchStore};
+use crate::watchlist::Watch;
 use crate::{datadir, dates};
 
 /// How often running apps check whether prices need refreshing. Prices refresh at most
@@ -39,15 +40,15 @@ pub struct GameService {
     pub store: Store,
     pub prices: PriceHistory,
     /// Lots: cards bought together for one price.
-    pub lots: LotsStore,
+    pub lots: Records<Lot>,
     /// Sold cards.
-    pub sales: SalesStore,
+    pub sales: Records<Sale>,
     /// Lists and decks.
-    pub lists: ListsStore,
+    pub lists: Records<List>,
     /// Watched prices.
-    pub watchlist: WatchStore,
+    pub watchlist: Records<Watch>,
     /// Sealed product.
-    pub sealed: SealedStore,
+    pub sealed: Records<SealedItem>,
     /// Told about each watch that triggers (the apps post a system notification).
     alert_hook: OnceLock<AlertHook>,
     /// The app settings (price refresh frequency, automatic price history). Without
@@ -73,11 +74,11 @@ impl GameService {
     /// Wraps an open store, loading the price history and lots kept next to it.
     pub fn from_store(game: Box<dyn Game>, store: Store) -> Result<GameService> {
         let dir = store.file_path().parent().unwrap_or(Path::new(".")).to_path_buf();
-        let lots = LotsStore::open(&dir)?;
-        let sales = SalesStore::open(&dir)?;
-        let lists = ListsStore::open(&dir)?;
-        let watchlist = WatchStore::open(&dir)?;
-        let sealed = SealedStore::open(&dir)?;
+        let lots = Records::open(&dir)?;
+        let sales = Records::open(&dir)?;
+        let lists = Records::open(&dir)?;
+        let watchlist = Records::open(&dir)?;
+        let sealed = Records::open(&dir)?;
         let path = store.file_path().with_file_name(datadir::PRICE_HISTORY_FILE);
         let prices = match PriceHistory::open(&path) {
             Ok((prices, warning)) => {
@@ -148,7 +149,7 @@ impl GameService {
         } else {
             lot.split_date.clear();
         }
-        self.lots.save(&lot)?;
+        self.lots.save(lot.clone())?;
         let prices = self.reprice_lot(&lot)?;
         Ok((lot, prices))
     }
@@ -273,29 +274,24 @@ impl GameService {
         self.sets.lock().unwrap().clone().unwrap_or_default()
     }
 
-    /// Takes in changes another device made to the collection and price history files
-    /// (through a synced folder). A file that is mid-sync is left for the next call.
+    /// Every file the service keeps: the collection, the price history and the records
+    /// files.
+    pub fn files(&self) -> [&dyn DataFile; 7] {
+        [&self.store, &self.prices, &self.lots, &self.sales, &self.lists, &self.watchlist, &self.sealed]
+    }
+
+    /// A number that changes whenever any of the service's files does.
+    pub fn revision(&self) -> u64 {
+        self.files().iter().map(|f| f.revision()).sum()
+    }
+
+    /// Takes in changes another device made to the service's files (through a synced
+    /// folder). A file that is mid-sync is left for the next call.
     pub fn refresh_files(&self) {
-        if let Err(e) = self.store.refresh() {
-            tracing::debug!(game = self.game.id(), error = %e, "collection not refreshed");
-        }
-        if let Err(e) = self.prices.refresh() {
-            tracing::debug!(game = self.game.id(), error = %e, "price history not refreshed");
-        }
-        if let Err(e) = self.sealed.refresh() {
-            tracing::debug!(game = self.game.id(), error = %e, "sealed product not refreshed");
-        }
-        if let Err(e) = self.watchlist.refresh() {
-            tracing::debug!(game = self.game.id(), error = %e, "watchlist not refreshed");
-        }
-        if let Err(e) = self.lists.refresh() {
-            tracing::debug!(game = self.game.id(), error = %e, "lists not refreshed");
-        }
-        if let Err(e) = self.sales.refresh() {
-            tracing::debug!(game = self.game.id(), error = %e, "sales not refreshed");
-        }
-        if let Err(e) = self.lots.refresh() {
-            tracing::debug!(game = self.game.id(), error = %e, "lots not refreshed");
+        for f in self.files() {
+            if let Err(e) = f.refresh() {
+                tracing::debug!(game = self.game.id(), file = f.file_name(), error = %e, "file not refreshed");
+            }
         }
     }
 

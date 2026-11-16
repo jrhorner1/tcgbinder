@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, RwLock};
 
 use anyhow::{Context, Result, bail};
@@ -24,6 +25,8 @@ pub struct PriceHistory {
     /// What is on disk. Locked before `data` and held through saves, so writes land
     /// in order.
     disk: Mutex<Disk>,
+    /// Counts saves and prices taken in from another device.
+    revision: AtomicU64,
 }
 
 /// The history file as last read or written.
@@ -170,7 +173,7 @@ impl PriceHistory {
     /// returned with a warning saying so.
     pub fn open(path: impl Into<PathBuf>) -> Result<(PriceHistory, Option<String>)> {
         let path = std::path::absolute(path.into())?;
-        let fresh = |path: PathBuf| PriceHistory { path, data: RwLock::default(), disk: Mutex::default() };
+        let fresh = |path: PathBuf| PriceHistory { path, data: RwLock::default(), disk: Mutex::default(), revision: AtomicU64::new(0) };
         let bytes = match fs::read(&path) {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((fresh(path), None)),
@@ -188,12 +191,12 @@ impl PriceHistory {
         };
         data.fix_starts(&path)?;
         let disk = Disk { points: data.points(), stamp: Stamp::of(&path, &bytes) };
-        Ok((PriceHistory { path, data: RwLock::new(data), disk: Mutex::new(disk) }, None))
+        Ok((PriceHistory { path, data: RwLock::new(data), disk: Mutex::new(disk), revision: AtomicU64::new(0) }, None))
     }
 
     /// An empty history kept in memory only (for tests, or when the file can't be used).
     pub fn in_memory() -> PriceHistory {
-        PriceHistory { path: PathBuf::new(), data: RwLock::default(), disk: Mutex::default() }
+        PriceHistory { path: PathBuf::new(), data: RwLock::default(), disk: Mutex::default(), revision: AtomicU64::new(0) }
     }
 
     /// Takes in prices another device saved to the file since it was last read or
@@ -210,6 +213,7 @@ impl PriceHistory {
         let points = theirs.points();
         self.data.write().unwrap().absorb(theirs);
         *disk = Disk { points, stamp };
+        self.revision.fetch_add(1, Ordering::Relaxed);
         tracing::info!(path = %self.path.display(), "took in price history saved by another device");
         Ok(())
     }
@@ -227,6 +231,17 @@ impl PriceHistory {
     /// Takes in prices another device saved. Nothing is saved here.
     pub fn refresh(&self) -> Result<()> {
         self.take_in_disk(&mut self.disk.lock().unwrap())
+    }
+
+    /// The history file's path (empty for a history kept in memory).
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// A number that changes on each save and each time another device's prices are
+    /// taken in.
+    pub fn revision(&self) -> u64 {
+        self.revision.load(Ordering::Relaxed)
     }
 
     /// The number of recorded daily prices.
@@ -254,6 +269,7 @@ impl PriceHistory {
         bytes.push(b'\n');
         let stamp = write_atomic(&self.path, "price-history_", &bytes)?;
         *disk = Disk { points, stamp };
+        self.revision.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 

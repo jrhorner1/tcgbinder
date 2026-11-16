@@ -3,21 +3,13 @@
 //! earnings can be totalled even after the card has left the collection.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::collection::{Card, Condition, round_cents};
-use crate::jsonfile::JsonFile;
-use crate::lots::new_id;
-
-/// The sales file in each game's data folder.
-pub const SALES_FILE: &str = "sales.json";
-
-fn is_zero(v: &f64) -> bool {
-    *v == 0.0
-}
+use crate::records::{Record, new_id};
+use crate::serde_skip::is_zero;
 
 /// A copy of a card's catalog fields, so a sale still reads after the card is gone.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -192,84 +184,28 @@ pub fn sales_totals<'a>(sales: impl IntoIterator<Item = &'a Sale>) -> (SalesTota
     (all.rounded(), months.into_iter().map(|(m, t)| (m, t.rounded())).collect())
 }
 
-/// The sales file's contents.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct SalesData {
-    pub sales: Vec<Sale>,
-}
-
-/// One game's sales, kept in `sales.json` (changed by other devices too, through
-/// [`JsonFile`]).
-pub struct SalesStore {
-    file: JsonFile<SalesData>,
-}
-
-impl SalesStore {
-    /// Opens (or starts) the sales file in a game's data folder.
-    pub fn open(game_dir: &Path) -> Result<SalesStore> {
-        Ok(SalesStore { file: JsonFile::open(game_dir.join(SALES_FILE), true)? })
+impl Record for Sale {
+    const FILE: &'static str = "sales.json";
+    const NAME: &'static str = "sale";
+    fn id(&self) -> String {
+        self.id.clone()
     }
-
-    /// Every sale, newest first.
-    pub fn all(&self) -> Vec<Sale> {
-        let mut sales = self.file.read(|d| d.sales.clone());
-        sales.sort_by(|a, b| b.date.cmp(&a.date).then_with(|| a.card.name.cmp(&b.card.name)));
-        sales
+    fn assign_id(&mut self) {
+        self.id = new_id();
     }
-
-    pub fn get(&self, id: &str) -> Option<Sale> {
-        self.file.read(|d| d.sales.iter().find(|s| s.id == id).cloned())
+    fn check(&mut self) -> Result<()> {
+        self.validate()
     }
-
-    /// Records a sale, giving it an ID, and returns it.
-    pub fn add(&self, mut sale: Sale) -> Result<Sale> {
-        sale.validate()?;
-        sale.id = new_id();
-        self.file.mutate(|d| {
-            d.sales.push(sale.clone());
-            Ok(())
-        })?;
-        Ok(sale)
-    }
-
-    /// Deletes a sale.
-    pub fn remove(&self, id: &str) -> Result<()> {
-        self.file.mutate(|d| {
-            d.sales.retain(|s| s.id != id);
-            Ok(())
-        })
-    }
-
-    /// Merges a conflict copy of the sales file: the union of both, by ID. Returns
-    /// how many sales were added.
-    pub fn merge_copy(&self, theirs: SalesData) -> Result<usize> {
-        self.file.mutate(|d| {
-            let mut added = 0;
-            for sale in theirs.sales {
-                if !d.sales.iter().any(|s| s.id == sale.id) {
-                    d.sales.push(sale);
-                    added += 1;
-                }
-            }
-            Ok(added)
-        })
-    }
-
-    /// Takes in changes another device made.
-    pub fn refresh(&self) -> Result<bool> {
-        self.file.refresh()
-    }
-
-    /// The sales file's path.
-    pub fn path(&self) -> &Path {
-        self.file.path()
+    /// Newest first.
+    fn order(a: &Self, b: &Self) -> std::cmp::Ordering {
+        b.date.cmp(&a.date).then_with(|| a.card.name.cmp(&b.card.name))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::records::Records;
 
     fn sale(date: &str, q: i64, cost: f64, each: f64, fees: f64) -> Sale {
         Sale {
@@ -312,16 +248,16 @@ mod tests {
     #[test]
     fn store_and_conflict_merge() {
         let dir = tempfile::tempdir().unwrap();
-        let s = SalesStore::open(dir.path()).unwrap();
+        let s: Records<Sale> = Records::open(dir.path()).unwrap();
         let a = s.add(sale("2026-01-05", 1, 0.0, 1.0, 0.0)).unwrap();
         let b = s.add(sale("2026-02-05", 1, 0.0, 1.0, 0.0)).unwrap();
         assert_eq!(a.id.len(), 16);
         assert_eq!(
-            SalesStore::open(dir.path()).unwrap().all().iter().map(|x| x.id.clone()).collect::<Vec<_>>(),
+            Records::<Sale>::open(dir.path()).unwrap().all().iter().map(|x| x.id.clone()).collect::<Vec<_>>(),
             [b.id.clone(), a.id.clone()]
         );
         let theirs = Sale { id: "theirs".into(), ..sale("2026-03-01", 2, 0.0, 1.0, 0.0) };
-        assert_eq!(s.merge_copy(SalesData { sales: vec![a.clone(), theirs] }).unwrap(), 1);
+        assert_eq!(s.merge_copy(vec![a.clone(), theirs]).unwrap(), 1);
         assert_eq!(s.all().len(), 3);
         s.remove(&a.id).unwrap();
         assert!(s.get(&a.id).is_none());
