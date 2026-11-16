@@ -3,7 +3,7 @@
 TCG Binder is a Rust workspace with one user interface for every platform:
 
 ```
-ui/                    the user interface: plain HTML, CSS and JavaScript (no build step)
+ui/                    the user interface: plain HTML, CSS and JavaScript modules (no build step)
 src-tauri/             the app (crate `tcgbinder`): command-line flags, the two folders, logging,
                        single-instance lock; registers the games; runs the Tauri window
                        (desktop and iPhone) or, with --web, the HTTP server (src/web.rs)
@@ -51,6 +51,18 @@ changes with every save, so the open page refreshes after background work.
 The UI is embedded in release builds (`rust-embed`); debug builds read `ui/` from
 disk, so reloading the page shows UI changes without rebuilding. iPhone builds always
 embed it.
+
+The UI's JavaScript is ES modules under `ui/js/`, loaded by
+`<script type="module" src="js/main.js">`, with no build step. `main.js` starts the
+app and holds the router (`route`); it is the only file that imports the pages'
+`view…` functions. Shared files (`state.js`, `nav.js`, `dom.js`, `api.js`,
+`format.js`, `charts.js`, `cards.js`) never import a page. A page may import a dialog
+or panel another page owns (the lot dialog from `pages/lots.js`, the import preview
+from `pages/tools.js`, the card editor from `pages/card.js`, bulk edit from
+`pages/bulk.js`), never its view, and the pages don't import each other in a circle.
+Pages redraw with `route()` from `nav.js`, which `main.js` sets at start-up, so
+nothing imports `main.js`. `node scripts/check-ui.mjs` checks that every file parses
+as a module and every import names a file and an export that exist.
 
 ## A game
 

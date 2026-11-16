@@ -5,11 +5,14 @@ use super::*;
 #[test]
 fn pages_and_info() {
     let f = fixture();
-    for p in ["/", "/app.js", "/app.css", "/icon.png"] {
+    for p in ["/", "/js/main.js", "/js/pages/home.js", "/app.css", "/icon.png"] {
         let resp = f.api.handle(&request("GET", p, Vec::new()));
         assert_eq!(resp.status(), 200, "{p}");
         assert_eq!(resp.headers()["X-Content-Type-Options"], "nosniff");
     }
+    // Module scripts load only with a JavaScript type.
+    let js = f.api.handle(&request("GET", "/js/main.js", Vec::new()));
+    assert_eq!(js.headers()["Content-Type"], "text/javascript");
     assert_eq!(f.api.handle(&request("GET", "/nope.txt", Vec::new())).status(), 404);
     let info = get(&f.api, "/api/info");
     assert_eq!(info["games"][0]["ID"], "mtg");
