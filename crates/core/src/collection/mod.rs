@@ -11,6 +11,7 @@ mod price_history;
 mod stats;
 mod store;
 mod tags;
+mod value_chart;
 
 pub use breakdown::{Breakdown, BreakdownRow, BreakdownTable, MonthRow, Statistics, ValueBand, statistics};
 pub use card::{Card, CatalogUpdate, Condition, SetInfo, in_printed_set};
@@ -28,3 +29,4 @@ pub use tags::{
     is_system_tag, lot_of, lot_tag, normalize_tags, normalize_user_tags, same_tag, same_tags, split_tags, tag_summaries, tags_in_use,
     user_tags, with_spellings,
 };
+pub use value_chart::{DEFAULT_CHART_RANGE, ValueChart, build_value_chart, clip_step, end_at, range_start};

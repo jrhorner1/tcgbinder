@@ -1,18 +1,16 @@
 //! The app's logic for one game's collection, shared by the desktop, phone and web
-//! front ends: opening its files, importing, refreshing prices, price history, the
-//! daily sync, and the value chart.
+//! front ends: opening its files, refreshing prices, price history, the daily sync,
+//! lots and sales. Importing is in `import`; the value chart in `collection`.
 
 use std::collections::HashMap;
-use std::fmt::Write as _;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
-use chrono::{Months, NaiveDate};
 
 use crate::collection::Purchase;
-use crate::collection::{Card, PriceHistory, SetInfo, Stats, Store, TimePoint, read_export};
+use crate::collection::{Card, PriceHistory, SetInfo, Store};
 use crate::collection::{lot_tag, same_tags, user_tags};
 use crate::game::{Game, ImportReport};
 use crate::lists::{List, ListEntry};
@@ -27,9 +25,6 @@ use crate::{datadir, dates};
 /// How often running apps check whether prices need refreshing. Prices refresh at most
 /// once a day, when the stored ones are from an earlier day.
 pub const PRICE_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
-
-/// Names collection files written by this app in import reports.
-pub const APP_FILE_FORMAT: &str = "TCG Binder collection file";
 
 /// Told about a watch that triggered: the game's ID and the watch.
 pub type AlertHook = Box<dyn Fn(&str, &Watch) + Send + Sync>;
@@ -301,7 +296,7 @@ impl GameService {
 
     /// Prices the given cards from the game's catalog (only those still unpriced in the
     /// collection). A failure is logged: the next price refresh tries again.
-    fn price_cards(&self, ids: &[String]) {
+    pub(crate) fn price_cards(&self, ids: &[String]) {
         let ids: Vec<String> = ids.iter().filter(|id| self.store.get(id).is_some_and(|c| c.market.is_empty())).cloned().collect();
         let updated = self.game.refresh(&ids, &mut |_, _| {}).and_then(|u| self.store.update_catalog(&u, &dates::today_string()));
         match updated {
@@ -428,297 +423,5 @@ impl GameService {
                 }
             })
             .ok();
-    }
-
-    /// Adds a file's cards: a CSV export from another app, or a collection file written
-    /// by this app. Cards for a printing already owned add to its quantity.
-    pub fn import(&self, data: &[u8], progress: &mut dyn FnMut(usize, usize)) -> Result<ImportResult> {
-        self.commit_import(self.preview_import(data, progress)?)
-    }
-
-    /// Reads and matches a file's cards without saving anything, and says what
-    /// importing them would do.
-    pub fn preview_import(&self, data: &[u8], progress: &mut dyn FnMut(usize, usize)) -> Result<ImportPreview> {
-        let (cards, report) = parse_import(self.game.as_ref(), data, progress)?;
-        let (new_cards, already_owned) = self.store.count_new(&cards);
-        let copies = cards.iter().map(Card::copy_count).sum();
-        let price_paid = cards.iter().map(|c| c.price_paid().0).sum();
-        Ok(ImportPreview { cards, report, copies, new_cards, already_owned, price_paid })
-    }
-
-    /// Saves the cards of a preview. The counts are worked out again, since the
-    /// collection may have changed since the preview. Cards that came in without a
-    /// price (such as non-English printings) are then priced, so they don't wait for
-    /// the next refresh.
-    pub fn commit_import(&self, preview: ImportPreview) -> Result<ImportResult> {
-        let ImportPreview { cards, report, copies, .. } = preview;
-        let unpriced: Vec<String> = cards.iter().filter(|c| c.market.is_empty()).map(|c| c.id.clone()).collect();
-        let backup = self.store.backup("import")?;
-        let (new_cards, already_owned) = self.store.add_cards(cards)?;
-        if !unpriced.is_empty() {
-            self.price_cards(&unpriced);
-        }
-        tracing::info!(
-            game = self.game.id(),
-            format = report.format,
-            cards = copies,
-            new = new_cards,
-            merged = already_owned,
-            "import complete"
-        );
-        Ok(ImportResult { report, cards: copies, new_cards, already_owned, backup })
-    }
-}
-
-/// What importing a file would do, with the cards it would add.
-#[derive(Clone, Debug, Default)]
-pub struct ImportPreview {
-    pub cards: Vec<Card>,
-    pub report: ImportReport,
-    /// Copies to import.
-    pub copies: i64,
-    /// Cards (printings) not yet owned.
-    pub new_cards: usize,
-    /// Cards that would add copies to ones already owned.
-    pub already_owned: usize,
-    /// The price paid for every copy with a known price.
-    pub price_paid: f64,
-}
-
-impl ImportPreview {
-    /// The number of distinct printings to import.
-    pub fn printings(&self) -> usize {
-        self.cards.iter().map(|c| c.id.as_str()).collect::<std::collections::HashSet<_>>().len()
-    }
-}
-
-/// A summary of an import.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct ImportResult {
-    pub report: ImportReport,
-    /// Copies imported.
-    pub cards: i64,
-    pub new_cards: usize,
-    pub already_owned: usize,
-    /// The backup of the collection taken just before (its name), for undo.
-    pub backup: String,
-}
-
-impl ImportResult {
-    /// The result for people.
-    pub fn summary(&self) -> String {
-        let mut b = String::new();
-        let _ = writeln!(b, "Format: {}", self.report.format);
-        let read = if self.report.format == APP_FILE_FORMAT { "Cards read" } else { "Rows read" };
-        let _ = writeln!(b, "{read}: {}", self.report.rows);
-        let _ = writeln!(
-            b,
-            "Cards imported: {} ({} new cards, {} added to cards you already own)",
-            self.cards, self.new_cards, self.already_owned
-        );
-        if !self.report.notes.is_empty() {
-            b.push('\n');
-        }
-        for n in &self.report.notes {
-            let _ = writeln!(b, "{n}");
-        }
-        b
-    }
-}
-
-/// Whether `data` looks like a JSON collection file rather than CSV.
-pub fn is_app_file(data: &[u8]) -> bool {
-    let data = data.strip_prefix("\u{feff}".as_bytes()).unwrap_or(data);
-    data.iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'{')
-}
-
-/// Turns a file into cards for `game` without saving them. App collection files already
-/// carry exact catalog IDs and prices, so they are used as-is; anything else goes to
-/// the game's CSV importer.
-pub fn parse_import(game: &dyn Game, data: &[u8], progress: &mut dyn FnMut(usize, usize)) -> Result<(Vec<Card>, ImportReport)> {
-    if !is_app_file(data) {
-        return game.import(data, progress);
-    }
-    let (file_game, cards) = read_export(data)?;
-    if file_game != game.id() {
-        bail!("this file is a {file_game:?} collection; it can't be imported into {}", game.name());
-    }
-    if cards.is_empty() {
-        bail!("no cards found in this collection file");
-    }
-    let report = ImportReport { format: APP_FILE_FORMAT.into(), rows: cards.len(), ..Default::default() };
-    Ok((cards, report))
-}
-
-// --- The value chart --------------------------------------------------------------
-
-/// The Value Over Time range shown first (see [`crate::settings::choices::CHART_RANGES`]), matching the 90 days of history MTGJSON provides.
-pub const DEFAULT_CHART_RANGE: &str = "90D";
-
-/// The first day shown for a range; `None` means everything.
-pub fn range_start(range: &str, today: NaiveDate) -> Option<NaiveDate> {
-    match range {
-        "30D" => Some(today - chrono::Duration::days(30)),
-        "90D" => Some(today - chrono::Duration::days(90)),
-        "1Y" => today.checked_sub_months(Months::new(12)),
-        _ => None,
-    }
-}
-
-/// The data behind the Value Over Time chart.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct ValueChart {
-    /// `None` for "All".
-    pub from: Option<NaiveDate>,
-    pub to: NaiveDate,
-    /// The first day with recorded prices.
-    pub history_start: Option<NaiveDate>,
-    /// The real daily market value.
-    pub market_value: Vec<TimePoint>,
-    /// The running price paid (a step line).
-    pub price_paid: Vec<TimePoint>,
-    /// Values cards at today's prices before recorded prices begin (a step line); empty
-    /// when the real line covers the whole range.
-    pub estimate: Vec<TimePoint>,
-}
-
-/// Computes the chart for `cards` over the named range.
-pub fn build_value_chart(cards: &[Card], st: &Stats, prices: &PriceHistory, range: &str, today: NaiveDate) -> ValueChart {
-    let from = range_start(range, today);
-    let history_start = prices.start();
-    let mut vc = ValueChart { from, to: today, history_start, ..Default::default() };
-    if let Some(market_from) = from.or(history_start) {
-        vc.market_value = prices.market_series(cards, market_from, today);
-    }
-    vc.price_paid = clip_step(&st.price_paid_history, from, today);
-    let before_history = match (history_start, from) {
-        (Some(h), Some(f)) => f < h,
-        _ => true,
-    };
-    if before_history {
-        let est = clip_step(&st.value_history, from, today);
-        vc.estimate = match history_start {
-            Some(h) => end_at(&est, h), // real prices take over from here
-            None => est,
-        };
-    }
-    vc
-}
-
-/// Limits a step series to dates on or after `from`, starting with the value in effect
-/// on that day so the line doesn't begin at zero mid-range.
-pub fn clip_step(points: &[TimePoint], from: Option<NaiveDate>, today: NaiveDate) -> Vec<TimePoint> {
-    let Some(from) = from else { return points.to_vec() };
-    let mut out = Vec::new();
-    for (i, p) in points.iter().enumerate() {
-        if p.date > from {
-            if out.is_empty() && i > 0 {
-                out.push(TimePoint { date: from, value: points[i - 1].value });
-            }
-            out.push(*p);
-        } else if p.date == from {
-            out.push(*p);
-        }
-    }
-    if let (true, Some(last)) = (out.is_empty(), points.last()) {
-        // Everything happened before the range.
-        let end = if last.date > from { last.date } else { today };
-        out = vec![TimePoint { date: from, value: last.value }, TimePoint { date: end, value: last.value }];
-    }
-    out
-}
-
-/// Keeps a step series' points before `until` and ends it with the value in effect on
-/// that day.
-pub fn end_at(points: &[TimePoint], until: NaiveDate) -> Vec<TimePoint> {
-    let mut out: Vec<TimePoint> = points.iter().take_while(|p| p.date < until).copied().collect();
-    if let Some(last) = out.last().copied() {
-        out.push(TimePoint { date: until, value: last.value });
-    }
-    out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::collection::{Condition, Purchase, compute_stats_at};
-
-    fn day(s: &str) -> NaiveDate {
-        dates::parse(s).unwrap()
-    }
-
-    fn pts(v: &[TimePoint]) -> Vec<(String, f64)> {
-        v.iter().map(|p| (dates::format(p.date), p.value)).collect()
-    }
-
-    fn tp(d: &str, v: f64) -> TimePoint {
-        TimePoint { date: day(d), value: v }
-    }
-
-    #[test]
-    fn ranges() {
-        let t = day("2024-03-31");
-        assert_eq!(range_start("30D", t), Some(day("2024-03-01")));
-        assert_eq!(range_start("1Y", t), Some(day("2023-03-31")));
-        assert_eq!(range_start("All", t), None);
-    }
-
-    #[test]
-    fn clip_and_end() {
-        let s = [tp("2024-01-01", 1.0), tp("2024-02-01", 2.0), tp("2024-03-01", 3.0)];
-        let today = day("2024-04-01");
-        assert_eq!(
-            pts(&clip_step(&s, Some(day("2024-01-15")), today)),
-            [("2024-01-15".into(), 1.0), ("2024-02-01".into(), 2.0), ("2024-03-01".into(), 3.0)]
-        );
-        assert_eq!(pts(&clip_step(&s, Some(day("2024-03-15")), today)), [("2024-03-15".into(), 3.0), ("2024-04-01".into(), 3.0)]);
-        assert_eq!(clip_step(&s, None, today).len(), 3);
-        assert_eq!(
-            pts(&end_at(&s, day("2024-02-15"))),
-            [("2024-01-01".into(), 1.0), ("2024-02-01".into(), 2.0), ("2024-02-15".into(), 2.0)]
-        );
-        assert!(end_at(&s, day("2023-01-01")).is_empty());
-    }
-
-    #[test]
-    fn chart_estimates_before_history() {
-        let mut c = Card { id: "a".into(), ..Card::default() };
-        c.add_purchase(
-            "nonfoil",
-            Condition::NearMint,
-            Purchase { quantity: 1, price_paid: 2.0, acquired_date: "2024-01-01".into(), ..Default::default() },
-        );
-        c.market.insert("nonfoil".into(), 5.0);
-        let cards = vec![c];
-        let today = day("2024-03-01");
-        let prices = PriceHistory::in_memory();
-        prices.set("a", "nonfoil", "2024-02-20", 4.0);
-        let st = compute_stats_at(&cards, &HashMap::new(), true, today);
-        let vc = build_value_chart(&cards, &st, &prices, "30D", today);
-        assert_eq!(vc.history_start, Some(day("2024-02-20")));
-        assert_eq!(pts(&vc.market_value), [("2024-02-20".into(), 4.0), ("2024-03-01".into(), 4.0)]);
-        assert_eq!(pts(&vc.estimate), [("2024-01-31".into(), 5.0), ("2024-02-20".into(), 5.0)]);
-        assert_eq!(pts(&vc.price_paid), [("2024-01-31".into(), 2.0), ("2024-03-01".into(), 2.0)]);
-
-        let all = build_value_chart(&cards, &st, &PriceHistory::in_memory(), "All", today);
-        assert!(all.market_value.is_empty());
-        assert_eq!(all.estimate.len(), 2);
-    }
-
-    #[test]
-    fn app_files() {
-        assert!(is_app_file(b"\xef\xbb\xbf  {\"cards\":{}}"));
-        assert!(!is_app_file(b"Name,Qty"));
-        let r = ImportResult {
-            report: ImportReport { format: APP_FILE_FORMAT.into(), rows: 2, notes: vec!["note".into()], ..Default::default() },
-            cards: 3,
-            new_cards: 1,
-            already_owned: 1,
-            ..Default::default()
-        };
-        assert_eq!(
-            r.summary(),
-            "Format: TCG Binder collection file\nCards read: 2\nCards imported: 3 (1 new cards, 1 added to cards you already own)\n\nnote\n"
-        );
     }
 }

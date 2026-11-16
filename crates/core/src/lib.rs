@@ -10,6 +10,7 @@ pub mod datadir;
 pub mod datafolder;
 pub mod dates;
 pub mod game;
+pub mod import;
 pub mod instance;
 pub mod jsonfile;
 pub mod lists;

@@ -35,7 +35,13 @@ URLs, so it doesn't know where it runs:
 - **Web (`--web`):** axum hands each HTTP request to the same `Api::handle`, after
   checking the Host header (loopback only answers `localhost` and IP addresses, which
   defeats DNS rebinding).
-- **Tests** call `Api::handle` directly (`crates/api/src/tests.rs`).
+- **Tests** call `Api::handle` directly (`crates/api/src/tests/`, one file per
+  feature).
+
+`crates/api/src/lib.rs` holds `Api`, `handle` and `route`; `route` lists every endpoint
+grouped by the file its handler is in (`home.rs`, `collection.rs`, `catalog.rs`,
+`tags.rs`, `transfer.rs`, `settings.rs`, `lots.rs`, `lists.rs`, `sales.rs`,
+`watchlist.rs`, `sealed.rs`, `folders.rs`).
 
 Requests that change data must carry the `X-TCGBinder-Client` header, which other
 websites can't add to cross-site requests. Long jobs (import, price refresh, price
