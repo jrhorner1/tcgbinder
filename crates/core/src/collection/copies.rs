@@ -1,3 +1,7 @@
+//! The copies of a card: `Copies` (finish → condition → purchases), each `Purchase`
+//! (quantity, price paid, date, note, tags) and the flat `PurchaseRow` the card editor
+//! shows.
+
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 

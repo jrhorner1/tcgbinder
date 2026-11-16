@@ -1,3 +1,5 @@
+//! Magic's sets (names, release dates, sizes) from Scryfall, cached on disk for a week.
+
 use std::collections::HashMap;
 use std::path::Path;
 

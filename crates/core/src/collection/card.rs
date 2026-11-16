@@ -1,3 +1,6 @@
+//! A card in the collection (`Card`, one printing with its copies), its condition
+//! grades (`Condition`), and fresh catalog data from a price refresh (`CatalogUpdate`).
+
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Deserializer, Serialize};

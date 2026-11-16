@@ -1,3 +1,7 @@
+//! Scryfall's card object, as much of it as the app uses: prices, images, faces, and
+//! the card's image and rules text (`from_scryfall` in the crate root turns it into a
+//! collection `Card`).
+
 use serde::{Deserialize, Serialize};
 
 /// Scryfall's prices object (decimal strings; missing when unknown).

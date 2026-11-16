@@ -1,3 +1,6 @@
+//! Price history: daily market prices per printing and finish, kept in
+//! `price-history.json`, for the Home chart's real value line.
+
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};

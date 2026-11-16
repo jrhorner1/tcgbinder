@@ -1,5 +1,5 @@
-// TCG Binder: by default it opens the desktop app; with --web it serves the same
-// collection as a web application.
+//! TCG Binder: by default it opens the desktop app; with --web it serves the same
+//! collection as a web application.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::path::PathBuf;

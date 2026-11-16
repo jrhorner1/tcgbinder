@@ -1,3 +1,6 @@
+//! Searching Scryfall for cards to add: building the search query and reading its
+//! pages of results.
+
 use anyhow::{Result, bail};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};

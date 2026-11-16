@@ -1,3 +1,6 @@
+//! The Home dashboard's numbers: totals, per-set completion, the most valuable cards
+//! and the value and price-paid series over time.
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chrono::NaiveDate;

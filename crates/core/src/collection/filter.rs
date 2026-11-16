@@ -1,3 +1,6 @@
+//! Narrowing and ordering the collection list: `Query` (every filter the Collection
+//! page offers), `SortKey` and `sort_cards`, and the set filter's choices.
+
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 

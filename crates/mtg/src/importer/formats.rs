@@ -1,3 +1,6 @@
+//! Reading another app's CSV export: recognising the app from its header, mapping
+//! its columns to a `Row`, and cleaning each value (finish, condition, date, tags).
+
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{Result, bail};

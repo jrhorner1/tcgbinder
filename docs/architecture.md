@@ -8,12 +8,16 @@ src-tauri/             the app (crate `tcgbinder`): command-line flags, the two 
                        single-instance lock; registers the games; runs the Tauri window
                        (desktop and iPhone) or, with --web, the HTTP server (src/web.rs)
 crates/api             the JSON API and the embedded UI, as one request → response handler
-crates/core            game-neutral: cards and their copies, the JSON store, price history,
-                       stats, filters, bulk edit; settings; JSON files shared with other
-                       devices (jsonfile.rs); the Game trait; the service for
-                       one game (import, prices, history, daily sync, value chart); logging,
-                       the folders (datadir.rs) and changing the data folder (datafolder.rs),
-                       single-instance lock
+                       (lib.rs: Api, handle, route; one file of handlers per feature)
+crates/core            game-neutral: cards and their copies (collection/), the collection
+                       file (collection/store/: reading and saving, backups, tags and lots,
+                       bulk changes), price history and the value chart, stats, filters,
+                       bulk edit; the records files (records.rs, with lots, lists,
+                       watchlist, sealed, sales); settings; JSON files shared with other
+                       devices (jsonfile.rs); the Game trait; the service for one game
+                       (service.rs: prices, history, daily sync, lots, sales) and importing
+                       (import.rs); logging, the folders (datadir.rs) and changing the data
+                       folder (datafolder.rs), single-instance lock
 crates/mtg             Magic: Scryfall catalog, CSV and card-list importer, MTGJSON price history,
                        scan matching
 crates/vision          Apple's Vision framework reading text off a card photo (Objective-C)

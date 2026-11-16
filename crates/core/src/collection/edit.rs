@@ -1,3 +1,6 @@
+//! Changes to cards: moving a card to another printing, bulk edits (`BulkChange`),
+//! and small helpers over many cards (unique cards, the top cards, a set's missing cards).
+
 use std::collections::HashSet;
 
 use anyhow::{Context, Result};
