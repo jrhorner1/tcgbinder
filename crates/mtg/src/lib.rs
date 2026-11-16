@@ -280,7 +280,6 @@ impl Game for Magic {
                 acquired_date: r.row.acquired_date.clone(),
                 note: r.row.note.clone(),
                 tags: r.row.tags.clone(),
-                ..Default::default()
             };
             card.add_purchase(&importer::choose_finish(&r.row.finish, &sc.finishes), r.row.condition, purchase);
             cards.push(card);

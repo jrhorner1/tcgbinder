@@ -4,7 +4,7 @@ use anyhow::{Result, bail};
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime};
 
 use tcgbinder_core::Condition;
-use tcgbinder_core::collection::{MAX_TAGS, clean_tag, normalize_tags, same_tag, split_tags};
+use tcgbinder_core::collection::{MAX_TAGS, clean_user_tag, normalize_tags, same_tag, split_tags};
 
 use super::{parse_finish, parse_language};
 
@@ -310,12 +310,13 @@ pub fn parse_csv(data: &[u8]) -> Result<ParsedCsv> {
 }
 
 /// The tags in a cell ("binder A; elves deck"): each cleaned, duplicates (ignoring
-/// case) dropped, at most MAX_TAGS. A tag that can't be used is dropped and counted in
+/// case) dropped, at most MAX_TAGS. A tag that can't be used (including one starting
+/// with a system prefix, such as `lot:`) is dropped and counted in
 /// `skipped`, so a bad tag never fails the import.
 fn read_tags(cell: &str, skipped: &mut usize) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for raw in split_tags(cell) {
-        match clean_tag(&raw) {
+        match clean_user_tag(&raw).ok() {
             Some(t) if out.iter().any(|o| same_tag(o, &t)) => {}
             Some(t) if out.len() < MAX_TAGS => out.push(t),
             _ => *skipped += 1,
@@ -627,5 +628,8 @@ mod tests {
         let parsed = parse_csv(format!("Name,Tags\nOpt,\"{}\"\n", many.join(";")).as_bytes()).unwrap();
         assert_eq!(parsed.rows[0].tags.len(), 20);
         assert!(parsed.warnings.iter().any(|w| w.starts_with("2 tags were skipped")));
+        let parsed = parse_csv(b"Name,Tags\nOpt,\"lot:abc; deck\"\n").unwrap();
+        assert_eq!(parsed.rows[0].tags, ["deck"], "the app's own tags can't be imported");
+        assert!(parsed.warnings.iter().any(|w| w.starts_with("1 tag was skipped")));
     }
 }

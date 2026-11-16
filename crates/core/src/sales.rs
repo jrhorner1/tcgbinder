@@ -93,11 +93,10 @@ pub struct Sale {
     /// The note on the sale.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub note: String,
-    /// The purchase's own note, lot and tags, so undoing the sale restores it as it was.
+    /// The purchase's own note and tags (every tag, the lot's included), so undoing the
+    /// sale restores it as it was.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub purchase_note: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub lot: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub purchase_tags: Vec<String>,
 }

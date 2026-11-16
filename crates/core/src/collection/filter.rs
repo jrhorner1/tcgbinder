@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
-use super::tags::same_tag;
+use super::tags::{same_tag, user_tags};
 use super::{Card, Condition};
 
 /// The "no filter" choice in filter menus.
@@ -32,8 +32,6 @@ pub struct Query<'a> {
     pub language: String,
     /// Text the type line contains, ignoring case ("creature", "legendary").
     pub card_type: String,
-    /// A lot's ID: any purchase in it.
-    pub lot: String,
     /// Only cards with a note on a purchase.
     pub has_note: bool,
     /// One copy's price ([`Card::best_price`]) at least / at most this; unpriced cards
@@ -72,7 +70,9 @@ impl Query<'_> {
         let has = |want: &str| c.copies.each().any(|(_, _, p)| p.tags.iter().any(|t| same_tag(t, want)));
         let wanted =
             self.tags.is_empty() || if self.tags_any { self.tags.iter().any(|t| has(t)) } else { self.tags.iter().all(|t| has(t)) };
-        wanted && !self.tags_not.iter().any(|t| has(t)) && (!self.untagged || c.copies.each().any(|(_, _, p)| p.tags.is_empty()))
+        wanted
+            && !self.tags_not.iter().any(|t| has(t))
+            && (!self.untagged || c.copies.each().any(|(_, _, p)| user_tags(&p.tags).next().is_none()))
     }
 
     /// Tells whether a card matches the query.
@@ -93,7 +93,6 @@ impl Query<'_> {
                 && (is_any(&self.language) || c.language.eq_ignore_ascii_case(&self.language))
                 && (card_type.is_empty() || contains_fold(&c.type_line, &card_type))
                 && condition.is_none_or(|want| c.copies.each().any(|(_, cond, p)| cond == want && p.quantity > 0))
-                && (self.lot.is_empty() || c.copies.each().any(|(_, _, p)| p.lot == self.lot))
                 && (!self.has_note || c.copies.each().any(|(_, _, p)| !p.note.trim().is_empty()))
                 && (self.price_min.is_none() && self.price_max.is_none()
                     || c.best_price().is_some_and(|x| self.price_min.is_none_or(|m| x >= m) && self.price_max.is_none_or(|m| x <= m)))
@@ -106,7 +105,7 @@ impl Query<'_> {
                 // Each term in the name, set code, set name, number or a purchase's note.
                 && terms.iter().all(|t| {
                     [&c.name, &c.set, &c.set_name, &c.collector_number].iter().any(|field| contains_fold(field, t))
-                        || c.copies.each().any(|(_, _, p)| contains_fold(&p.note, t) || p.tags.iter().any(|tag| contains_fold(tag, t)))
+                        || c.copies.each().any(|(_, _, p)| contains_fold(&p.note, t) || user_tags(&p.tags).any(|tag| contains_fold(tag, t)))
                 })
         }
     }
@@ -243,7 +242,7 @@ impl SortKey {
 
 /// A card's first tag alphabetically, lower-cased (for sorting).
 fn first_tag(c: &Card) -> Option<String> {
-    c.copies.each().flat_map(|(_, _, p)| p.tags.iter()).map(|t| t.to_lowercase()).min()
+    c.copies.each().flat_map(|(_, _, p)| user_tags(&p.tags)).map(|t| t.to_lowercase()).min()
 }
 
 /// The earliest dated purchase.
@@ -496,7 +495,7 @@ mod tests {
         cards[3].add_purchase(
             "foil",
             Condition::NearMint,
-            Purchase { quantity: 1, note: "binder".into(), lot: "lot1".into(), ..Default::default() },
+            Purchase { quantity: 1, note: "binder".into(), tags: vec!["lot:lot1".into()], ..Default::default() },
         );
         cards[2].market.clear(); // Shock: unpriced
         let q = |f: &dyn Fn(&mut Query)| {
@@ -510,7 +509,9 @@ mod tests {
         assert_eq!(q(&|q| q.language = "JA".into()), "Opal");
         assert_eq!(q(&|q| q.card_type = " creature ".into()), "Zap");
         assert_eq!(q(&|q| q.card_type = "instant".into()), "Bolt,Shock");
-        assert_eq!(q(&|q| q.lot = "lot1".into()), "Zap");
+        assert_eq!(q(&|q| q.tags = vec!["lot:lot1".into()]), "Zap");
+        assert_eq!(q(&|q| q.text = "lot1".into()), "", "the lot's tag isn't searched");
+        assert_eq!(q(&|q| q.untagged = true), "Bolt,Opal,Zap", "Zap: a purchase whose only tag is a lot's is untagged");
         assert_eq!(q(&|q| q.has_note = true), "Zap", "a blank note isn't a note");
         assert_eq!(q(&|q| q.price_min = Some(1.0)), "Bolt,Opal");
         assert_eq!(q(&|q| q.price_max = Some(1.0)), "Bolt,Zap", "unpriced Shock matches no bound");

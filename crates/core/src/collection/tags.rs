@@ -1,6 +1,10 @@
 //! Tags: the owner's free-text labels on purchases ("binder A", "elves deck"). There
 //! is no list of tags to keep: the tags that exist are the ones in use. Tags compare
 //! ignoring case, and the first spelling in the collection wins.
+//!
+//! The app writes tags of its own too, which start with a system prefix: `lot:<id>`
+//! puts a purchase in a lot. Users can't type them ([`clean_user_tag`]), and every
+//! list or count of the user's tags leaves them out ([`user_tags`]).
 
 use std::collections::BTreeMap;
 
@@ -9,9 +13,39 @@ use serde::Serialize;
 
 use super::Card;
 
-/// The longest tag, in characters, and the most tags on one purchase.
+/// The longest tag, in characters, and the most tags the user can put on one purchase.
 pub const MAX_TAG_LEN: usize = 40;
 pub const MAX_TAGS: usize = 20;
+
+/// Tags the app writes itself start with one of these. Users can't type them, and
+/// they are left out of everything that lists or counts the user's tags.
+pub const LOT_PREFIX: &str = "lot:";
+pub const SYSTEM_PREFIXES: &[&str] = &[LOT_PREFIX];
+
+/// Whether the app wrote this tag (it starts with a system prefix).
+pub fn is_system_tag(tag: &str) -> bool {
+    SYSTEM_PREFIXES.iter().any(|p| tag.starts_with(p))
+}
+
+/// The tag that puts a purchase in a lot.
+pub fn lot_tag(lot_id: &str) -> String {
+    format!("{LOT_PREFIX}{lot_id}")
+}
+
+/// The lot a purchase's tags put it in, if any.
+pub fn lot_of(tags: &[String]) -> Option<&str> {
+    tags.iter().find_map(|t| t.strip_prefix(LOT_PREFIX))
+}
+
+/// The tags the user chose: everything but system tags.
+pub fn user_tags(tags: &[String]) -> impl Iterator<Item = &String> {
+    tags.iter().filter(|t| !is_system_tag(t))
+}
+
+/// Whether any of a card's purchases carries `tag` (ignoring case).
+pub fn card_has_tag(c: &Card, tag: &str) -> bool {
+    c.copies.each().any(|(_, _, p)| p.tags.iter().any(|t| same_tag(t, tag)))
+}
 
 /// Why a tag can't be used, or None if it can.
 fn tag_problem(raw: &str) -> Option<&'static str> {
@@ -41,8 +75,32 @@ pub fn clean_tag(raw: &str) -> Option<String> {
     tag_problem(raw).is_none().then(|| tidy(raw))
 }
 
+/// Cleans a tag typed by the user, as [`clean_tag`] does, and refuses one starting
+/// with a system prefix. Every place tags arrive from outside (a saved purchase, the
+/// add form, bulk add and remove, an import's Tags column, a rename's new name)
+/// checks them with this.
+pub fn clean_user_tag(raw: &str) -> Result<String> {
+    if let Some(p) = SYSTEM_PREFIXES.iter().find(|p| raw.trim().starts_with(**p)) {
+        bail!("tags can't start with '{p}'");
+    }
+    match clean_tag(raw) {
+        Some(t) => Ok(t),
+        None => bail!("{}: {:?}", tag_problem(raw).unwrap_or("that tag can't be used"), raw.trim()),
+    }
+}
+
+/// Checks tags typed by the user with [`clean_user_tag`], then normalizes them.
+pub fn normalize_user_tags(raw: &[String]) -> Result<Vec<String>> {
+    for t in raw {
+        clean_user_tag(t)?;
+    }
+    normalize_tags(raw)
+}
+
 /// Cleans every tag, drops duplicates ignoring case (the first spelling stays), and
-/// sorts ignoring case. Errors if a tag is invalid or there are more than MAX_TAGS.
+/// sorts ignoring case. Errors if a tag is invalid, if there are more than MAX_TAGS
+/// user tags, or if the tags put the purchase in more than one lot. System tags are
+/// accepted, so the app can write them.
 pub fn normalize_tags(raw: &[String]) -> Result<Vec<String>> {
     let mut out: Vec<String> = Vec::new();
     for t in raw {
@@ -53,8 +111,11 @@ pub fn normalize_tags(raw: &[String]) -> Result<Vec<String>> {
             out.push(clean);
         }
     }
-    if out.len() > MAX_TAGS {
+    if user_tags(&out).count() > MAX_TAGS {
         bail!("at most {MAX_TAGS} tags on one purchase");
+    }
+    if out.iter().filter(|t| t.starts_with(LOT_PREFIX)).count() > 1 {
+        bail!("a purchase can be in one lot at most");
     }
     sort_tags(&mut out);
     Ok(out)
@@ -81,13 +142,13 @@ pub fn same_tags(a: &[String], b: &[String]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| same_tag(x, y))
 }
 
-/// Every tag in use on `cards` (purchases with copies), sorted ignoring case, each in
-/// its first spelling met.
+/// Every user tag in use on `cards` (purchases with copies), sorted ignoring case,
+/// each in its first spelling met.
 pub fn tags_in_use<'a>(cards: impl IntoIterator<Item = &'a Card>) -> Vec<String> {
     let mut by_key: BTreeMap<String, String> = BTreeMap::new();
     for c in cards {
         for (_, _, p) in c.copies.each() {
-            for t in &p.tags {
+            for t in user_tags(&p.tags) {
                 by_key.entry(t.to_lowercase()).or_insert_with(|| t.clone());
             }
         }
@@ -105,7 +166,8 @@ pub fn with_spellings(tags: Vec<String>, existing: &[String]) -> Vec<String> {
     out
 }
 
-/// A card's tags: the union across its purchases with copies, sorted ignoring case.
+/// A card's user tags: the union across its purchases with copies, sorted ignoring
+/// case.
 pub fn card_tags(c: &Card) -> Vec<String> {
     tags_in_use(std::iter::once(c))
 }
@@ -127,9 +189,10 @@ pub struct TagSummaries {
     pub untagged: Option<TagSummary>,
 }
 
-/// Every tag in use, with its totals, sorted by name ignoring case. `cards` counts
-/// printings with at least one tagged purchase; `value` uses each purchase's own
-/// finish price; `paid` sums price paid over the tagged copies.
+/// Every user tag in use, with its totals, sorted by name ignoring case. `cards`
+/// counts printings with at least one tagged purchase; `value` uses each purchase's
+/// own finish price; `paid` sums price paid over the tagged copies. A purchase with no
+/// user tags (only system ones, or none) is untagged.
 pub fn tag_summaries(cards: &[Card]) -> TagSummaries {
     #[derive(Default)]
     struct Tally {
@@ -157,10 +220,10 @@ pub fn tag_summaries(cards: &[Card]) -> TagSummaries {
         for (f, _, p) in c.copies.each() {
             let value = c.market.get(f).copied().unwrap_or(0.0) * p.quantity as f64;
             let paid = p.price_paid * p.quantity as f64;
-            if p.tags.is_empty() {
+            if user_tags(&p.tags).next().is_none() {
                 untagged.add(&c.id, p.quantity, value, paid);
             }
-            for t in &p.tags {
+            for t in user_tags(&p.tags) {
                 let tally = by_key.entry(t.to_lowercase()).or_insert_with(|| Tally { name: t.clone(), ..Tally::default() });
                 tally.add(&c.id, p.quantity, value, paid);
             }
@@ -211,6 +274,37 @@ mod tests {
         assert!(split_tags("").is_empty());
         assert!(same_tag("Binder A", "binder a") && !same_tag("binder", "binder a"));
         assert_eq!(with_spellings(strings(&["binder a", "new"]), &strings(&["Binder A"])), ["Binder A", "new"]);
+    }
+
+    #[test]
+    fn system_tags() {
+        assert_eq!(lot_tag("ab12"), "lot:ab12");
+        assert!(is_system_tag("lot:ab12") && !is_system_tag("lots of elves"));
+        let tags = strings(&["binder A", "lot:ab12"]);
+        assert_eq!(lot_of(&tags), Some("ab12"));
+        assert_eq!(lot_of(&strings(&["binder A"])), None);
+        assert_eq!(user_tags(&tags).collect::<Vec<_>>(), ["binder A"]);
+        assert_eq!(clean_tag("lot:ab12"), Some("lot:ab12".into()), "the app can write them");
+        for bad in ["lot:ab12", "  lot:x"] {
+            assert!(clean_user_tag(bad).unwrap_err().to_string().contains("tags can't start with 'lot:'"), "{bad:?}");
+        }
+        assert_eq!(clean_user_tag(" Binder  A ").unwrap(), "Binder A");
+        assert!(normalize_user_tags(&strings(&["ok", "lot:x"])).is_err());
+        assert!(normalize_tags(&strings(&["lot:a", "lot:b"])).unwrap_err().to_string().contains("one lot"));
+        let mut twenty: Vec<String> = (0..20).map(|i| format!("t{i}")).collect();
+        twenty.push(lot_tag("a"));
+        assert_eq!(normalize_tags(&twenty).unwrap().len(), 21, "the lot tag isn't one of the 20");
+    }
+
+    #[test]
+    fn a_card_in_a_lot_is_untagged() {
+        let mut c = Card { id: "a".into(), market: [("nonfoil".into(), 2.0)].into(), ..Card::default() };
+        c.add_purchase("nonfoil", Condition::NearMint, Purchase { quantity: 3, tags: strings(&["lot:L1"]), ..Default::default() });
+        assert!(tags_in_use([&c]).is_empty() && card_tags(&c).is_empty());
+        let s = tag_summaries(std::slice::from_ref(&c));
+        assert!(s.tags.is_empty());
+        assert_eq!(s.untagged.map(|u| u.copies), Some(3));
+        assert!(card_has_tag(&c, "lot:L1") && !card_has_tag(&c, "lot:L2"));
     }
 
     #[test]

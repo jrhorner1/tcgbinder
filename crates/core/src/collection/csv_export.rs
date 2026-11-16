@@ -5,6 +5,7 @@
 use anyhow::Result;
 
 use super::Card;
+use super::tags::user_tags;
 
 /// The columns before the game's catalog ID column.
 pub const CSV_COLUMNS: &[&str] = &[
@@ -49,7 +50,7 @@ pub fn write_csv(cards: &[Card], id_label: &str) -> Result<Vec<u8>> {
                 &money(Some(p.price_paid)),
                 &p.acquired_date,
                 &p.note,
-                &p.tags.join("; "),
+                &user_tags(&p.tags).map(String::as_str).collect::<Vec<_>>().join("; "),
                 &c.rarity,
                 &money(c.market_price(&r.finish)),
                 &c.id,

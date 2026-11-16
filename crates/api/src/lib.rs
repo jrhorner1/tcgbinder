@@ -34,7 +34,9 @@ use tcgbinder_core::collection::{
     self, BulkChange, Card, Condition, Query, SortKey, card_key, compute_stats, is_any, round_cents, set_options, sort_cards, statistics,
     top_by_each, unique_cards, with_printing, write_csv,
 };
-use tcgbinder_core::collection::{TagEdit, clean_tag, normalize_tags, same_tag, split_tags, tag_summaries};
+use tcgbinder_core::collection::{
+    TagEdit, card_has_tag, clean_user_tag, is_system_tag, lot_tag, normalize_tags, normalize_user_tags, same_tag, split_tags, tag_summaries,
+};
 use tcgbinder_core::game::finish_names;
 use tcgbinder_core::scan::Reading;
 use tcgbinder_core::service::{self, GameService, ImportPreview, ImportResult};
@@ -95,9 +97,9 @@ fn check_date(date: &str) -> Result<()> {
 }
 
 /// Checks and normalizes tags sent by a client: a 400 with the reason if any is
-/// invalid.
+/// invalid (or starts with a system prefix, such as `lot:`).
 fn tags_from(raw: &[String]) -> Result<Vec<String>> {
-    normalize_tags(raw).map_err(|e| bad(e.to_string()))
+    normalize_user_tags(raw).map_err(|e| bad(e.to_string()))
 }
 
 /// Adds `tags` to every purchase of `cards` (an import's "tag every card").
@@ -609,6 +611,7 @@ impl Api {
             let v = get(k);
             if v.is_empty() || dates::parse(&v).is_some() { Ok(v) } else { Err(bad(format!("{k} must be a date like 2024-03-15"))) }
         };
+        let lot = Some(get("lot")).filter(|l| !l.is_empty()).map(|l| lot_tag(&l));
         let q = Query {
             text: get("q"),
             set: get("set"),
@@ -617,7 +620,6 @@ impl Api {
             condition: get("condition"),
             language: get("language"),
             card_type: get("card_type"),
-            lot: get("lot"),
             has_note: flag("has_note"),
             price_min: number("price_min")?,
             price_max: number("price_max")?,
@@ -626,8 +628,10 @@ impl Api {
             min_copies: number("min_copies")?.map(|n| n as i64),
             no_price_paid: flag("no_price_paid"),
             unpriced: flag("unpriced"),
-            matches: Some(Box::new(|c: &Card| {
-                filters.iter().all(|f| params.get(&format!("f.{}", f.name)).is_none_or(|opt| is_any(opt) || (f.matches)(c, opt)))
+            matches: Some(Box::new(move |c: &Card| {
+                // `lot=`: a purchase carries the lot's tag.
+                lot.as_ref().is_none_or(|tag| card_has_tag(c, tag))
+                    && filters.iter().all(|f| params.get(&format!("f.{}", f.name)).is_none_or(|opt| is_any(opt) || (f.matches)(c, opt)))
             })),
             tags: split_tags(&get("tags")),
             tags_any: match get("tags_mode").as_str() {
@@ -668,8 +672,13 @@ impl Api {
             name: String,
         }
         let req: Req = decode(body)?;
-        let to = clean_tag(&req.name)
-            .ok_or_else(|| bad(format!("{:?} can't be a tag: at most 40 characters, with no comma or semicolon", req.name.trim())))?;
+        let to = clean_user_tag(&req.name).map_err(|e| {
+            if is_system_tag(req.name.trim()) {
+                bad(e.to_string())
+            } else {
+                bad(format!("{:?} can't be a tag: at most 40 characters, with no comma or semicolon", req.name.trim()))
+            }
+        })?;
         self.tag_in_use(g, name)?;
         let edit = g.store.rename_tag(name, &to).map_err(internal)?;
         tracing::info!(game = g.game.id(), from = name, to, changed = edit.changed, "tag renamed");
@@ -899,6 +908,9 @@ impl Api {
             return Err(bad("price paid can't be negative"));
         }
         check_date(&req.acquired_date)?;
+        for t in req.remove_tags.iter().filter(|t| is_system_tag(t.trim())) {
+            clean_user_tag(t).map_err(|e| bad(e.to_string()))?;
+        }
         let change = BulkChange {
             condition: (!req.condition.is_empty()).then(|| Condition::parse(&req.condition)),
             finish: (!req.finish.is_empty()).then_some(req.finish),
@@ -1150,7 +1162,7 @@ impl PurchaseForm {
         if self.price_paid < 0.0 || !self.price_paid.is_finite() {
             return Err(bad("price paid can't be negative"));
         }
-        tags_from(&self.tags)?;
+        views::stored_tags(&self.tags, &self.lot).map_err(|e| bad(e.to_string()))?;
         check_date(&self.acquired_date)
     }
 
@@ -1162,8 +1174,7 @@ impl PurchaseForm {
             price_paid: self.price_paid,
             acquired_date: self.acquired_date.clone(),
             note: self.note.trim().to_string(),
-            lot: self.lot.clone(),
-            tags: normalize_tags(&self.tags).unwrap_or_default(), // checked by validate
+            tags: views::stored_tags(&self.tags, &self.lot).unwrap_or_default(), // checked by validate
         };
         c.add_purchase(&finish, Condition::parse(&self.condition), p);
     }

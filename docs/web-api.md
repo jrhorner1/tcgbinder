@@ -12,10 +12,12 @@ expose the server to untrusted networks.
 catalog ID), passed as a query parameter. Every card in a response has `copies`
 (finish → condition → purchases, the card editor's "Your Copies") and, for
 convenience, `purchases`: the same purchases as a flat list of
-`{"finish","condition","quantity","price_paid","acquired_date","note","lot","market"}`, plus the
+`{"finish","condition","quantity","price_paid","acquired_date","note","lot","tags","market"}`, plus the
 totals `copy_count`, `price_paid`, `market_value` and `each` (one copy in its most
 valuable owned finish). `price_from` is `"en"` when the card's `market` prices are
-its English printing's, because the catalog has none for its language.
+its English printing's, because the catalog has none for its language. `copies` is
+as stored, where a purchase in a lot carries the tag `lot:<lot ID>`; `purchases`
+shows that as `lot` and keeps it out of `tags`.
 
 Names follow the UI: **Cards** counts every card owned and **unique cards** counts
 printings; **price paid** and **market value** are the totals on the tiles.
@@ -41,7 +43,7 @@ Errors are `{"error": "..."}` with a 4xx/5xx status.
 | `GET /api/games/{game}/filters` | set list, rarities, finishes (with display names), game filters, conditions, `languages` (`[{"code", "name"}]`) and `tags` (the tag names in use, sorted ignoring case) |
 | `GET /api/games/{game}/cards?q=&set=&rarity=&finish=&f.<Filter>=&…&sort=&dir=` | the filtered, sorted cards (`cards`) with counts (`matched`, `uniqueCards`, `cardCount`, `sets`), totals for them (`marketValue`, `pricePaid`), and the order used (`sort`, `dir`). Filters: `q` (name, set, number, or a purchase's note or tags), `set`, `rarity`, `finish`, `condition` (a code such as `NM`; any copy in it), `language`, `card_type` (the type line contains it), `lot` (a lot's ID), `price_min` / `price_max` (one copy's price; unpriced cards match neither), `acquired_from` / `acquired_to` (`YYYY-MM-DD`; any purchase in range), `min_copies`, the flags `has_note`, `no_price_paid`, `unpriced`, `untagged` (a purchase with no tags) (`1` or `true`), `tags` (comma-separated; with `tags_mode=all`, the default, the card must have all of them across its purchases; with `tags_mode=any`, at least one), `tags_not` (comma-separated: tags the card must not have), and one per game filter, `f.<Filter name>` (Magic: `f.Color`, `f.Color identity`, `f.Mana value` with `0`–`6` or `7+`). `sort` is one of `name`, `set`, `number`, `price`, `value`, `gain`, `paid`, `quantity`, `acquired`, `released`, `rarity`, `tag` (a card's first tag alphabetically; untagged cards last either way); `dir` is `asc` (the default) or `desc`. Without `sort`, the Card order setting (`name` asc, `set` desc, `set` asc or `value` desc). Tag names compare ignoring case; a tag no card has matches nothing. A bad number, date, sort, direction or `tags_mode` is a 400. Each purchase in `cards` carries `tags`. |
 | `GET /api/games/{game}/card?key=` | one card: `card`, `raw` (as stored), editor `details`, catalog `link`, `others` (other printings you own) |
-| `PUT /api/games/{game}/card?key=` | replace the card's purchases: `{"purchases":[{"finish","condition","quantity","price_paid","acquired_date","note","lot","tags"}, ...]}`; no copies left deletes it. `tags` is an array of strings (trimmed, spaces collapsed, duplicates ignoring case dropped, at most 20 of at most 40 characters, no comma or semicolon; an invalid tag is a 400 with the reason); a tag matching one in the collection apart from case takes the collection's spelling. A purchase sent without `tags` has none |
+| `PUT /api/games/{game}/card?key=` | replace the card's purchases: `{"purchases":[{"finish","condition","quantity","price_paid","acquired_date","note","lot","tags"}, ...]}`; no copies left deletes it. `tags` is an array of strings (trimmed, spaces collapsed, duplicates ignoring case dropped, at most 20 of at most 40 characters, no comma or semicolon, none starting `lot:`; an invalid tag is a 400 with the reason); a tag matching one in the collection apart from case takes the collection's spelling. A purchase sent without `tags` has none |
 | `DELETE /api/games/{game}/card?key=` | delete a card (every copy) |
 | `GET /api/games/{game}/printings?key=&lang=` | every printing of the card in a language (default: the card's own) |
 | `PUT /api/games/{game}/card/printing?key=` | move every copy to printing `{"id", "lang"}` (checked on the server among that language's printings) |

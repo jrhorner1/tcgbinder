@@ -10,6 +10,7 @@ use tcgbinder_core::dates;
 use tcgbinder_core::sales::{Sale, SalesTotals, sales_totals};
 use tcgbinder_core::service::GameService;
 
+use crate::views::shown_tags;
 use crate::{Api, Reply, Result, bad, check_date, decode};
 
 /// `POST /card/sell`: the purchase to sell from (finish, condition, price paid,
@@ -55,6 +56,23 @@ fn totals_json(t: &SalesTotals) -> Value {
     })
 }
 
+/// A sale as the API answers it: as stored, but with the purchase's tags shown as
+/// its `lot` and the user's `purchase_tags` (each left out when empty).
+fn sale_json(s: &Sale) -> Value {
+    let mut v = json!(s);
+    let (lot, tags) = shown_tags(&s.purchase_tags);
+    if let Value::Object(m) = &mut v {
+        m.remove("purchase_tags");
+        if !lot.is_empty() {
+            m.insert("lot".into(), json!(lot));
+        }
+        if !tags.is_empty() {
+            m.insert("purchase_tags".into(), json!(tags));
+        }
+    }
+    v
+}
+
 /// The gain realised by sales this calendar year (sales of known cost only).
 pub(crate) fn realised_this_year(g: &GameService) -> f64 {
     let year = dates::today_string()[..4].to_string();
@@ -85,7 +103,7 @@ impl Api {
         let purchase =
             Purchase { price_paid: f.price_paid, acquired_date: f.acquired_date, note: f.note, tags: f.tags, ..Purchase::default() };
         let sale = g.sell(key, &purchase, sale).map_err(|e| bad(format!("{e:#}")))?;
-        Ok(Reply::Json(json!({ "sale": sale, "gain": sale.gain().map(round_cents) })))
+        Ok(Reply::Json(json!({ "sale": sale_json(&sale), "gain": sale.gain().map(round_cents) })))
     }
 
     /// The sales, newest first, with totals and totals by month: all of them, or
@@ -103,7 +121,7 @@ impl Api {
         let sales: Vec<Value> = shown
             .iter()
             .map(|s| {
-                let mut v = json!(s);
+                let mut v = sale_json(s);
                 v["proceeds"] = json!(round_cents(s.proceeds()));
                 v["gain"] = json!(s.gain().map(round_cents));
                 v

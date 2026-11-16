@@ -1330,6 +1330,78 @@ fn lot_purchases(f: &Fixture, id: &str, lot: &Value) -> Vec<(f64, String, i64)> 
 }
 
 #[test]
+fn lots_are_stored_as_tags() {
+    let f = fixture();
+    let (_, lot) = call(&f.api, "POST", "/api/games/mtg/lots", Some(json!({ "name": "Box", "total_paid": 4.0, "split": "even" })));
+    let id = lot["id"].clone();
+    let lot_id = id.as_str().unwrap();
+    add_in_lot(&f, "lot-a", 1.0, 2, &id);
+    // Stored as a tag, not a field; shown as `lot` and kept out of the tags.
+    let text = std::fs::read_to_string(f.svc.store.file_path()).unwrap();
+    assert!(text.contains(&format!("\"lot:{lot_id}\"")) && !text.contains("\"lot\":"), "{text}");
+    let p = get(&f.api, "/api/games/mtg/card?key=lot-a")["card"]["purchases"][0].clone();
+    assert_eq!((p["lot"].as_str(), p["tags"].clone()), (Some(lot_id), json!([])));
+    let t = get(&f.api, "/api/games/mtg/tags");
+    assert!(t["tags"].as_array().unwrap().is_empty(), "{t}");
+    assert_eq!(t["untagged"]["copies"].as_i64(), Some(5), "the lot's 2 and the fixture's 3");
+    assert!(get(&f.api, "/api/games/mtg/filters")["tags"].as_array().unwrap().is_empty());
+    let names = |path: &str| -> Vec<String> {
+        get(&f.api, path)["cards"].as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap().to_string()).collect()
+    };
+    assert_eq!(names(&format!("/api/games/mtg/cards?lot={lot_id}")).len(), 1, "filtered by lot=");
+    assert_eq!(names(&format!("/api/games/mtg/cards?q={lot_id}")).len(), 0, "the lot's tag isn't searched");
+
+    // Clearing tags keeps the card in its lot.
+    let (status, _) = call(&f.api, "POST", "/api/games/mtg/bulk", Some(json!({"keys": ["lot-a"], "clear_tags": true})));
+    assert_eq!(status, 200);
+    assert_eq!(get(&f.api, "/api/games/mtg/card?key=lot-a")["card"]["purchases"][0]["lot"].as_str(), Some(lot_id));
+
+    // Tags starting "lot:" are refused wherever tags come in.
+    let bad = json!(["lot:x"]);
+    let put = json!({"purchases": [{"finish": "nonfoil", "quantity": 1, "tags": bad}]});
+    let add = json!({ "card": catalog("lot-b", 1.0), "quantity": 1, "finish": "nonfoil", "tags": bad });
+    for (method, path, body) in [
+        ("PUT", format!("/api/games/mtg/card?key={SHOCK}"), put),
+        ("POST", "/api/games/mtg/cards".to_string(), add),
+        ("POST", "/api/games/mtg/bulk".to_string(), json!({"keys": [SHOCK], "add_tags": bad})),
+        ("POST", "/api/games/mtg/bulk".to_string(), json!({"keys": [SHOCK], "remove_tags": bad})),
+        ("POST", "/api/games/mtg/import/commit".to_string(), json!({"token": preview(&f)["token"], "tags": bad})),
+    ] {
+        let (status, v) = call(&f.api, method, &path, Some(body));
+        assert_eq!(status, 400, "{method} {path}: {v}");
+        assert!(v["error"].as_str().unwrap().contains("can't start with 'lot:'"), "{method} {path}: {v}");
+    }
+    call(
+        &f.api,
+        "PUT",
+        &format!("/api/games/mtg/card?key={SHOCK}"),
+        Some(json!({"purchases": [{"finish": "nonfoil", "quantity": 1, "tags": ["deck"]}]})),
+    );
+    let (status, v) = call(&f.api, "PUT", "/api/games/mtg/tags?name=deck", Some(json!({"name": "lot:x"})));
+    assert_eq!(status, 400, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("can't start with 'lot:'"));
+    assert_eq!(call(&f.api, "DELETE", &format!("/api/games/mtg/tags?name=lot:{lot_id}"), None).0, 404, "not a tag the user has");
+}
+
+#[test]
+fn selling_from_a_lot_and_undoing() {
+    let f = fixture();
+    let (_, lot) = call(&f.api, "POST", "/api/games/mtg/lots", Some(json!({ "name": "Box", "total_paid": 4.0, "split": "even" })));
+    let id = lot["id"].clone();
+    add_in_lot(&f, "lot-a", 1.0, 2, &id);
+    let p = get(&f.api, "/api/games/mtg/card?key=lot-a")["card"]["purchases"][0].clone();
+    let sell = json!({"finish": "nonfoil", "condition": "NM", "price_paid": p["price_paid"], "acquired_date": p["acquired_date"], "tags": [],
+        "quantity": 1, "sale_each": 3.0});
+    let (status, v) = call(&f.api, "POST", "/api/games/mtg/card/sell?key=lot-a", Some(sell));
+    assert_eq!(status, 200, "{v}");
+    assert_eq!((v["sale"]["lot"].clone(), v["sale"].get("purchase_tags")), (id.clone(), None), "shown as the lot, not a tag");
+    assert_eq!(get(&f.api, "/api/games/mtg/sales")["sales"][0]["lot"], id);
+    let sale = v["sale"]["id"].as_str().unwrap().to_string();
+    assert_eq!(call(&f.api, "DELETE", &format!("/api/games/mtg/sales?id={sale}&restore=1"), None).0, 200);
+    assert_eq!(lot_purchases(&f, "lot-a", &id).iter().map(|p| p.2).sum::<i64>(), 2, "back in the lot");
+}
+
+#[test]
 fn a_lot_counted_as_entered() {
     let f = fixture();
     let (status, lot) = call(

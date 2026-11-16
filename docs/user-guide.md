@@ -143,8 +143,8 @@ your cards, and a tag disappears when it is removed from its last card.
 - **Adding tags:** on a card's page, **Add tags** on a purchase opens a tag box. Type
   a tag and press Enter (or type a comma or semicolon); Backspace in the empty box
   removes the last one, and × removes any. Tags you already use are suggested. A tag
-  can be up to 40 characters, without commas or semicolons, and a purchase can have
-  up to 20. Tags ignore case: "Binder A" and "binder a" are one tag, kept in the
+  can be up to 40 characters, without commas or semicolons, and can't start with
+  `lot:` (the app keeps lots that way), and a purchase can have up to 20. Tags ignore case: "Binder A" and "binder a" are one tag, kept in the
   spelling first used. To tag some copies of a purchase apart from the rest,
   **Split** moves one copy to a row of its own; set the quantities, change its tags,
   and save. The Add page has a tag box too, and keeps its tags for the next card, so

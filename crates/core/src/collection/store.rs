@@ -5,7 +5,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
-use super::tags::{clean_tag, normalize_tags, same_tag, same_tags, tags_in_use, with_spellings};
+use super::tags::{
+    LOT_PREFIX, SYSTEM_PREFIXES, card_has_tag, clean_user_tag, is_system_tag, lot_tag, normalize_tags, normalize_user_tags, same_tag,
+    same_tags, tags_in_use, with_spellings,
+};
 use super::{BulkChange, BulkResult, Card, CatalogUpdate, Condition, Purchase};
 use crate::dates;
 use crate::jsonfile::JsonFile;
@@ -18,10 +21,10 @@ pub struct Store {
     file: JsonFile<StoreData>,
 }
 
-/// A card to put in a lot ([`Store::put_in_lot`]): all its copies not in the lot, or
-/// `quantity` of them.
+/// A card whose copies get a tag ([`Store::tag_copies`]): all its copies without the
+/// tag, or `quantity` of them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct LotPick {
+pub struct CopyPick {
     pub key: String,
     pub quantity: Option<i64>,
 }
@@ -277,10 +280,11 @@ impl Store {
     /// A lot's copies, one per card, finish and condition (purchases with different
     /// notes added together), for working out the lot's prices.
     pub fn lot_copies(&self, lot_id: &str, is_basic_land: impl Fn(&Card) -> bool) -> Vec<LotCopy> {
+        let tag = lot_tag(lot_id);
         self.file.read(|data| {
             let mut out: Vec<LotCopy> = Vec::new();
             for c in data.cards.values() {
-                for (finish, condition, p) in c.copies.each().filter(|(_, _, p)| p.lot == lot_id) {
+                for (finish, condition, p) in c.copies.each().filter(|(_, _, p)| has_tag(p, &tag)) {
                     match out.iter_mut().find(|x| x.card_id == c.id && x.finish == finish && x.condition == condition) {
                         Some(x) => x.quantity += p.quantity,
                         None => out.push(LotCopy {
@@ -299,22 +303,18 @@ impl Store {
         })
     }
 
-    /// The cards with copies in a lot.
-    pub fn lot_cards(&self, lot_id: &str) -> Vec<Card> {
-        self.cards_where(|c| c.copies.each().any(|(_, _, p)| p.lot == lot_id))
-    }
-
     /// Sets the price paid (from `prices`) and acquired date of every copy in a lot, in
     /// one save. Returns the number of cards changed.
     pub fn reprice_lot(&self, lot_id: &str, prices: &LotPrices, acquired_date: &str) -> Result<usize> {
+        let tag = lot_tag(lot_id);
         self.file.mutate(|data| {
             let mut changed = 0;
             let mut extra = prices.extra.clone();
-            for c in data.cards.values_mut().filter(|c| c.copies.each().any(|(_, _, p)| p.lot == lot_id)) {
+            for c in data.cards.values_mut().filter(|c| card_has_tag(c, &tag)) {
                 let mut copies = super::Copies::default();
                 for (finish, cond, p) in c.copies.each() {
                     let mut p = p.clone();
-                    if p.lot == lot_id {
+                    if has_tag(&p, &tag) {
                         let key = (c.id.clone(), finish.to_string(), cond);
                         if let Some(price) = prices.each.get(&key) {
                             p.price_paid = *price;
@@ -333,91 +333,6 @@ impl Store {
                 changed += 1;
             }
             Ok(changed)
-        })
-    }
-
-    /// Deletes a lot from its cards: `remove` deletes the copies, otherwise they stay
-    /// with their prices and no longer belong to a lot. Returns the cards changed.
-    pub fn drop_lot(&self, lot_id: &str, remove: bool) -> Result<usize> {
-        self.file.mutate(|data| {
-            let mut changed = 0;
-            for c in data.cards.values_mut().filter(|c| c.copies.each().any(|(_, _, p)| p.lot == lot_id)) {
-                let mut copies = super::Copies::default();
-                for (finish, cond, p) in c.copies.each() {
-                    match (p.lot == lot_id, remove) {
-                        (true, true) => {}
-                        (true, false) => copies.add(finish, cond, super::Purchase { lot: String::new(), ..p.clone() }),
-                        (false, _) => copies.add(finish, cond, p.clone()),
-                    }
-                }
-                c.copies = copies;
-                changed += 1;
-            }
-            data.cards.retain(|_, c| c.copy_count() > 0);
-            Ok(changed)
-        })
-    }
-
-    /// Moves copies the collection already holds into a lot, in one save: for each
-    /// pick, every copy of the card not already in the lot, or `quantity` of them
-    /// (copies in no lot first, then copies from other lots). Moved copies take the
-    /// lot's date; their price comes from repricing the lot. Returns the copies moved
-    /// and the other lots copies left, which need repricing too.
-    pub fn put_in_lot(&self, lot_id: &str, acquired_date: &str, picks: &[LotPick]) -> Result<(i64, Vec<String>)> {
-        self.file.mutate(|data| {
-            let (mut moved, mut left) = (0, Vec::<String>::new());
-            for pick in picks {
-                let Some(card) = data.cards.get_mut(&pick.key) else { bail!("that card isn't in the collection") };
-                let available: i64 = card.copies.each().filter(|(_, _, p)| p.lot != lot_id).map(|(_, _, p)| p.quantity).sum();
-                let mut want = pick.quantity.unwrap_or(available);
-                if want <= 0 || want > available {
-                    bail!("{} has {} {} that could join the lot", card.name, available, if available == 1 { "copy" } else { "copies" });
-                }
-                // Copies in no lot first, then those in other lots.
-                let mut rows = card.purchase_rows();
-                rows.sort_by_key(|r| !r.purchase.lot.is_empty());
-                let mut copies = super::Copies::default();
-                for r in rows {
-                    let p = r.purchase;
-                    let take = if p.lot == lot_id { 0 } else { want.min(p.quantity) };
-                    if take > 0 {
-                        if !p.lot.is_empty() && !left.contains(&p.lot) {
-                            left.push(p.lot.clone());
-                        }
-                        let joined =
-                            Purchase { quantity: take, lot: lot_id.to_string(), acquired_date: acquired_date.to_string(), ..p.clone() };
-                        copies.add(&r.finish, r.condition, joined);
-                        want -= take;
-                        moved += take;
-                    }
-                    copies.add(&r.finish, r.condition, Purchase { quantity: p.quantity - take, ..p });
-                }
-                card.copies = copies;
-            }
-            Ok((moved, left))
-        })
-    }
-
-    /// Takes a card out of a lot: its copies stay in the collection with the price and
-    /// date the lot gave them, in no lot. Returns the copies freed.
-    pub fn remove_from_lot(&self, lot_id: &str, key: &str) -> Result<i64> {
-        self.file.mutate(|data| {
-            let Some(card) = data.cards.get_mut(key) else { bail!("that card isn't in the collection") };
-            let mut freed = 0;
-            let mut copies = super::Copies::default();
-            for (f, cond, p) in card.copies.each() {
-                if p.lot == lot_id {
-                    freed += p.quantity;
-                    copies.add(f, cond, Purchase { lot: String::new(), ..p.clone() });
-                } else {
-                    copies.add(f, cond, p.clone());
-                }
-            }
-            if freed == 0 {
-                bail!("{} isn't in that lot", card.name);
-            }
-            card.copies = copies;
-            Ok(freed)
         })
     }
 
@@ -524,7 +439,11 @@ impl Store {
     /// can't be made to any card (too many tags), nothing is saved.
     pub fn bulk_edit(&self, keys: &[String], change: &BulkChange) -> Result<BulkResult> {
         let mut change = change.clone();
-        change.add_tags = normalize_tags(&change.add_tags)?;
+        change.add_tags = normalize_user_tags(&change.add_tags)?;
+        // Tags to remove aren't checked beyond this: the app's own can't be removed.
+        for t in change.remove_tags.iter().filter(|t| is_system_tag(t.trim())) {
+            clean_user_tag(t)?;
+        }
         self.file.mutate(|data| {
             // Tags added take the spellings already in the collection.
             change.add_tags = with_spellings(std::mem::take(&mut change.add_tags), &tags_in_use(data.cards.values()));
@@ -573,13 +492,19 @@ impl Store {
     /// and `to` differ only in case, when `to`'s new spelling is used everywhere.
     /// Purchases made identical merge.
     pub fn rename_tag(&self, from: &str, to: &str) -> Result<TagEdit> {
-        let Some(to) = clean_tag(to) else { bail!("that tag can't be used: {:?}", to.trim()) };
+        if is_system_tag(from) {
+            bail!("the app's own tags can't be renamed");
+        }
+        let to = clean_user_tag(to)?;
         let target = if same_tag(from, &to) { to } else { self.tag_names().into_iter().find(|t| same_tag(t, &to)).unwrap_or(to) };
         self.edit_tag(from, "tag-rename", |tags| tags.push(target.clone()))
     }
 
     /// Removes a tag from every purchase that has it (after a backup).
     pub fn delete_tag(&self, name: &str) -> Result<TagEdit> {
+        if is_system_tag(name) {
+            bail!("the app's own tags can't be deleted");
+        }
         self.edit_tag(name, "tag-delete", |_| {})
     }
 
@@ -610,6 +535,118 @@ impl Store {
             Ok(changed)
         })?;
         Ok(TagEdit { changed, backup: Some(backup) })
+    }
+
+    /// The cards with a purchase carrying `tag`.
+    pub fn cards_with_tag(&self, tag: &str) -> Vec<Card> {
+        self.cards_where(|c| card_has_tag(c, tag))
+    }
+
+    /// Takes `tag` off the purchases of the card stored under `key`: its copies stay,
+    /// with their price and date. Returns the copies the tag covered.
+    pub fn untag_card(&self, tag: &str, key: &str) -> Result<i64> {
+        self.file.mutate(|data| {
+            let Some(card) = data.cards.get_mut(key) else { bail!("that card isn't in the collection") };
+            let mut freed = 0;
+            let mut copies = super::Copies::default();
+            for (f, cond, p) in card.copies.each() {
+                if has_tag(p, tag) {
+                    freed += p.quantity;
+                    copies.add(f, cond, without_tag(p, tag));
+                } else {
+                    copies.add(f, cond, p.clone());
+                }
+            }
+            if freed == 0 {
+                if tag.starts_with(LOT_PREFIX) {
+                    bail!("{} isn't in that lot", card.name);
+                }
+                bail!("{} doesn't have the tag {tag:?}", card.name);
+            }
+            card.copies = copies;
+            Ok(freed)
+        })
+    }
+
+    /// Takes `tag` off every purchase; the copies stay, with their prices. Returns the
+    /// cards changed.
+    pub fn untag_all(&self, tag: &str) -> Result<usize> {
+        self.edit_tagged(tag, |p| Some(without_tag(p, tag)))
+    }
+
+    /// Deletes every purchase carrying `tag` (a card left with no copies goes too).
+    /// Returns the cards changed.
+    pub fn remove_tagged(&self, tag: &str) -> Result<usize> {
+        self.edit_tagged(tag, |_| None)
+    }
+
+    /// Replaces each purchase carrying `tag` with what `f` makes of it (None deletes
+    /// it), in one save, and drops cards left with no copies. Returns the cards changed.
+    fn edit_tagged(&self, tag: &str, f: impl Fn(&Purchase) -> Option<Purchase>) -> Result<usize> {
+        self.file.mutate(|data| {
+            let mut changed = 0;
+            for c in data.cards.values_mut().filter(|c| card_has_tag(c, tag)) {
+                let mut copies = super::Copies::default();
+                for (finish, cond, p) in c.copies.each() {
+                    let next = if has_tag(p, tag) { f(p) } else { Some(p.clone()) };
+                    if let Some(p) = next {
+                        copies.add(finish, cond, p);
+                    }
+                }
+                c.copies = copies;
+                changed += 1;
+            }
+            data.cards.retain(|_, c| c.copy_count() > 0);
+            Ok(changed)
+        })
+    }
+
+    /// Puts `tag` on copies the collection already holds, in one save: for each pick,
+    /// every copy of the card without the tag, or `quantity` of them. When the tag has
+    /// a system prefix (a lot's), it replaces any other tag with that prefix: copies
+    /// carrying none are taken first, and the tags replaced are returned (the lots the
+    /// copies left, which need repricing). `edit` is applied to each purchase moved (a
+    /// lot sets its date). Returns the copies tagged and the tags replaced.
+    pub fn tag_copies(&self, tag: &str, picks: &[CopyPick], edit: impl Fn(&mut Purchase)) -> Result<(i64, Vec<String>)> {
+        let prefix = SYSTEM_PREFIXES.iter().find(|p| tag.starts_with(**p)).copied();
+        let rival = |t: &String| prefix.is_some_and(|p| t.starts_with(p)) && !same_tag(t, tag);
+        let what = if prefix == Some(LOT_PREFIX) { "could join the lot" } else { "could take the tag" };
+        self.file.mutate(|data| {
+            let (mut moved, mut replaced) = (0, Vec::<String>::new());
+            for pick in picks {
+                let Some(card) = data.cards.get_mut(&pick.key) else { bail!("that card isn't in the collection") };
+                let available: i64 = card.copies.each().filter(|(_, _, p)| !has_tag(p, tag)).map(|(_, _, p)| p.quantity).sum();
+                let mut want = pick.quantity.unwrap_or(available);
+                if want <= 0 || want > available {
+                    bail!("{} has {} {} that {what}", card.name, available, if available == 1 { "copy" } else { "copies" });
+                }
+                // Copies carrying no tag with the same prefix first.
+                let mut rows = card.purchase_rows();
+                rows.sort_by_key(|r| r.purchase.tags.iter().any(rival));
+                let mut copies = super::Copies::default();
+                for r in rows {
+                    let p = r.purchase;
+                    let take = if has_tag(&p, tag) { 0 } else { want.min(p.quantity) };
+                    if take > 0 {
+                        for t in p.tags.iter().filter(|t| rival(t)) {
+                            if !replaced.contains(t) {
+                                replaced.push(t.clone());
+                            }
+                        }
+                        let mut tags: Vec<String> = p.tags.iter().filter(|t| !rival(t)).cloned().collect();
+                        tags.push(tag.to_string());
+                        let mut joined = Purchase { quantity: take, tags: normalize_tags(&tags)?, ..p.clone() };
+                        edit(&mut joined);
+                        copies.add(&r.finish, r.condition, joined);
+                        want -= take;
+                        moved += take;
+                    }
+                    copies.add(&r.finish, r.condition, Purchase { quantity: p.quantity - take, ..p });
+                }
+                card.copies = copies;
+            }
+            Ok((moved, replaced))
+        })
     }
 
     /// Whether any card's market prices were last refreshed before today.
@@ -706,6 +743,16 @@ fn normalize_card(c: &mut Card) {
     c.copies = copies;
 }
 
+/// Whether a purchase carries `tag` (ignoring case).
+fn has_tag(p: &Purchase, tag: &str) -> bool {
+    p.tags.iter().any(|t| same_tag(t, tag))
+}
+
+/// The purchase with `tag` taken off.
+fn without_tag(p: &Purchase, tag: &str) -> Purchase {
+    Purchase { tags: p.tags.iter().filter(|t| !same_tag(t, tag)).cloned().collect(), ..p.clone() }
+}
+
 /// Normalizes every purchase's tags (see `normalize_tags`).
 fn normalize_card_tags(c: &mut Card) -> Result<()> {
     for by_cond in c.copies.0.values_mut() {
@@ -760,6 +807,7 @@ fn merge_cards(mut existing: Card, mut incoming: Card) -> Card {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collection::tags::{lot_of, user_tags};
     use crate::collection::{Condition, Purchase};
 
     fn card(id: &str, qty: i64) -> Card {
@@ -941,7 +989,7 @@ mod tests {
         let s = Store::open(dir.path().join("c.json"), "mtg").unwrap();
         let in_lot = |id: &str, lot: &str, q: i64| {
             let mut c = card(id, 0);
-            c.add_purchase("nonfoil", Condition::NearMint, Purchase { quantity: q, lot: lot.into(), ..Default::default() });
+            c.add_purchase("nonfoil", Condition::NearMint, Purchase { quantity: q, tags: vec![lot_tag(lot)], ..Default::default() });
             c
         };
         s.add_cards(vec![in_lot("a", "L1", 2), in_lot("b", "L1", 1), in_lot("a", "L2", 1), card("c", 1)]).unwrap();
@@ -960,22 +1008,27 @@ mod tests {
         let prices = lot_prices(&lot, &copies);
         assert_eq!(s.reprice_lot("L1", &prices, "2026-11-14").unwrap(), 2);
         let paid: f64 = s
-            .lot_cards("L1")
+            .cards_with_tag("lot:L1")
             .iter()
             .flat_map(|c| c.purchase_rows())
-            .filter(|r| r.purchase.lot == "L1")
+            .filter(|r| lot_of(&r.purchase.tags) == Some("L1"))
             .map(|r| r.purchase.price_paid * r.purchase.quantity as f64)
             .sum();
         assert!((paid - 10.0).abs() < 1e-9, "{paid}");
         assert!(
-            s.get("a").unwrap().purchase_rows().iter().filter(|r| r.purchase.lot == "L1").all(|r| r.purchase.acquired_date == "2026-11-14")
+            s.get("a")
+                .unwrap()
+                .purchase_rows()
+                .iter()
+                .filter(|r| lot_of(&r.purchase.tags) == Some("L1"))
+                .all(|r| r.purchase.acquired_date == "2026-11-14")
         );
 
         // Keep: prices stay, the lot goes; remove: the copies go.
-        s.drop_lot("L1", false).unwrap();
-        assert!(s.lot_cards("L1").is_empty());
+        s.untag_all("lot:L1").unwrap();
+        assert!(s.cards_with_tag("lot:L1").is_empty());
         assert_eq!(s.get("b").unwrap().copy_count(), 1);
-        s.drop_lot("L2", true).unwrap();
+        s.remove_tagged("lot:L2").unwrap();
         assert_eq!(s.get("a").unwrap().copy_count(), 2);
         assert_eq!(s.len(), 3);
     }
@@ -1119,11 +1172,7 @@ mod tests {
 
         // Repricing a lot keeps tags.
         let mut in_lot = card("d", 0);
-        in_lot.add_purchase(
-            "nonfoil",
-            Condition::NearMint,
-            Purchase { quantity: 2, lot: "L".into(), tags: v(&["deck"]), ..Default::default() },
-        );
+        in_lot.add_purchase("nonfoil", Condition::NearMint, Purchase { quantity: 2, tags: v(&["deck", "lot:L"]), ..Default::default() });
         s.add_cards(vec![in_lot]).unwrap();
         let prices = crate::lots::LotPrices {
             each: [(("d".to_string(), "nonfoil".to_string(), Condition::NearMint), 1.5)].into(),
@@ -1131,7 +1180,8 @@ mod tests {
         };
         s.reprice_lot("L", &prices, "2026-11-15").unwrap();
         let p = &s.get("d").unwrap().purchase_rows()[0].purchase;
-        assert_eq!((p.price_paid, p.tags.clone()), (1.5, v(&["deck"])));
+        assert_eq!((p.price_paid, user_tags(&p.tags).cloned().collect::<Vec<_>>()), (1.5, v(&["deck"])));
+        assert_eq!(lot_of(&p.tags), Some("L"));
     }
 
     #[test]
@@ -1140,34 +1190,80 @@ mod tests {
         let s = Store::open(dir.path().join("c.json"), "mtg").unwrap();
         // a: 3 copies at $1 (no lot) and 2 in lot "old"; b: 1 copy at $1.
         let mut a = card("a", 3);
-        a.add_purchase("nonfoil", Condition::NearMint, Purchase { quantity: 2, price_paid: 0.5, lot: "old".into(), ..Default::default() });
+        a.add_purchase(
+            "nonfoil",
+            Condition::NearMint,
+            Purchase { quantity: 2, price_paid: 0.5, tags: vec![lot_tag("old")], ..Default::default() },
+        );
         s.add_cards(vec![a, card("b", 1)]).unwrap();
-        let pick = |key: &str, q: Option<i64>| LotPick { key: key.into(), quantity: q };
+        let pick = |key: &str, q: Option<i64>| CopyPick { key: key.into(), quantity: q };
         let in_lot = |key: &str, lot: &str| -> i64 {
-            s.get(key).map_or(0, |c| c.copies.each().filter(|(_, _, p)| p.lot == lot).map(|(_, _, p)| p.quantity).sum())
+            s.get(key)
+                .map_or(0, |c| c.copies.each().filter(|(_, _, p)| lot_of(&p.tags).unwrap_or("") == lot).map(|(_, _, p)| p.quantity).sum())
+        };
+        let put_in_lot = |lot: &str, date: &str, picks: &[CopyPick]| -> Result<(i64, Vec<String>)> {
+            let (moved, replaced) = s.tag_copies(&lot_tag(lot), picks, |p| p.acquired_date = date.to_string())?;
+            Ok((moved, replaced.iter().filter_map(|t| t.strip_prefix(LOT_PREFIX)).map(str::to_string).collect()))
         };
 
         // Two copies of a: taken from the copies in no lot first.
-        assert_eq!(s.put_in_lot("new", "2026-11-15", &[pick("a", Some(2))]).unwrap(), (2, vec![]));
+        assert_eq!(put_in_lot("new", "2026-11-15", &[pick("a", Some(2))]).unwrap(), (2, vec![]));
         assert_eq!((in_lot("a", "new"), in_lot("a", ""), in_lot("a", "old")), (2, 1, 2));
-        let joined = s.get("a").unwrap().purchase_rows().into_iter().find(|r| r.purchase.lot == "new").unwrap().purchase;
+        let joined = s.get("a").unwrap().purchase_rows().into_iter().find(|r| lot_of(&r.purchase.tags) == Some("new")).unwrap().purchase;
         assert_eq!(joined.acquired_date, "2026-11-15", "the lot's date");
         // Every other copy of a (1 in no lot, 2 from "old"), and all of b.
-        let (moved, left) = s.put_in_lot("new", "2026-11-15", &[pick("a", None), pick("b", None)]).unwrap();
+        let (moved, left) = put_in_lot("new", "2026-11-15", &[pick("a", None), pick("b", None)]).unwrap();
         assert_eq!((moved, left), (4, vec!["old".to_string()]));
         assert_eq!((in_lot("a", "new"), in_lot("a", "old"), in_lot("b", "new")), (5, 0, 1));
         assert_eq!(s.get("a").unwrap().copy_count(), 5, "no copies made or lost");
-        assert!(s.put_in_lot("new", "", &[pick("a", None)]).is_err(), "nothing left to join");
-        assert!(s.put_in_lot("new", "", &[pick("b", Some(2))]).is_err());
-        assert!(s.put_in_lot("new", "", &[pick("nope", None)]).is_err());
+        assert!(put_in_lot("new", "", &[pick("a", None)]).is_err(), "nothing left to join");
+        assert!(put_in_lot("new", "", &[pick("b", Some(2))]).is_err());
+        assert!(put_in_lot("new", "", &[pick("nope", None)]).is_err());
 
         // Out of the lot: the copies stay, at the price the lot gave them.
         let mut priced = s.get("b").unwrap();
         priced.copies.0.get_mut("nonfoil").unwrap().get_mut(&Condition::NearMint).unwrap()[0].price_paid = 0.37;
         s.save_card("b", priced).unwrap();
-        assert_eq!(s.remove_from_lot("new", "b").unwrap(), 1);
+        assert_eq!(s.untag_card("lot:new", "b").unwrap(), 1);
         let p = s.get("b").unwrap().purchase_rows()[0].purchase.clone();
-        assert_eq!((p.lot.as_str(), p.price_paid, p.quantity), ("", 0.37, 1));
-        assert!(s.remove_from_lot("new", "b").is_err(), "not in the lot any more");
+        assert_eq!((lot_of(&p.tags).unwrap_or(""), p.price_paid, p.quantity), ("", 0.37, 1));
+        assert!(s.untag_card("lot:new", "b").is_err(), "not in the lot any more");
+    }
+
+    #[test]
+    fn lots_are_tags() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.json");
+        let s = Store::open(&path, "mtg").unwrap();
+        let mut a = card("a", 0);
+        a.add_purchase("nonfoil", Condition::NearMint, Purchase { quantity: 2, tags: v(&["deck", "lot:L1"]), ..Default::default() });
+        s.add_cards(vec![a]).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("\"lot:L1\"") && !text.contains("\"lot\":"), "{text}");
+        assert_eq!(s.tag_names(), ["deck"], "the lot's tag isn't listed");
+        assert!(s.rename_tag("lot:L1", "x").is_err() && s.delete_tag("lot:L1").is_err());
+        assert!(s.rename_tag("deck", "lot:L2").unwrap_err().to_string().contains("can't start with 'lot:'"));
+
+        // Clearing the user's tags leaves the card in its lot.
+        let clear = BulkChange { clear_tags: true, ..BulkChange::default() };
+        s.bulk_edit(&["a".to_string()], &clear).unwrap();
+        let p = s.get("a").unwrap().purchase_rows()[0].purchase.clone();
+        assert_eq!(p.tags, ["lot:L1"]);
+        for bad in [
+            BulkChange { add_tags: v(&["lot:L2"]), ..BulkChange::default() },
+            BulkChange { remove_tags: v(&["lot:L1"]), ..BulkChange::default() },
+        ] {
+            assert!(s.bulk_edit(&["a".to_string()], &bad).is_err(), "{bad:?}");
+        }
+        let mut two = s.get("a").unwrap();
+        two.copies.0.get_mut("nonfoil").unwrap().get_mut(&Condition::NearMint).unwrap()[0].tags = v(&["lot:L1", "lot:L2"]);
+        assert!(s.save_card("a", two).unwrap_err().to_string().contains("one lot"));
+
+        // A tag that isn't a lot's: tag_copies and untag_card work on it too.
+        s.add_cards(vec![card("b", 2)]).unwrap();
+        assert_eq!(s.tag_copies("binder", &[CopyPick { key: "b".into(), quantity: Some(1) }], |_| {}).unwrap(), (1, vec![]));
+        assert_eq!(s.cards_with_tag("binder").len(), 1);
+        assert_eq!(s.untag_card("binder", "b").unwrap(), 1);
+        assert!(s.untag_card("binder", "b").unwrap_err().to_string().contains("doesn't have the tag"));
     }
 }

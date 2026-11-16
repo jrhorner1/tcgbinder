@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 
 use super::copies::norm_finish;
-use super::tags::{normalize_tags, same_tag};
+use super::tags::{is_system_tag, normalize_tags, same_tag};
 use super::{Card, CardValue, Condition, filter::default_order, in_printed_set};
 
 /// Counts distinct printings (catalog IDs): several copies, finishes or conditions of
@@ -66,8 +66,9 @@ pub struct BulkChange {
     pub acquired_date: Option<String>,
     /// Set every copy's note; an empty string clears it.
     pub note: Option<String>,
-    /// Tags to put on every purchase, take off it, or (`clear_tags`) remove all of
-    /// first. Applied in that order: clear, remove, add.
+    /// Tags to put on every purchase, take off it, or (`clear_tags`) remove all the
+    /// user's tags from first (system tags, such as a lot's, stay). Applied in that
+    /// order: clear, remove, add.
     pub add_tags: Vec<String>,
     pub remove_tags: Vec<String>,
     pub clear_tags: bool,
@@ -141,7 +142,8 @@ impl BulkChange {
         if !self.clear_tags && self.remove_tags.is_empty() && self.add_tags.is_empty() {
             return Ok(tags.to_vec());
         }
-        let mut out: Vec<String> = if self.clear_tags { Vec::new() } else { tags.to_vec() };
+        let mut out: Vec<String> =
+            if self.clear_tags { tags.iter().filter(|t| is_system_tag(t)).cloned().collect() } else { tags.to_vec() };
         out.retain(|t| !self.remove_tags.iter().any(|r| same_tag(r, t)));
         out.extend(self.add_tags.iter().cloned());
         normalize_tags(&out)

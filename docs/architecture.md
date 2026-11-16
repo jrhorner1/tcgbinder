@@ -69,8 +69,8 @@ To add a game: create a crate like `crates/mtg`, implement the trait, and add it
 Per game, in `<data>/<game>/`:
 - `collection.json`: one card per printing (keyed by its catalog ID), holding the
   copies owned as `copies`: finish → condition → list of purchases (`quantity`,
-  `price_paid`, `acquired_date`, `note`), the card editor's "Your Copies". Two
-  purchases are one (`Purchase::same_as`) when price paid, date, note and lot match. Also the game's
+  `price_paid`, `acquired_date`, `note`, `tags`), the card editor's "Your Copies". Two
+  purchases are one (`Purchase::same_as`) when price paid, date, note and tags match. Also the game's
   ID. A card's `price_from` is `"en"` when its prices are borrowed from the English
   printing (Magic's `borrow_english_prices`: Scryfall prices no other language). Kept
   in a `core::jsonfile::JsonFile` (see below).
@@ -92,14 +92,23 @@ Per game, in `<data>/<game>/`:
   so refreshing them after another device's changes and the revision `/api/status`
   reports are one loop, and `datadir::DATA_FILES` names them for moving the data
   folder and finding conflict copies.
-- `lots.json`: lots, cards bought together for one price (`core::lots`). A purchase's `lot` names its lot. `lots::lot_prices` (pure) works out
+- `lots.json`: lots, cards bought together for one price (`core::lots`). A purchase is in a lot when it carries the lot's tag, `lot:<lot ID>`
+  (`tags::lot_tag`, `tags::lot_of`): a system tag, which the user can't type
+  (`tags::clean_user_tag` checks every tag that comes in) and which every list or
+  count of the user's tags leaves out (`tags::user_tags`). A purchase can be in one
+  lot at most. The API still shows and takes a purchase's `lot` as a field of its
+  own: `api::views::shown_tags` and `stored_tags` are the only places that translate.
+  The lot code works through general tag operations on `Store`: `cards_with_tag`,
+  `tag_copies` (putting owned copies in a lot, taking a rival lot's tag off them),
+  `untag_card`, `untag_all` and `remove_tagged` (deleting a lot, keeping or removing
+  its cards). `lots::lot_prices` (pure) works out
   each copy's price from the lot's total: evenly, or by market value once the lot is
   finished; `Store::reprice_lot` saves them, and `GameService::save_lot` refreshes
   stale prices before a value split. Conflict copies merge by lot ID, the later
   `created` winning.
 - `sales.json`: sold cards (`core::sales`). Each `Sale` keeps a
   `CardRef` (the card's catalog fields), the purchase it came from (cost, date, note,
-  lot) and the sale. `GameService::sell` records the sale first and then takes the
+  and every tag it had, a lot's included, in `purchase_tags`) and the sale. `GameService::sell` records the sale first and then takes the
   copies out (`Store::take_copies`): if the second write fails the sale and the copies
   both remain, visible and fixable, where the other order could lose the record.
   `GameService::delete_sale` can put the copies back, rebuilding a card that has left
@@ -227,7 +236,7 @@ Code uses the UI's words, so a label on screen leads straight to the code behind
 | Bulk edit | `collection::BulkChange`, `Store::bulk_edit` |
 | Load / Update price history | `GameService::load_price_history`, `PriceHistory::history_loaded_on` |
 | Card order (Settings) | `Settings::card_order`, `SortKey::from_card_order` |
-| Tags | `Purchase::tags`; `collection::tags` (`clean_tag`, `normalize_tags`, `split_tags`, `same_tag`, `tag_summaries`); one spelling per tag through `Store::canonical_tags` inside each save; `Query::tags`/`tags_not`/`untagged`, `SortKey::Tag`, `BulkChange::add_tags`/`remove_tags`/`clear_tags`, `Store::rename_tag`/`delete_tag` (after a backup) |
+| Tags | `Purchase::tags`; `collection::tags` (`clean_tag`, `clean_user_tag`, `normalize_tags`, `split_tags`, `same_tag`, `tag_summaries`; system tags: `LOT_PREFIX`, `is_system_tag`, `user_tags`); one spelling per tag through `Store::canonical_tags` inside each save; `Query::tags`/`tags_not`/`untagged`, `SortKey::Tag`, `BulkChange::add_tags`/`remove_tags`/`clear_tags`, `Store::rename_tag`/`delete_tag` (after a backup) |
 | Statistics page | `collection::statistics` (breakdowns, value bands, by month), `Game::breakdowns` (Magic's Color and Card type) |
 | Collection list: Sort menu | `collection::SortKey`, `collection::sort_cards` (key, direction, the game's rarity order) |
 | Export CSV | `collection::write_csv`, `Game::catalog_id_label`; read back by the importer's "TCG Binder CSV" profile |

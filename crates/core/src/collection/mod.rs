@@ -22,8 +22,9 @@ pub use filter::{
 };
 pub use price_history::{DailyPrices, PriceHistory};
 pub use stats::{CardValue, SetStats, Stats, TimePoint, compute_stats, compute_stats_at, round_cents};
-pub use store::{LotPick, Store, TagEdit, card_key, read_export};
+pub use store::{CopyPick, Store, TagEdit, card_key, read_export};
 pub use tags::{
-    MAX_TAG_LEN, MAX_TAGS, TagSummaries, TagSummary, card_tags, clean_tag, normalize_tags, same_tag, same_tags, split_tags, tag_summaries,
-    tags_in_use, with_spellings,
+    LOT_PREFIX, MAX_TAG_LEN, MAX_TAGS, SYSTEM_PREFIXES, TagSummaries, TagSummary, card_has_tag, card_tags, clean_tag, clean_user_tag,
+    is_system_tag, lot_of, lot_tag, normalize_tags, normalize_user_tags, same_tag, same_tags, split_tags, tag_summaries, tags_in_use,
+    user_tags, with_spellings,
 };

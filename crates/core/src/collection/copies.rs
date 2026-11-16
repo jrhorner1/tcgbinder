@@ -22,23 +22,21 @@ pub struct Purchase {
     /// The owner's note on these copies (where they're kept, who they're for, ...).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub note: String,
-    /// The lot these copies were bought in (its ID), whose total sets their price.
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub lot: String,
-    /// The owner's labels on these copies ("binder A", "elves deck"). Kept normalized:
-    /// see `normalize_tags`.
+    /// The owner's labels on these copies ("binder A", "elves deck"), and the app's
+    /// own (`lot:<id>` for the lot they were bought in, whose total sets their price).
+    /// Kept normalized: see `normalize_tags`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
 }
 
 impl Purchase {
     /// Whether `other` is the same purchase apart from its quantity, so the two can
-    /// be one: same price paid, acquired date, note, lot and tags (ignoring case).
+    /// be one: same price paid, acquired date, note and tags (ignoring case; a lot is a
+    /// tag).
     pub fn same_as(&self, other: &Purchase) -> bool {
         self.price_paid == other.price_paid
             && self.acquired_date == other.acquired_date
             && self.note == other.note
-            && self.lot == other.lot
             && same_tags(&self.tags, &other.tags)
     }
 }

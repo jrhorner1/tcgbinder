@@ -3,7 +3,7 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use tcgbinder_core::collection::{Card, Copies, LotPick, Purchase, round_cents};
+use tcgbinder_core::collection::{Card, Copies, CopyPick, LOT_PREFIX, Purchase, lot_tag, normalize_tags, round_cents};
 use tcgbinder_core::lots::{Lot, LotSplit};
 use tcgbinder_core::service::GameService;
 
@@ -35,7 +35,10 @@ pub(crate) fn put_in_lot(cards: &mut [Card], lot: &Lot) {
     for c in cards {
         let mut copies = Copies::default();
         for (finish, cond, p) in c.copies.each() {
-            let p = Purchase { lot: lot.id.clone(), price_paid: 0.0, acquired_date: lot.acquired_date.clone(), ..p.clone() };
+            let mut tags: Vec<String> = p.tags.iter().filter(|t| !t.starts_with(LOT_PREFIX)).cloned().collect();
+            tags.push(lot_tag(&lot.id));
+            let tags = normalize_tags(&tags).unwrap_or(tags); // already normal; a lot's tag doesn't count toward the limit
+            let p = Purchase { tags, price_paid: 0.0, acquired_date: lot.acquired_date.clone(), ..p.clone() };
             copies.add(finish, cond, p);
         }
         c.copies = copies;
@@ -84,7 +87,7 @@ impl Api {
     /// One lot and its cards.
     pub(crate) fn lot(&self, g: &GameService, id: &str) -> Result {
         let lot = Self::find_lot(g, id)?;
-        let cards = g.store.lot_cards(id);
+        let cards = g.store.cards_with_tag(&lot_tag(id));
         Ok(Reply::Json(json!({ "lot": summary(g, &lot), "cards": views(&cards) })))
     }
 
@@ -154,9 +157,12 @@ impl Api {
         if req.cards.is_empty() {
             return Err(bad("choose at least one card"));
         }
-        let picks: Vec<LotPick> = req.cards.into_iter().map(|p| LotPick { key: p.key, quantity: p.quantity }).collect();
+        let picks: Vec<CopyPick> = req.cards.into_iter().map(|p| CopyPick { key: p.key, quantity: p.quantity }).collect();
         let backup = g.store.backup("bulk-edit").map_err(internal)?;
-        let (moved, left) = g.store.put_in_lot(&lot.id, &lot.acquired_date, &picks).map_err(|e| bad(e.to_string()))?;
+        let date = lot.acquired_date.clone();
+        let (moved, replaced) =
+            g.store.tag_copies(&lot_tag(&lot.id), &picks, |p| p.acquired_date = date.clone()).map_err(|e| bad(e.to_string()))?;
+        let left: Vec<&str> = replaced.iter().filter_map(|t| t.strip_prefix(LOT_PREFIX)).collect();
         g.reprice_lot(&lot).map_err(internal)?;
         for other in left.iter().filter_map(|l| g.lots.get(l)) {
             g.reprice_lot(&other).map_err(internal)?;
@@ -170,7 +176,7 @@ impl Api {
     /// and `freed`.
     pub(crate) fn remove_card_from_lot(&self, g: &GameService, id: &str, key: &str) -> Result {
         let lot = Self::find_lot(g, id)?;
-        let freed = g.store.remove_from_lot(&lot.id, key).map_err(|e| bad(e.to_string()))?;
+        let freed = g.store.untag_card(&lot_tag(&lot.id), key).map_err(|e| bad(e.to_string()))?;
         g.reprice_lot(&lot).map_err(internal)?;
         tracing::info!(game = g.game.id(), lot = lot.name, freed, "card taken out of lot");
         Ok(Reply::Json(json!({ "lot": summary(g, &lot), "freed": freed })))
@@ -186,7 +192,8 @@ impl Api {
             _ => return Err(bad("say what happens to the lot's cards: cards=keep or cards=remove")),
         };
         let backup = if remove { Some(g.store.backup("bulk-delete").map_err(internal)?) } else { None };
-        g.store.drop_lot(id, remove).map_err(internal)?;
+        let tag = lot_tag(id);
+        if remove { g.store.remove_tagged(&tag) } else { g.store.untag_all(&tag) }.map_err(internal)?;
         g.lots.remove(id).map_err(internal)?;
         tracing::info!(game = g.game.id(), lot = lot.name, remove, "lot deleted");
         let mut answer = json!({ "deleted": lot.name });
