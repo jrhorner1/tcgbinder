@@ -161,6 +161,24 @@ function showToTop() {
   update();
 }
 
+// copyFilter is which of a card's groups of copies the list shows, from its lot and
+// tag filters (null when neither is set): a lot's filter shows the copies bought in it
+// (or in no lot), a tag's the copies carrying it, an excluded tag hides the copies
+// carrying it, and Untagged shows the copies with no tags.
+function copyFilter(q) {
+  const lot = q.get("lot") || "", tags = paramTags(q, "tags"), not = paramTags(q, "tags_not"), untagged = q.get("untagged") === "1";
+  if (!lot && !tags.length && !not.length && !untagged) return null;
+  // A card matches All of its tags across its groups, so a group shows when it carries
+  // any of the chosen tags.
+  return (p) => {
+    const has = (t) => (p.tags || []).some((x) => sameTag(x, t));
+    return (!lot || (lot === "none" ? !p.lot : p.lot === lot))
+      && (!tags.length || tags.some(has))
+      && !not.some(has)
+      && (!untagged || !(p.tags || []).length);
+  };
+}
+
 export async function viewCollection(params) {
   showToTop();
   const f = state.filters;
@@ -236,7 +254,7 @@ export async function viewCollection(params) {
   const showEnd = () => { end.textContent = data.cards.length > shown ? `Loading more… (${shown} of ${data.cards.length})` : ""; };
   const ctx = {
     lots,
-    lot: q.get("lot") || "",
+    shows: copyFilter(q),
     onTick: () => updateBar(),
     redraw: async (refetch = true) => {
       if (!refetch) { drawLines(); return; }
@@ -255,10 +273,8 @@ export async function viewCollection(params) {
   nearEnd.observe(end);
   state.listKey = `${apiQ}`;
 
-  // Filtered to a lot (or to no lot), the totals count only the copies shown.
-  const lotQ = q.get("lot") || "";
-  const inView = (p) => !lotQ || (lotQ === "none" ? !p.lot : p.lot === lotQ);
-  const viewed = lotQ ? data.cards.flatMap((c) => c.purchases.filter(inView)) : null;
+  // Filtered by lot or tag, the totals count only the copies shown.
+  const viewed = ctx.shows ? data.cards.flatMap((c) => c.purchases.filter(ctx.shows)) : null;
   const cardCount = viewed ? viewed.reduce((n, p) => n + p.quantity, 0) : data.cardCount;
   const worth = viewed ? viewed.reduce((n, p) => n + (p.market || 0) * p.quantity, 0) : data.marketValue;
   const paid = viewed ? viewed.reduce((n, p) => n + (p.price_paid || 0) * p.quantity, 0) : data.pricePaid;

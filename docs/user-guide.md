@@ -53,8 +53,9 @@ as soon as the import finishes.
   - **− / +** takes a copy away or adds one; taking the last one away removes the
     group. The finish and condition menus change the group.
   - The price paid each, the date and what one copy is worth; a 📦 badge names the
-    lot the copies came from (click it to see that lot's cards); tag chips (click one
-    to remove that tag) and **+ tag** to add one.
+    lot the copies came from (click it to see that lot's cards); tag chips (click a tag's
+    name to see the cards with that tag; its **×** takes the tag off) and **+ tag** to
+    add one.
   - **Put in lot…** (or **Move…** for copies already in a lot) puts the group in a
     lot, or takes it out: in a lot, copies take its date and their share of its
     price, and the lot is repriced.
@@ -78,9 +79,10 @@ as soon as the import finishes.
   number. Until you choose one, the list follows **Settings → Card order**.
 - **Filter:** filter the list by name, set, collector number or tag, and by set,
   color, rarity, finish and **Bought in** (a lot, or **No lot** for copies bought on
-  their own). With **Bought in** chosen, each card shows only its copies bought that
-  way, and the counts and value count only those; a note under a card says how many
-  of its other copies are hidden. **More filters** adds color identity, mana value, condition (any copy in
+  their own). With **Bought in** or a tag chosen (or a tag excluded, or **Untagged**),
+  each card shows only its copies that match (bought that way, carrying the tag), and
+  the counts and value count only those; a note under a card says how many of its
+  other copies are hidden. **More filters** adds color identity, mana value, condition (any copy in
   it), language, type ("creature" matches every type line with it), price of one copy
   (from and to), acquired date (any purchase in the range), a minimum number of
   copies, and cards that have a copy with no price paid, or a copy with no market

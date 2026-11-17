@@ -190,6 +190,8 @@ details.more .note { margin: 6px 0 0; }
   background: hsl(var(--tag-hue, 220) var(--tag-sat) var(--tag-bg)); color: hsl(var(--tag-hue, 220) 60% var(--tag-fg));
 }
 button.tag-chip { cursor: pointer; font-family: inherit; }
+.tag-chip .tag-name { color: inherit; text-decoration: none; overflow: hidden; text-overflow: ellipsis; }
+.tag-chip .tag-name:hover { text-decoration: underline; }
 .tag-chip .tag-x { border: 0; background: none; color: inherit; padding: 0 0 0 3px; font-size: 14px; line-height: 1; cursor: pointer; }
 .tag-editor { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0; padding: 3px 6px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
 .tag-editor:focus-within { border-color: var(--blue); }

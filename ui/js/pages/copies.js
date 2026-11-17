@@ -3,7 +3,7 @@
 // delete). Each change is saved at once; the collection page draws the list.
 
 import { api, gameAPI } from "../api.js";
-import { openCard, sameTag, tagChip, tagProblem, thumbnail, tickInfo, ticks, tidyTag } from "../cards.js";
+import { openCard, sameTag, tagProblem, tagStyle, thumbnail, tickInfo, ticks, tidyTag } from "../cards.js";
 import { ask, h, status } from "../dom.js";
 import { fname, plural, sn, title, today, usd, usd4 } from "../format.js";
 import { state } from "../state.js";
@@ -53,18 +53,17 @@ function purchasesOf(c, changed) {
 }
 
 // cardLine is one card's line item and its rows of copies. `redraw` redraws the list
-// after a change is saved; `lots` names the lots. With `lot` (the list's Bought in
-// filter: a lot's ID, or "none"), only the copies bought that way are shown and
-// counted; the others are kept, and saved untouched, but hidden.
-export function cardLine(c, { redraw, lots, onTick, lot = "" }) {
+// after a change is saved; `lots` names the lots. `shows` (from the list's lot and
+// tag filters) says which groups of copies to show and count; the others are kept,
+// and saved untouched, but hidden.
+export function cardLine(c, { redraw, lots, onTick, shows = null }) {
   const ticked = ticks();
   const box = h("input", { type: "checkbox", checked: ticked.has(c.key), "aria-label": `Tick ${c.name} for bulk edit`,
     onchange: (e) => { e.target.checked ? ticked.set(c.key, tickInfo(c)) : ticked.delete(c.key); onTick(); } });
   const lotName = (id) => (lots.find((l) => l.id === id) || {}).name || "a lot";
   const inLots = [...new Set(c.purchases.map((p) => p.lot).filter(Boolean))];
-  const shows = (r) => !lot || (lot === "none" ? !r.lot : r.lot === lot);
   const rows = rowsOf(c);
-  const shown = rows.filter(shows);
+  const shown = shows ? rows.filter(shows) : rows;
   const copies = shown.reduce((n, r) => n + r.qty, 0);
   const hidden = rows.reduce((n, r) => n + r.qty, 0) - copies;
   const worth = shown.reduce((n, r) => n + (r.market || 0) * r.qty, 0);
@@ -151,7 +150,10 @@ export function cardLine(c, { redraw, lots, onTick, lot = "" }) {
       h("span.paid", r.price_paid ? `${r.lot ? usd4(r.price_paid) : usd(r.price_paid)} each` : "no price paid", " · ", r.acquired_date || "no date",
         r.market ? ` · worth ${usd(r.market)}` : ""),
       r.lot ? h("a.lot-badge", { href: `#/collection?lot=${encodeURIComponent(r.lot)}`, title: "Show this lot's cards" }, "📦 ", lotName(r.lot)) : null,
-      (r.tags || []).map((t) => tagChip(t, { title: "Remove this tag", "aria-label": `Remove the tag ${t}`, onclick: () => change(r, { tags: r.tags.filter((x) => x !== t) }) }, " ×")),
+      // A tag's name shows the cards with it (as the lot badge does); its × takes it off.
+      (r.tags || []).map((t) => h("span.tag-chip", { style: tagStyle(t) },
+        h("a.tag-name", { href: `#/collection?${new URLSearchParams({ tags: t })}`, title: `Show the cards tagged ${t}` }, t),
+        h("button.tag-x", { type: "button", title: "Remove this tag", "aria-label": `Remove the tag ${t}`, onclick: () => change(r, { tags: r.tags.filter((x) => x !== t) }) }, "×"))),
       plus, tagIn,
       r.group ? h("span.muted.small", "Split off: change something to keep it apart") : null);
     // The inline forms: sell, and put in (or move to) a lot.
@@ -209,8 +211,8 @@ export function cardLine(c, { redraw, lots, onTick, lot = "" }) {
         h("button.link.name", { type: "button", onclick: () => openCard(c.key) }, c.name),
         h("span.meta", [sn(c), title(c.rarity), c.price_from === "en" ? "English price" : "", ...inLots.map((id) => `📦 ${lotName(id)}`)].filter(Boolean).join(" · "))),
       h("span.count", plural(copies, "copy", "copies"), hidden ? h("small", ` +${hidden} not shown`) : null),
-      h("span.value", priced ? usd(lot ? worth : c.market_value) : "—"),
+      h("span.value", priced ? usd(shows ? worth : c.market_value) : "—"),
       h("button.ghost", { type: "button", title: "The card's page: printing, price watch, the full editor", onclick: () => openCard(c.key) }, "Details…")),
     h("div.copies", shown.map(rowEl),
-      hidden ? h("p.muted.small.hidden-copies", `${plural(hidden, "other copy", "other copies")} of this card ${hidden === 1 ? "isn't" : "aren't"} ${lot === "none" ? "outside a lot" : "in this lot"}, so ${hidden === 1 ? "it's" : "they're"} not shown.`) : null));
+      hidden ? h("p.muted.small.hidden-copies", `${plural(hidden, "other copy", "other copies")} of this card ${hidden === 1 ? "doesn't" : "don't"} match the lot or tag filters, so ${hidden === 1 ? "it's" : "they're"} not shown.`) : null));
 }
