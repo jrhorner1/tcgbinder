@@ -134,7 +134,7 @@ Every card in the collection list has a tick box:
    **Finish** filters.
 2. Tick cards one by one, or **Select all shown** to tick everything the filters
    show. Ticks stay while you change filters, so you can build up a selection from
-   several searches; the bar below the list says how many are ticked and how many
+   several searches; the bar above the list (it stays in view as you scroll) says how many are ticked and how many
    the filters hide. **Clear** unticks everything.
 3. **Bulk edit…** opens the changes for the ticked cards: condition, finish, price
    paid or acquired date for every copy, tags (**Add tags**, **Remove tags**, or **Remove all tags**; see Tags),

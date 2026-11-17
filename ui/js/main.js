@@ -137,6 +137,10 @@ async function init() {
   await loadFilters();
   window.addEventListener("hashchange", route);
   topSearch();
+  // Bars that stick under the top bar (the collection's selection bar) need its height,
+  // which differs on phones.
+  const topbar = document.querySelector(".topbar");
+  new ResizeObserver(() => document.documentElement.style.setProperty("--topbar-h", `${topbar.offsetHeight}px`)).observe(topbar);
   $("#add-button").addEventListener("click", () => openAdd());
   // In the apps, the web view drops links that open a new window (View on Scryfall):
   // links to other sites open in the system's browser instead.

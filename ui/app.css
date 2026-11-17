@@ -313,6 +313,7 @@ table.months tr:last-child td { border-bottom: 0; }
 .selbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; }
 .selbar .count { flex: 1; min-width: 9em; font-size: 14px; }
 .selbar.ticked { border-color: var(--blue); }
+.collection .selbar { position: sticky; top: var(--topbar-h, 58px); z-index: 4; box-shadow: 0 6px 12px -8px rgb(0 0 0 / 50%); }
 
 .detail { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; }
 .detail h1 { margin-top: 0; }

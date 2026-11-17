@@ -236,7 +236,8 @@ export async function viewCollection(params) {
   } }, "Clear filters") : null;
   const exportButton = data.cards.length ? h("button.link", { type: "button", onclick: () => exportListed(q, data.cards.length) }, "Export…") : null;
 
-  // The selection bar: how many are ticked, and the bulk edit actions.
+  // The selection bar: how many are ticked, and the bulk edit actions. It sits above
+  // the list and stays in view under the search bar as the list scrolls.
   const count = h("span.count");
   const selectAll = h("button", { type: "button", onclick: () => { data.cards.forEach((c) => ticked.set(c.key, tickInfo(c))); drawLines(); updateBar(); } }, "Select all shown");
   const clearTicks = h("button", { type: "button", onclick: () => { ticked.clear(); drawLines(); updateBar(); } }, "Clear");
@@ -266,7 +267,7 @@ export async function viewCollection(params) {
     banners, lot ? lotPanel(lot, (id) => openAdd({ lot: id })) : null, setBox,
     h("div.collection", filters,
       h("p.counts.muted", h("span", filtering ? `Matching: ${counts}` : counts, h("span.money-line", ` · ${money}`)), h("span.count-actions", clear, exportButton)),
-      listbar, list, bar));
+      listbar, bar, list));
   if (q.get("set")) await renderSet(setBox, q.get("set"));
 }
 
