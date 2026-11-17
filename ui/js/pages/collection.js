@@ -147,7 +147,22 @@ function filterChips(q, nav, lots) {
 // The collection: filters and every matching card (each with a tick box for bulk
 // edit), and beside them the selected card's editor or, when a set is chosen, the
 // set's page.
+// The button back to the top of the collection: shown once the list is scrolled down
+// 400 pixels, on the collection page only. One button, made the first time it's needed.
+let toTop = null;
+function showToTop() {
+  if (toTop) return;
+  toTop = h("button.to-top", { type: "button", title: "Back to the top", "aria-label": "Back to the top", hidden: true,
+    onclick: () => window.scrollTo({ top: 0, behavior: "smooth" }) }, "↑");
+  document.body.append(toTop);
+  const update = () => { toTop.hidden = !location.hash.startsWith("#/collection") || /[?&]key=/.test(location.hash) || window.scrollY < 400; };
+  window.addEventListener("scroll", update, { passive: true });
+  window.addEventListener("hashchange", update);
+  update();
+}
+
 export async function viewCollection(params) {
+  showToTop();
   const f = state.filters;
   const q = new URLSearchParams(params);
   const nav = (mutate, replace) => { const p = hashParams(); mutate(p); go("collection", p, replace); };
@@ -170,7 +185,7 @@ export async function viewCollection(params) {
     timer = setTimeout(() => nav((p) => { search.value ? p.set("q", search.value) : p.delete("q"); }, true), 250);
   });
   const setMenu = menu("set", "Set", (f.sets || []).map((x) => ({ value: x.Code, label: x.Label })));
-  setMenu.classList.add("set-menu"); // set names are long: the menu gets its own line
+  setMenu.classList.add("set-menu"); // set names are long: the menu is a little wider
 
   const apiQ = new URLSearchParams(q);
   for (const k of LIST_KEYS) if (k !== "sort" && k !== "dir") apiQ.delete(k);
