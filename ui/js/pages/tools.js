@@ -3,11 +3,9 @@
 import { api, exportCollection, gameAPI, loadFilters, runJob } from "../api.js";
 import { tagEditor } from "../cards.js";
 import { tile } from "../charts.js";
-import { $, confirmDialog, fill, h, status, toolRow, whileRunning } from "../dom.js";
-import { gameInfo, plural, usd } from "../format.js";
-import { go } from "../nav.js";
+import { $, askDialog, confirmDialog, fill, h, status, toolRow, whileRunning } from "../dom.js";
+import { plural, usd } from "../format.js";
 import { state } from "../state.js";
-import { showBulkEdit } from "./bulk.js";
 
 // Import: a CSV export from another app, or a collection .json from this app. The
 // file is previewed first (matched, nothing saved), then imported on request.
@@ -83,7 +81,7 @@ export function showImportPreview(out, p, fileName, cancel, lot, done) {
 export async function viewBackups() {
   const list = await api("GET", gameAPI("/backups"));
   const why = { import: "Before an import", "bulk-edit": "Before a bulk edit", "bulk-delete": "Before a bulk delete", restore: "Before a restore", merge: "Before a merge", move: "Before a move",
-    "tag-rename": "Before renaming a tag", "tag-delete": "Before deleting a tag" };
+    "tag-rename": "Before renaming a tag", "tag-delete": "Before deleting a tag", "delete-all": "Before deleting all data" };
   const restore = async (b, button) => {
     if (!(await confirmDialog(`Replace your collection with the backup from ${b.date} (${plural(b.cards, "unique card", "unique cards")})? Your current collection is backed up first, so you can come back to it.`, { action: "Restore" }))) return;
     button.disabled = true;
@@ -103,6 +101,15 @@ export async function viewBackups() {
     })) : h("p.muted", "No backups yet. One is made before your first import or bulk change."));
 }
 
+// exportAll asks which kind of file, then saves the whole collection as it.
+async function exportAll(button) {
+  const format = await askDialog("Export the collection", [
+    "A collection file keeps everything exactly, for a backup or to move to another device. CSV opens in spreadsheets and other collection apps.",
+    "Import reads either back.",
+  ], [{ label: "CSV", value: "csv" }, { label: "Collection file", value: "json", primary: true }]);
+  if (format) exportCollection(button, format);
+}
+
 export async function viewTools() {
   const o = await api("GET", gameAPI("/home"));
   const s = state.settings;
@@ -115,19 +122,13 @@ export async function viewTools() {
     h("h2", "Collection"),
     h("div.card-box",
       toolRow(h("a.button", { href: "#/import" }, "Import…"), "Add cards from another app's CSV export (EchoMTG, ManaBox, Moxfield, Deckbox, TCGplayer and others) or from a collection file exported here."),
-      toolRow(h("button", { type: "button", onclick: (e) => exportCollection(e.currentTarget) }, "Export collection"), `Save the collection file to ${where}, for a backup or to move to another device. Import reads it back.`),
-      toolRow(h("button", { type: "button", onclick: (e) => exportCollection(e.currentTarget, "csv") }, "Export CSV"), `Save every card as a CSV file to ${where}, for spreadsheets and other collection apps: a row per purchase, with its price paid, date, tags and market price. Import reads it back. To export only some cards, filter the collection list and choose Export there.`),
-      toolRow(h("button", { type: "button", onclick: (e) => exportCollection(e.currentTarget, "report") }, "Valuation report"), `Save a page listing every card by set with its value, to ${where}. Open it in a browser to print it or save it as a PDF, for insurance or your records.`),
-      toolRow(h("button", { type: "button", onclick: () => { go("collection"); setTimeout(showBulkEdit, 50); } }, "Bulk edit…"),
-        "Change the condition, finish, price paid or date of many cards at once, or delete them. Tick the cards in the collection list (filter it, then Select all shown); Bulk edit is also below the list."),
+      toolRow(h("button", { type: "button", onclick: (e) => exportAll(e.currentTarget) }, "Export…"), `Save the collection to ${where}: as a collection file, for a backup or to move to another device, or as a CSV file for spreadsheets and other collection apps (a row per purchase, with its price paid, date, tags and market price). Import reads either back. To export only some cards, filter the collection list and choose Export there.`),
       toolRow(h("a.button", { href: "#/tags" }, "Tags…"), "Every tag on your cards, with how many cards and copies carry it and what they're worth. Rename or delete a tag everywhere at once."),
       toolRow(h("a.button", { href: "#/stats" }, "Statistics…"), "Your collection broken down by rarity, finish, condition, language, release year, color and card type, by price band, and by month acquired."),
-      toolRow(h("a.button", { href: "#/lists" }, "Lists…"), "Decks and want lists: the cards you want, how many you own already, and what the rest would cost."),
       toolRow(h("a.button", { href: "#/sealed" }, "Sealed product…"), "Boxes, bundles and decks you keep unopened: what you paid and what they're worth. There's no free price source for sealed product, so you enter each value yourself."),
       toolRow(h("a.button", { href: "#/watchlist" }, "Watchlist…"), "Cards whose price you're watching, with an alert when one moves by a percentage or crosses a price. Prices are checked when the app refreshes them, so alerts appear while the app is open or the next time you open it."),
-      toolRow(h("a.button", { href: "#/earnings" }, "Earnings…"), "Cards you've sold: what they sold for, what they cost, fees, and the gain, by month and year. Sell copies with Sell… on a card's purchase."),
-      toolRow(h("a.button", { href: "#/backups" }, "Restore a backup…"), "Go back to the collection as it was before a recent import, bulk edit or bulk delete. The last 10 backups are kept."),
-      gameInfo().Scan ? toolRow(h("a.button", { href: "#/scan" }, "Scan a card…"), "Identify a card from the camera or a photo, then add it.") : null),
+      toolRow(h("a.button", { href: "#/backups" }, "Restore a backup…"), "Go back to the collection as it was before a recent import, bulk edit, bulk delete or deleting all data. The last 10 backups are kept."),
+    ),
     h("h2", "Prices"),
     h("div.card-box",
       toolRow(job("Refresh prices now", "/refresh", "Refreshing prices…", (r) => `Prices updated for ${plural(r.updated, "card", "cards")}`),

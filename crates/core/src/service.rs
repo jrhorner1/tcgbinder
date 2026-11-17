@@ -285,6 +285,26 @@ impl GameService {
         }
     }
 
+    /// Deletes all of this game's data: its collection, lots, sales, lists, watchlist,
+    /// sealed product and price history. With `keep_backup`, the collection is backed up
+    /// first (reason `delete-all`, so it can be restored) and the backups stay; without
+    /// it, the backups are deleted too. Returns the backup's name, if one was taken.
+    pub fn delete_all(&self, keep_backup: bool) -> Result<Option<String>> {
+        let backup = if keep_backup && !self.store.is_empty() { Some(self.store.backup("delete-all")?) } else { None };
+        self.store.clear()?;
+        self.lots.clear()?;
+        self.sales.clear()?;
+        self.lists.clear()?;
+        self.watchlist.clear()?;
+        self.sealed.clear()?;
+        self.prices.clear()?;
+        if !keep_backup {
+            self.store.delete_backups()?;
+        }
+        tracing::warn!(game = self.game.id(), keep_backup, "all data deleted");
+        Ok(backup)
+    }
+
     /// Saves today's prices to the price history.
     pub fn record_today(&self) -> Result<()> {
         self.prices.record_current(&self.store.cards(), &dates::today_string());

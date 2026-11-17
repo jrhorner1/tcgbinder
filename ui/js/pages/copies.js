@@ -164,7 +164,7 @@ export function cardLine(c, { redraw, lots, onTick }) {
               finish: r.finish, condition: r.condition, price_paid: r.price_paid || 0, acquired_date: r.acquired_date || "", tags: r.tags || [],
               quantity: q, sale_each: parseFloat(each.value), date: today(), fees: parseFloat(fees.value) || 0 });
             if (r.group) r.group.qty -= Math.min(q, r.group.qty);
-            status(`Sold ${plural(q, "copy", "copies")} of ${c.name}${s.gain !== null ? ` (${s.gain >= 0 ? "+" : ""}${usd(s.gain)})` : ""}. See Tools → Earnings.`);
+            status(`Sold ${plural(q, "copy", "copies")} of ${c.name}${s.gain !== null ? ` (${s.gain >= 0 ? "+" : ""}${usd(s.gain)})` : ""}.`);
             await redraw();
           } catch (e) { status(e.message, true); }
         } }, "Sell"), cancel);

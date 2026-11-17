@@ -194,6 +194,32 @@ impl Api {
         Ok(Reply::Json(json!({ "changed": changed, "undo": undo(g, &backup) })))
     }
 
+    /// Deletes all data for every game: `{"confirm": "delete", "keepBackup": bool}`.
+    /// `confirm` must be "delete" (any case), so a stray request can't do it. With
+    /// `keepBackup`, each collection is backed up first and can be restored. Returns
+    /// `backups` (game → backup name). Settings are kept.
+    pub(crate) fn delete_all_data(&self, body: &[u8]) -> Result {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Req {
+            #[serde(default)]
+            confirm: String,
+            #[serde(default)]
+            keep_backup: bool,
+        }
+        let req: Req = decode(body)?;
+        if !req.confirm.trim().eq_ignore_ascii_case("delete") {
+            return Err(bad("type delete to confirm"));
+        }
+        let mut backups = serde_json::Map::new();
+        for g in &self.games {
+            if let Some(b) = g.delete_all(req.keep_backup).map_err(internal)? {
+                backups.insert(g.game.id().to_string(), json!(b));
+            }
+        }
+        Ok(Reply::Json(json!({ "deleted": true, "backups": backups })))
+    }
+
     /// Deletes a conflict copy without merging it.
     pub(crate) fn discard_conflict(&self, g: &GameService, body: &[u8]) -> Result {
         let req: NameReq = decode(body)?;

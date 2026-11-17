@@ -270,6 +270,7 @@ Code uses the UI's words, so a label on screen leads straight to the code behind
 | Collection list: Sort menu | `collection::SortKey`, `collection::sort_cards` (key, direction, the game's rarity order) |
 | Export CSV | `collection::write_csv`, `Game::catalog_id_label`; read back by the importer's "TCG Binder CSV" profile |
 | Valuation report | `crates/api/src/report.rs` (`valuation`, and `escape` for every piece of card text) |
+| Delete all data (Settings) | `GameService::delete_all` (`Store::clear`, `Records::clear`, `PriceHistory::clear`, `Store::delete_backups`); `Api::delete_all_data` in `crates/api/src/folders.rs` |
 | Collection list: filters and More filters | `collection::Query` (core filters), `Game::filters` (Magic's Color, Color identity, Mana value) |
 
 ## Card scanning

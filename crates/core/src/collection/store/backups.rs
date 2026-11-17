@@ -14,7 +14,8 @@ use super::{Store, StoreData};
 pub const BACKUPS_KEPT: usize = 10;
 
 /// Why a backup was taken, as the last part of its file name.
-pub const BACKUP_REASONS: &[&str] = &["import", "bulk-edit", "bulk-delete", "restore", "merge", "move", "tag-rename", "tag-delete"];
+pub const BACKUP_REASONS: &[&str] =
+    &["import", "bulk-edit", "bulk-delete", "restore", "merge", "move", "tag-rename", "tag-delete", "delete-all"];
 
 /// A backup of the collection file, as listed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -101,6 +102,16 @@ impl Store {
             .collect();
         names.sort();
         Ok(names.into_iter().map(|(_, _, n)| n).collect())
+    }
+
+    /// Deletes every backup (deleting all data without keeping one).
+    pub fn delete_backups(&self) -> Result<usize> {
+        let dir = self.backup_dir();
+        let names = self.backup_names()?;
+        for n in &names {
+            fs::remove_file(dir.join(n)).with_context(|| format!("deleting the backup {n}"))?;
+        }
+        Ok(names.len())
     }
 
     /// The backups, newest first.

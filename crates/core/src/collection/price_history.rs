@@ -231,6 +231,23 @@ impl PriceHistory {
         disk
     }
 
+    /// Forgets every recorded price and deletes the history file (deleting all data).
+    /// Unlike a save, this may leave fewer prices than are on disk: none.
+    pub fn clear(&self) -> Result<()> {
+        let mut disk = self.disk.lock().unwrap();
+        if !self.path.as_os_str().is_empty() {
+            match fs::remove_file(&self.path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e).with_context(|| format!("deleting {}", self.path.display())),
+            }
+        }
+        *self.data.write().unwrap() = HistoryData::default();
+        *disk = Disk::default();
+        self.revision.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
     /// Takes in prices another device saved. Nothing is saved here.
     pub fn refresh(&self) -> Result<()> {
         self.take_in_disk(&mut self.disk.lock().unwrap())

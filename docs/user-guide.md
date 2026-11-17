@@ -268,7 +268,7 @@ sale, and a note (where or to whom). The dialog shows the gain as you type: what
 sold for, less fees and what you paid. The copies leave your collection (a card with
 none left leaves the list), and the sale is kept even after the card is gone.
 
-**Tools → Earnings…** lists your sales, newest first, for all years or one year: what
+The earnings page (`#/earnings`; no longer linked from Tools) lists your sales, newest first, for all years or one year: what
 they sold for, fees, what the copies cost, and the gain, in total and by month. Copies
 with no price paid count toward what you sold for, but their gain is unknown, so they
 are left out of the cost and gain totals (the page says how many). **Undo…** on a sale
@@ -298,7 +298,7 @@ the matching filter.
 
 ## Lists and decks
 
-**Lists** (in the sidebar; on a phone, **Tools → Lists…**) keeps decks and want
+**Lists** (in the sidebar on the desktop and in a wide browser window) keeps decks and want
 lists. Each list shows how many of its cards you own, what the missing ones would
 cost at market price, and what the whole list is worth.
 
@@ -356,7 +356,7 @@ cards' market value or the value chart on Home; Home adds a line under Market Va
 
 ## Scanning cards
 
-**Scan a card** (on Add, and in the sidebar) identifies a physical card.
+**Scan a card** (in the Add dialog, and in the sidebar) identifies a physical card.
 
 - **Use the camera:** hold the card inside the frame. The app reads it a few times a
   second and captures once two readings in a row agree, so there's nothing to press.
@@ -400,26 +400,23 @@ The Tools page works on the selected game:
   Dragon Shield, Archidekt and others, this app's own CSV, or a collection `.json`
   exported from this app.
   Cards you already own gain the imported purchases. See **Importing** below.
-- **Export collection:** saves the collection file, which Import accepts. Use it for
-  backups and moving to another device. The desktop app saves it to your Downloads
-  folder; the iPhone app saves it to its folder in the Files app; the web app
-  downloads it. The other exports go to the same place.
-- **Export CSV:** every card as a CSV file for spreadsheets and other collection
-  apps, one row per purchase: name, set code and name, collector number, language,
-  finish, condition, quantity, price paid, acquired date, tags, rarity, market
-  price and Scryfall ID. Other apps can match the cards on the Scryfall ID, or on set code
-  and collector number. Import reads it back.
-- **Valuation report:** a page listing every card by set, newest set first, with
-  finish, condition, quantity, the price of one copy and the value, a total for each
-  set, and the collection's totals at the top. Open it in a browser and print it, or
-  save it as a PDF, for insurance or your records. When printed, each set starts a
-  new page and long tables repeat their headings.
+- **Export…:** asks which kind of file, then saves the whole collection. The desktop
+  app saves it to your Downloads folder; the iPhone app saves it to its folder in the
+  Files app; the web app downloads it.
+  - **Collection file:** the collection exactly, which Import accepts. Use it for
+    backups and moving to another device.
+  - **CSV:** every card for spreadsheets and other collection apps, one row per
+    purchase: name, set code and name, collector number, language,
+    finish, condition, quantity, price paid, acquired date, tags, rarity, market
+    price and Scryfall ID. Other apps can match the cards on the Scryfall ID, or on
+    set code and collector number. Import reads it back.
 - **Export…** under the collection list's filters exports just the cards the list
-  shows, in its order, as CSV or a valuation report.
-- **Bulk edit…** (see above) and **Scan a card…**.
+  shows, in its order, as CSV or as a valuation report (a page listing the cards by
+  set with their value, to print or save as a PDF).
 - **Tags…:** every tag, with Rename and Delete (see Tags).
 - **Restore a backup…:** a copy of the collection is saved before every import,
-  bulk edit, bulk delete, restore, tag rename and tag delete, and the last 10 are
+  bulk edit, bulk delete, restore, tag rename and tag delete, and when deleting all
+  data if you choose to keep one; the last 10 are
   kept. The list shows when
   each was taken, before what, and how many unique cards it holds. Restoring one
   replaces the collection (the current one is backed up first, so you can go back).
@@ -469,6 +466,14 @@ and the desktop and web apps on one computer share them.
 
 Settings also shows the data folder (see below), the version, and **Restore
 defaults**.
+
+**Delete all data…**, under the data folder, deletes your whole collection and
+everything with it: lots, sales, lists, the watchlist, sealed product and price
+history, for every game. Your settings stay. It asks first: type **delete** to
+confirm. **Keep a backup of the collection** (ticked at first) backs the collection up
+before deleting, so **Tools → Restore a backup…** can bring it back; lots, sales,
+lists, the watchlist and sealed product aren't in the backup. Unticked, the backups
+are deleted too, and nothing can be brought back.
 
 ## Where your data lives
 

@@ -1,10 +1,10 @@
 // Settings, and the data folder: where the collection is kept, moving it, and the
 // notices about it shown on Home.
 
-import { api, dataFolder, gameAPI, loadFilters, saveSettings } from "../api.js";
+import { api, dataFolder, gameAPI, loadFilters, loadLots, saveSettings } from "../api.js";
 import { $, askDialog, confirmDialog, fill, h, status, store } from "../dom.js";
 import { choiceNames, plural } from "../format.js";
-import { route } from "../nav.js";
+import { go, route } from "../nav.js";
 import { state } from "../state.js";
 
 // changeDataFolder switches to `path` ("" for the default folder): it looks at what is
@@ -89,6 +89,40 @@ export function dataNotices(df, home) {
   return out;
 }
 
+// deleteAllData asks before deleting every game's collection, lots, sales, lists,
+// watchlist, sealed product and price history: the word "delete" must be typed, and a
+// backup of the collection is kept unless unticked.
+function deleteAllData() {
+  const dlg = $("#dialog");
+  const word = h("input", { type: "text", placeholder: "delete", "aria-label": "Type delete to confirm", autocomplete: "off" });
+  const keep = h("input", { type: "checkbox", checked: true });
+  const err = h("p.error");
+  const go1 = h("button.danger", { type: "button", disabled: true, onclick: async () => {
+    err.textContent = "";
+    go1.disabled = true;
+    try {
+      const r = await api("POST", "/api/data/delete-all", { confirm: word.value, keepBackup: keep.checked });
+      dlg.close();
+      state.ticked.clear();
+      state.addDefaults = null;
+      await loadFilters();
+      await loadLots();
+      status(Object.keys(r.backups).length ? "Deleted all data. The collection's backup is under Tools → Restore a backup." : "Deleted all data.");
+      go("home");
+    } catch (e) { err.textContent = e.message; go1.disabled = false; }
+  } }, "Delete all data");
+  word.addEventListener("input", () => { go1.disabled = word.value.trim().toLowerCase() !== "delete"; });
+  fill(dlg, h("div.dlg", h("header", h("h2", "Delete all data?")),
+    h("div.body",
+      h("p", "This deletes every card in your collection, your lots, sales, lists, watchlist, sealed product and price history, for every game. Your settings stay."),
+      h("p", h("strong", "It can't be undone"), " unless you keep a backup of the collection below. Lots, sales, lists, the watchlist and sealed product are not in the backup."),
+      h("label.check", keep, "Keep a backup of the collection (restore it from Tools → Restore a backup)"),
+      h("p", "Type ", h("strong", "delete"), " to confirm:"), word, err),
+    h("footer", h("button", { type: "button", onclick: () => dlg.close() }, "Cancel"), go1)));
+  dlg.showModal();
+  word.focus();
+}
+
 export async function viewSettings() {
   const d = await api("GET", "/api/settings");
   state.settings = d.settings;
@@ -122,6 +156,9 @@ export async function viewSettings() {
       row("Log detail", menu("log_level", "log level"), phone ? "How much goes in the log file" : "How much goes in the log file; --log-level overrides it at startup")),
     h("h2", "Data"),
     dataSection(await dataFolder(), d.dataDir),
+    h("div.card-box.danger-zone", { style: "margin-top:12px" },
+      h("div.tool", h("button.danger", { type: "button", onclick: deleteAllData }, "Delete all data…"),
+        h("p.muted", "Delete your whole collection and everything with it (lots, sales, lists, watchlist, sealed product, price history), for every game. You'll be asked to confirm."))),
     h("h2", "About"),
     h("p", `${state.info.name} ${state.info.version}`),
     h("p", h("button", { type: "button", onclick: async () => {

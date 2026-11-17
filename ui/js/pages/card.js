@@ -38,7 +38,7 @@ function showSell(c, key, l) {
         quantity: q, sale_each: parseFloat(each.value), date: date.value, fees: parseFloat(fees.value) || 0, sale_note: note.value.trim(),
       });
       dlg.close();
-      status(`Sold ${plural(q, "copy", "copies")} of ${c.name}${r.gain !== null ? `: ${signedUsd(r.gain)}` : ""}. See Tools → Earnings.`);
+      status(`Sold ${plural(q, "copy", "copies")} of ${c.name}${r.gain !== null ? `: ${signedUsd(r.gain)}` : ""}.`);
       await loadFilters();
       if (q >= c.copy_count) closeCard(); else openCard(key);
     } catch (e) { err.textContent = e.message; }
@@ -51,7 +51,7 @@ function showSell(c, key, l) {
         h("label", "Copies"), qty, h("label", "Sold for (each)"), each, h("label", "Date sold"), date,
         h("label", "Fees (in all)"), fees, h("label", "Note"), note),
       outcome,
-      h("p.note", "The copies leave your collection and the sale is kept under Tools → Earnings, where it can be undone. Unsaved changes on the card page are discarded."),
+      h("p.note", "The copies leave your collection and the sale is recorded. Unsaved changes on the card page are discarded."),
       err),
     h("footer", h("button", { type: "button", onclick: () => dlg.close() }, "Cancel"), h("button.primary", { type: "button", onclick: sell }, "Sell"))));
   dlg.showModal();

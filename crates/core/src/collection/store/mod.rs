@@ -71,6 +71,14 @@ impl Store {
         self.file.revision()
     }
 
+    /// Deletes every card (deleting all data). Back up first if it may be wanted.
+    pub fn clear(&self) -> Result<()> {
+        self.file.mutate(|d| {
+            d.cards.clear();
+            Ok(())
+        })
+    }
+
     /// Takes in changes another device made to the file. True if there were any.
     pub fn refresh(&self) -> Result<bool> {
         self.file.refresh()

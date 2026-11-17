@@ -254,6 +254,7 @@ impl Api {
             ("POST", ["data-folder"]) => self.change_data_folder(body),
             ("POST", ["data-folder", "pick"]) => self.pick_data_folder(),
             ("POST", ["data-folder", "inspect"]) => self.inspect_data_folder(body),
+            ("POST", ["data", "delete-all"]) => self.delete_all_data(body),
             // settings.rs
             ("GET", ["settings"]) => Ok(self.get_settings()),
             ("PUT", ["settings"]) => self.put_settings(body),

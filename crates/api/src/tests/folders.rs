@@ -110,3 +110,34 @@ fn merge_a_records_conflict_copy() {
     assert_eq!(f.svc.lists.get("theirs").unwrap().name, "Their deck");
     assert!(!game_dir.join("lists 2.json").exists());
 }
+
+#[test]
+fn delete_all_data() {
+    let f = fixture();
+    let (_, lot) = call(&f.api, "POST", "/api/games/mtg/lots", Some(json!({ "name": "Box", "total_paid": 4.0, "split": "even" })));
+    assert!(lot["id"].is_string());
+    f.svc.prices.set(SHOCK, "nonfoil", "2026-11-01", 0.2);
+    f.svc.prices.save().unwrap();
+    // Without the word, nothing happens.
+    assert_eq!(call(&f.api, "POST", "/api/data/delete-all", Some(json!({ "keepBackup": true }))).0, 400);
+    assert_eq!(f.svc.store.len(), 2);
+
+    let (status, v) = call(&f.api, "POST", "/api/data/delete-all", Some(json!({ "confirm": "DELETE", "keepBackup": true })));
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(f.svc.store.len(), 0);
+    assert!(f.svc.lots.all().is_empty());
+    assert_eq!(f.svc.prices.points(), 0);
+    assert!(!f.svc.prices.path().exists(), "the history file is gone");
+    let backup = v["backups"]["mtg"].as_str().unwrap().to_string();
+    assert!(backup.ends_with("-delete-all.json"), "{backup}");
+    // The backup brings the collection back.
+    let (status, _) = call(&f.api, "POST", "/api/games/mtg/backups/restore", Some(json!({ "name": backup })));
+    assert_eq!(status, 200);
+    assert_eq!(f.svc.store.len(), 2);
+
+    // Without keeping a backup, the backups go too.
+    let (status, v) = call(&f.api, "POST", "/api/data/delete-all", Some(json!({ "confirm": "delete" })));
+    assert_eq!(status, 200, "{v}");
+    assert_eq!((f.svc.store.len(), v["backups"].as_object().unwrap().len()), (0, 0));
+    assert!(f.svc.store.backups().unwrap().is_empty());
+}

@@ -5,7 +5,7 @@
 import { api, gameAPI, loadLots } from "../api.js";
 import { addCard, addDefaults, tagEditor, thumbnail } from "../cards.js";
 import { $, fill, h, status, whileRunning } from "../dom.js";
-import { fname, plural, sn, title, today, usd, usd4 } from "../format.js";
+import { fname, gameInfo, plural, sn, title, today, usd, usd4 } from "../format.js";
 import { go, route } from "../nav.js";
 import { state } from "../state.js";
 import { finishLot, lotProgress } from "./lots.js";
@@ -145,7 +145,9 @@ export function openAdd({ lot = "", query = "", set = "" } = {}) {
     return {
       heading: "Add a card",
       body: [h("div.form.add-defaults", h("label", "Price paid each"), cardPrice, h("label", "Acquired"), cardDate, h("label", "Tags"), cardTags.el),
-        s.el, h("p", pasteToggle), paste, addedList()],
+        s.el, h("p.add-links", pasteToggle,
+          gameInfo().Scan ? h("button.link", { type: "button", onclick: () => { dlg.close(); go("scan"); } }, "Scan a card…") : null),
+        paste, addedList()],
       foot: [h("button.primary", { type: "button", onclick: () => dlg.close() }, "Done")],
     };
   }

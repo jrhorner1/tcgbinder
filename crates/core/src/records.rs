@@ -125,6 +125,14 @@ impl<T: Record> Records<T> {
         self.file.read(|d| f(&d.records))
     }
 
+    /// Deletes every record (deleting all data).
+    pub fn clear(&self) -> Result<()> {
+        self.update_all(|all| {
+            all.clear();
+            Ok(())
+        })
+    }
+
     /// Deletes a record, returning it; an error if there is none.
     pub fn remove(&self, id: &str) -> Result<T> {
         self.file.mutate(|d| match d.records.iter().position(|r| r.id() == id) {
