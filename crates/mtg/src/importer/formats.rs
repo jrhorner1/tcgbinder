@@ -200,11 +200,30 @@ pub fn parse_csv(data: &[u8]) -> Result<ParsedCsv> {
     // A malformed row is skipped rather than abandoning the import.
     let records: Vec<csv::StringRecord> = r.records().filter_map(|rec| rec.ok()).collect();
     // Each record's text in the file: from its start to the next record's.
-    let starts: Vec<usize> = records.iter().map(|rec| rec.position().map_or(0, |p| p.byte() as usize)).collect();
+    // With Windows line endings csv puts a record's start on the previous line's \n,
+    // so step past line breaks to where its text begins.
+    let starts: Vec<usize> = records
+        .iter()
+        .map(|rec| {
+            let at = rec.position().map_or(0, |p| p.byte() as usize).min(data.len());
+            at + data[at..].iter().take_while(|&&b| b == b'\r' || b == b'\n').count()
+        })
+        .collect();
     let text_of = |i: usize| {
         let end = starts.get(i + 1).copied().unwrap_or(data.len()).min(data.len());
         String::from_utf8_lossy(&data[starts[i].min(end)..end]).trim_end_matches(['\r', '\n']).to_string()
     };
+    // Each record's line number, counted from its start. (csv's own count is one short
+    // after the first record in a file with Windows line endings.)
+    let lines: Vec<u64> = starts
+        .iter()
+        .scan((0usize, 1u64), |(at, line), &start| {
+            let start = start.clamp(*at, data.len());
+            *line += data[*at..start].iter().filter(|&&b| b == b'\n').count() as u64;
+            *at = start;
+            Some(*line)
+        })
+        .collect();
     let mut first = 0;
     // Dragon Shield (and Excel) exports may start with a "sep=," hint line.
     if records.first().and_then(|h| h.get(0)).is_some_and(|h| h.trim().to_lowercase().starts_with("sep=")) {
@@ -241,7 +260,7 @@ pub fn parse_csv(data: &[u8]) -> Result<ParsedCsv> {
         let date = parse_date(get(Field::Date));
         date_misses.note(get(Field::Date), !date.is_empty());
         let mut row = Row {
-            line: rec.position().map_or(0, |p| p.line()),
+            line: lines[i],
             name: get(Field::Name).to_string(),
             set_code: get(Field::SetCode).to_lowercase(),
             set_name: get(Field::SetName).to_string(),
@@ -526,6 +545,16 @@ mod tests {
 
     /// An export with EchoMTG's real header and made-up rows.
     const ECHOMTG: &[u8] = include_bytes!("../../tests/echomtg-export.txt");
+
+    #[test]
+    fn windows_line_endings_keep_line_numbers() {
+        let unix = parse_csv(ECHOMTG).unwrap();
+        let text = std::str::from_utf8(ECHOMTG).unwrap().replace("\r\n", "\n").replace('\n', "\r\n");
+        let windows = parse_csv(text.as_bytes()).unwrap();
+        let lines = |p: &ParsedCsv| p.rows.iter().map(|r| r.line).collect::<Vec<_>>();
+        assert_eq!(lines(&windows), lines(&unix));
+        assert_eq!(windows.rows[0].text, unix.rows[0].text, "no stray carriage return");
+    }
 
     #[test]
     fn echomtg_export() {
