@@ -53,14 +53,22 @@ function purchasesOf(c, changed) {
 }
 
 // cardLine is one card's line item and its rows of copies. `redraw` redraws the list
-// after a change is saved; `lots` names the lots.
-export function cardLine(c, { redraw, lots, onTick }) {
+// after a change is saved; `lots` names the lots. With `lot` (the list's Bought in
+// filter: a lot's ID, or "none"), only the copies bought that way are shown and
+// counted; the others are kept, and saved untouched, but hidden.
+export function cardLine(c, { redraw, lots, onTick, lot = "" }) {
   const ticked = ticks();
   const box = h("input", { type: "checkbox", checked: ticked.has(c.key), "aria-label": `Tick ${c.name} for bulk edit`,
     onchange: (e) => { e.target.checked ? ticked.set(c.key, tickInfo(c)) : ticked.delete(c.key); onTick(); } });
   const lotName = (id) => (lots.find((l) => l.id === id) || {}).name || "a lot";
   const inLots = [...new Set(c.purchases.map((p) => p.lot).filter(Boolean))];
-  const priced = c.purchases.some((p) => p.market > 0);
+  const shows = (r) => !lot || (lot === "none" ? !r.lot : r.lot === lot);
+  const rows = rowsOf(c);
+  const shown = rows.filter(shows);
+  const copies = shown.reduce((n, r) => n + r.qty, 0);
+  const hidden = rows.reduce((n, r) => n + r.qty, 0) - copies;
+  const worth = shown.reduce((n, r) => n + (r.market || 0) * r.qty, 0);
+  const priced = shown.some((r) => r.market > 0);
 
   // save sends the card's rows with `changed` applied, then forgets the unsaved group
   // that was saved (`savedGroup`), keeping its place for its new signature.
@@ -200,8 +208,9 @@ export function cardLine(c, { redraw, lots, onTick }) {
       h("div.text",
         h("button.link.name", { type: "button", onclick: () => openCard(c.key) }, c.name),
         h("span.meta", [sn(c), title(c.rarity), c.price_from === "en" ? "English price" : "", ...inLots.map((id) => `📦 ${lotName(id)}`)].filter(Boolean).join(" · "))),
-      h("span.count", plural(c.copy_count, "copy", "copies")),
-      h("span.value", priced ? usd(c.market_value) : "—"),
+      h("span.count", plural(copies, "copy", "copies"), hidden ? h("small", ` +${hidden} not shown`) : null),
+      h("span.value", priced ? usd(lot ? worth : c.market_value) : "—"),
       h("button.ghost", { type: "button", title: "The card's page: printing, price watch, the full editor", onclick: () => openCard(c.key) }, "Details…")),
-    h("div.copies", rowsOf(c).map(rowEl)));
+    h("div.copies", shown.map(rowEl),
+      hidden ? h("p.muted.small.hidden-copies", `${plural(hidden, "other copy", "other copies")} of this card ${hidden === 1 ? "isn't" : "aren't"} ${lot === "none" ? "outside a lot" : "in this lot"}, so ${hidden === 1 ? "it's" : "they're"} not shown.`) : null));
 }

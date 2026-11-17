@@ -504,7 +504,9 @@ button.ghost { background: none; border-color: transparent; color: var(--muted);
 button.ghost:hover { color: var(--text); border-color: var(--line); }
 .copies { border-top: 1px solid var(--line); padding: 2px 12px 6px 66px; }
 .copy { display: grid; grid-template-columns: auto auto auto minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 7px 0; border-bottom: 1px dashed var(--line); }
-.copy:last-child { border-bottom: 0; }
+.copy:last-of-type { border-bottom: 0; }
+.hidden-copies { margin: 6px 0 2px; }
+.line .count small { display: block; }
 .qty { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
 .qty button { border: 0; border-radius: 0; padding: 3px 9px; }
 .qty span { min-width: 2.2em; text-align: center; font-weight: 600; font-variant-numeric: tabular-nums; }

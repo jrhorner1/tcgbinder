@@ -78,7 +78,9 @@ as soon as the import finishes.
   number. Until you choose one, the list follows **Settings → Card order**.
 - **Filter:** filter the list by name, set, collector number or tag, and by set,
   color, rarity, finish and **Bought in** (a lot, or **No lot** for copies bought on
-  their own). **More filters** adds color identity, mana value, condition (any copy in
+  their own). With **Bought in** chosen, each card shows only its copies bought that
+  way, and the counts and value count only those; a note under a card says how many
+  of its other copies are hidden. **More filters** adds color identity, mana value, condition (any copy in
   it), language, type ("creature" matches every type line with it), price of one copy
   (from and to), acquired date (any purchase in the range), a minimum number of
   copies, and cards that have a copy with no price paid, or a copy with no market

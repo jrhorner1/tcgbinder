@@ -226,6 +226,7 @@ export async function viewCollection(params) {
   const more = h("button", { type: "button", onclick: () => { shown += PAGE; drawLines(); } }, "Show more");
   const ctx = {
     lots,
+    lot: q.get("lot") || "",
     onTick: () => updateBar(),
     redraw: async (refetch = true) => {
       if (!refetch) { drawLines(); return; }
@@ -243,8 +244,15 @@ export async function viewCollection(params) {
   drawLines();
   state.listKey = `${apiQ}`;
 
-  const counts = `${plural(data.uniqueCards, "unique card", "unique cards")} · ${plural(data.cardCount, "card", "cards")} · ${plural(data.sets, "set", "sets")}`;
-  const money = `${usd(data.marketValue)} value · ${usd(data.pricePaid)} paid`;
+  // Filtered to a lot (or to no lot), the totals count only the copies shown.
+  const lotQ = q.get("lot") || "";
+  const inView = (p) => !lotQ || (lotQ === "none" ? !p.lot : p.lot === lotQ);
+  const viewed = lotQ ? data.cards.flatMap((c) => c.purchases.filter(inView)) : null;
+  const cardCount = viewed ? viewed.reduce((n, p) => n + p.quantity, 0) : data.cardCount;
+  const worth = viewed ? viewed.reduce((n, p) => n + (p.market || 0) * p.quantity, 0) : data.marketValue;
+  const paid = viewed ? viewed.reduce((n, p) => n + (p.price_paid || 0) * p.quantity, 0) : data.pricePaid;
+  const counts = `${plural(data.uniqueCards, "unique card", "unique cards")} · ${plural(cardCount, "card", "cards")} · ${plural(data.sets, "set", "sets")}`;
+  const money = `${usd(worth)} value · ${usd(paid)} paid`;
   const clear = filtering ? h("button.link", { type: "button", onclick: () => {
     const keep = new URLSearchParams([...q.entries()].filter(([k]) => LIST_KEYS.includes(k) && k !== "key"));
     go("collection", keep);
