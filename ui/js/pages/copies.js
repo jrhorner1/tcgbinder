@@ -6,7 +6,27 @@ import { api, gameAPI } from "../api.js";
 import { openCard, sameTag, tagProblem, tagStyle, thumbnail, tickInfo, ticks, tidyTag } from "../cards.js";
 import { ask, h, status } from "../dom.js";
 import { fname, plural, sn, title, today, usd, usd4 } from "../format.js";
+import { go, hashParams } from "../nav.js";
 import { state } from "../state.js";
+
+// filterBy adds a filter to the collection's current ones (a tag joins the tags
+// chosen; a lot replaces the lot), so clicking one tag and then another shows the
+// cards with both.
+function filterBy(e, name, value) {
+  e.preventDefault();
+  const p = location.hash.startsWith("#/collection") ? hashParams() : new URLSearchParams();
+  p.delete("key");
+  if (name === "tags") {
+    const tags = (p.get("tags") || "").split(",").map((t) => t.trim()).filter(Boolean);
+    if (tags.some((t) => sameTag(t, value))) return;
+    p.set("tags", [...tags, value].join(","));
+    p.set("tags_not", (p.get("tags_not") || "").split(",").filter((t) => t.trim() && !sameTag(t.trim(), value)).join(","));
+    if (!p.get("tags_not")) p.delete("tags_not");
+  } else {
+    p.set(name, value);
+  }
+  go("collection", p);
+}
 
 // Split groups not saved yet, per card key: [{ id, sig, row, qty }]. A split copy is the
 // same as its group until something about it changes, and the app keeps identical
@@ -149,10 +169,12 @@ export function cardLine(c, { redraw, lots, onTick, shows = null }) {
     const where = h("div.where",
       h("span.paid", r.price_paid ? `${r.lot ? usd4(r.price_paid) : usd(r.price_paid)} each` : "no price paid", " · ", r.acquired_date || "no date",
         r.market ? ` · worth ${usd(r.market)}` : ""),
-      r.lot ? h("a.lot-badge", { href: `#/collection?lot=${encodeURIComponent(r.lot)}`, title: "Show this lot's cards" }, "📦 ", lotName(r.lot)) : null,
+      r.lot ? h("a.lot-badge", { href: `#/collection?lot=${encodeURIComponent(r.lot)}`, title: "Show this lot's cards",
+        onclick: (e) => filterBy(e, "lot", r.lot) }, "📦 ", lotName(r.lot)) : null,
       // A tag's name shows the cards with it (as the lot badge does); its × takes it off.
       (r.tags || []).map((t) => h("span.tag-chip", { style: tagStyle(t) },
-        h("a.tag-name", { href: `#/collection?${new URLSearchParams({ tags: t })}`, title: `Show the cards tagged ${t}` }, t),
+        h("a.tag-name", { href: `#/collection?${new URLSearchParams({ tags: t })}`, title: `Show the cards tagged ${t} (with the filters already chosen)`,
+          onclick: (e) => filterBy(e, "tags", t) }, t),
         h("button.tag-x", { type: "button", title: "Remove this tag", "aria-label": `Remove the tag ${t}`, onclick: () => change(r, { tags: r.tags.filter((x) => x !== t) }) }, "×"))),
       plus, tagIn,
       r.group ? h("span.muted.small", "Split off: change something to keep it apart") : null);

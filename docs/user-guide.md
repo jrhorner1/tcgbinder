@@ -53,8 +53,10 @@ as soon as the import finishes.
   - **− / +** takes a copy away or adds one; taking the last one away removes the
     group. The finish and condition menus change the group.
   - The price paid each, the date and what one copy is worth; a 📦 badge names the
-    lot the copies came from (click it to see that lot's cards); tag chips (click a tag's
-    name to see the cards with that tag; its **×** takes the tag off) and **+ tag** to
+    lot the copies came from (click it to see that lot's cards, keeping the other
+    filters); tag chips (click a tag's
+    name to add it to the filters, so clicking two tags shows the cards with both;
+    its **×** takes the tag off) and **+ tag** to
     add one.
   - **Put in lot…** (or **Move…** for copies already in a lot) puts the group in a
     lot, or takes it out: in a lot, copies take its date and their share of its
