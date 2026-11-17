@@ -53,6 +53,7 @@ fn totals(g: &GameService, list: &List, collection: &[Card]) -> Value {
     }
     json!({
         "id": list.id, "name": list.name, "notes": list.notes, "created": list.created, "entries": list.entries.len(),
+        "remove_owned": list.remove_owned,
         "cards": wanted, "owned": owned, "missing": wanted - owned,
         "marketValue": round_cents(value), "missingCost": round_cents(missing_cost),
     })
@@ -81,23 +82,36 @@ fn decklist(list: &List) -> String {
     out
 }
 
+/// Takes the entries the collection now holds off the lists that ask for it. A failure
+/// is logged, not answered: the lists still show, with those entries owned.
+fn drop_owned(g: &GameService, collection: &[Card]) {
+    match g.lists.drop_owned(collection) {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(game = g.game.id(), entries = n, "owned cards taken off lists"),
+        Err(e) => tracing::warn!(game = g.game.id(), error = %e, "could not take owned cards off lists"),
+    }
+}
+
 impl Api {
     fn find_list(g: &GameService, params: &HashMap<String, String>) -> Result<List> {
         let id = params.get("id").map_or("", String::as_str);
         g.lists.get(id).ok_or_else(|| not_found(format!("there is no list {id:?}")))
     }
 
-    /// Every list with its totals.
+    /// Every list with its totals. Lists marked `remove_owned` first lose the entries
+    /// the collection now holds.
     pub(crate) fn lists(&self, g: &GameService) -> Reply {
         let collection = g.store.cards();
+        drop_owned(g, &collection);
         Reply::Json(json!(g.lists.all().iter().map(|l| totals(g, l, &collection)).collect::<Vec<_>>()))
     }
 
     /// One list: its totals and entries (`index`, `card`, `quantity`, `any_printing`,
     /// `finish`, `owned`, `price`).
     pub(crate) fn list(&self, g: &GameService, params: &HashMap<String, String>) -> Result {
-        let list = Self::find_list(g, params)?;
         let collection = g.store.cards();
+        drop_owned(g, &collection);
+        let list = Self::find_list(g, params)?;
         let order = g.game.finishes();
         let entries: Vec<Value> = list
             .entries
@@ -113,7 +127,7 @@ impl Api {
         Ok(Reply::Json(json!({ "list": totals(g, &list, &collection), "entries": entries })))
     }
 
-    /// Creates a list: `{"name", "notes"}`.
+    /// Creates a list: `{"name", "notes", "remove_owned"}`.
     pub(crate) fn create_list(&self, g: &GameService, body: &[u8]) -> Result {
         #[derive(Deserialize)]
         #[serde(default)]
@@ -121,21 +135,26 @@ impl Api {
         struct Req {
             name: String,
             notes: String,
+            remove_owned: bool,
         }
         let req: Req = decode(body)?;
-        let list =
-            g.lists.add(List { name: req.name, notes: req.notes.trim().to_string(), ..List::default() }).map_err(|e| bad(e.to_string()))?;
+        let list = g
+            .lists
+            .add(List { name: req.name, notes: req.notes.trim().to_string(), remove_owned: req.remove_owned, ..List::default() })
+            .map_err(|e| bad(e.to_string()))?;
         tracing::info!(game = g.game.id(), list = list.name, "list created");
         Ok(Reply::Json(totals(g, &list, &g.store.cards())))
     }
 
-    /// Changes a list: any of `name`, `notes` and `entries` (which replaces them all).
+    /// Changes a list: any of `name`, `notes`, `remove_owned` and `entries` (which
+    /// replaces them all).
     pub(crate) fn update_list(&self, g: &GameService, params: &HashMap<String, String>, body: &[u8]) -> Result {
         #[derive(Deserialize, Default)]
         #[serde(default)]
         struct Req {
             name: Option<String>,
             notes: Option<String>,
+            remove_owned: Option<bool>,
             entries: Option<Vec<EntryForm>>,
         }
         let mut list = Self::find_list(g, params)?;
@@ -145,6 +164,9 @@ impl Api {
         }
         if let Some(notes) = req.notes {
             list.notes = notes.trim().to_string();
+        }
+        if let Some(on) = req.remove_owned {
+            list.remove_owned = on;
         }
         if let Some(entries) = req.entries {
             list.entries = entries.into_iter().map(EntryForm::entry).collect::<Result<_>>()?;

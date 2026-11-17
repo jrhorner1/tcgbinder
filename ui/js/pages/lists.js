@@ -93,11 +93,14 @@ export async function viewList(id) {
       h("button", { type: "button", onclick: paste }, "Paste a list…"), h("button", { type: "button", onclick: exportList }, "Export"),
       h("button.danger", { type: "button", onclick: del }, "Delete"))),
     l.notes ? h("p.list-notes", l.notes) : null,
+    h("p", h("label.check", h("input", { type: "checkbox", checked: l.remove_owned,
+      onchange: (e) => put({ remove_owned: e.target.checked }, e.target.checked ? `Cards you own will leave ${l.name}.` : `Cards you own will stay on ${l.name}.`) }),
+    "Take cards off this list once I own them")),
     h("div.tiles",
       tile("CARDS", l.cards.toLocaleString(), plural(l.entries, "entry", "entries")),
       tile("OWNED", `${l.owned}`, l.cards ? `${Math.round((l.owned / l.cards) * 100)}% of the list` : ""),
       tile("TO COMPLETE", usd(l.missingCost), l.missing ? `${plural(l.missing, "card", "cards")} missing, at market price` : "you own every card", "var(--blue)"),
       tile("LIST VALUE", usd(l.marketValue), "every card, at market price")),
     entries.length ? h("div.card-box", entries.map(row))
-      : h("p.muted", "No cards yet. Add some from the Add page (Add to list…), from a set's Missing Cards, or with Paste a list…"));
+      : h("p.muted", "No cards yet. Add some from the Add dialog (Add to list…), from a set's missing cards, or with Paste a list…"));
 }

@@ -70,6 +70,11 @@ pub struct List {
     pub notes: String,
     pub created: String,
     pub entries: Vec<ListEntry>,
+    /// Entries leave the list once the collection holds as many as wanted (a set's
+    /// missing cards: each is crossed off as it's added). See
+    /// [`Records::drop_owned`](crate::records::Records).
+    #[serde(skip_serializing_if = "is_false")]
+    pub remove_owned: bool,
 }
 
 impl List {
@@ -146,6 +151,25 @@ impl Records<List> {
                 l.add(ListEntry::new(e.card, e.quantity, e.any_printing, &e.finish));
             }
             Ok(l.clone())
+        })
+    }
+
+    /// Takes off the lists marked `remove_owned` every entry the collection now holds as
+    /// many of as wanted. Saves only when something is taken off. Returns how many
+    /// entries were.
+    pub fn drop_owned(&self, collection: &[Card]) -> Result<usize> {
+        let owned = |e: &ListEntry| e.owned(collection) >= e.quantity;
+        if !self.read(|all| all.iter().any(|l| l.remove_owned && l.entries.iter().any(owned))) {
+            return Ok(0);
+        }
+        self.update_all(|all| {
+            let mut n = 0;
+            for l in all.iter_mut().filter(|l| l.remove_owned) {
+                let before = l.entries.len();
+                l.entries.retain(|e| !owned(e));
+                n += before - l.entries.len();
+            }
+            Ok(n)
         })
     }
 
@@ -265,5 +289,24 @@ mod tests {
         s.remove("other").unwrap();
         assert!(s.get("other").is_none());
         assert!(s.add_entries("nope", vec![]).is_err());
+    }
+
+    #[test]
+    fn owned_entries_leave_lists_that_ask() {
+        let dir = tempfile::tempdir().unwrap();
+        let s: Records<List> = Records::open(dir.path()).unwrap();
+        let entries = || {
+            vec![ListEntry::new(card("bolt", "Lightning Bolt", &[]), 1, false, ""), ListEntry::new(card("opt", "Opt", &[]), 2, false, "")]
+        };
+        let missing = s.add(List { name: "M11 Missing".into(), remove_owned: true, entries: entries(), ..List::default() }).unwrap();
+        let deck = s.add(List { name: "Deck".into(), entries: entries(), ..List::default() }).unwrap();
+        // One Opt of the two wanted stays; the Bolt is owned and goes, from the missing list only.
+        let collection = [held("bolt", "Lightning Bolt", "nonfoil", 1), held("opt", "Opt", "nonfoil", 1)];
+        assert_eq!(s.drop_owned(&collection).unwrap(), 1);
+        assert_eq!(s.get(&missing.id).unwrap().entries.iter().map(|e| e.card.id.as_str()).collect::<Vec<_>>(), ["opt"]);
+        assert_eq!(s.get(&deck.id).unwrap().entries.len(), 2, "a list that didn't ask keeps them");
+        assert_eq!(s.drop_owned(&collection).unwrap(), 0, "nothing more to take off");
+        let text = std::fs::read_to_string(s.path()).unwrap();
+        assert_eq!(text.matches("remove_owned").count(), 1, "only where it's on: {text}");
     }
 }

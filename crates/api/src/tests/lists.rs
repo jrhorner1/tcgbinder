@@ -66,3 +66,28 @@ fn lists_and_decks() {
     assert_eq!(call(&f.api, "DELETE", &path(""), None).0, 200);
     assert_eq!(call(&f.api, "GET", &path(""), None).0, 404);
 }
+
+#[test]
+fn missing_lists_cross_off_cards_once_owned() {
+    let f = fixture();
+    let (status, list) = call(&f.api, "POST", "/api/games/mtg/lists", Some(json!({ "name": "TST Missing", "remove_owned": true })));
+    assert_eq!((status, list["remove_owned"].as_bool()), (200, Some(true)), "{list}");
+    let id = list["id"].as_str().unwrap().to_string();
+    let entries = json!({ "entries": [{ "card": catalog("one", 1.0), "quantity": 1 }, { "card": catalog("two", 2.0), "quantity": 1 }] });
+    assert_eq!(call(&f.api, "PUT", &format!("/api/games/mtg/lists?id={id}"), Some(entries)).0, 200);
+
+    // Card "one" is added to the collection: opening the list takes it off.
+    let (status, _) =
+        call(&f.api, "POST", "/api/games/mtg/cards", Some(json!({ "card": catalog("one", 1.0), "quantity": 1, "finish": "nonfoil" })));
+    assert_eq!(status, 200);
+    let shown = get(&f.api, &format!("/api/games/mtg/lists?id={id}"));
+    let ids: Vec<&str> = shown["entries"].as_array().unwrap().iter().map(|e| e["card"]["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["two"]);
+    assert_eq!(get(&f.api, "/api/games/mtg/lists")[0]["entries"].as_i64(), Some(1));
+
+    // Turned off, owned cards stay.
+    let (status, v) = call(&f.api, "PUT", &format!("/api/games/mtg/lists?id={id}"), Some(json!({ "remove_owned": false })));
+    assert_eq!((status, v["remove_owned"].as_bool()), (200, Some(false)));
+    call(&f.api, "POST", "/api/games/mtg/cards", Some(json!({ "card": catalog("two", 2.0), "quantity": 1, "finish": "nonfoil" })));
+    assert_eq!(get(&f.api, &format!("/api/games/mtg/lists?id={id}"))["entries"].as_array().unwrap().len(), 1);
+}

@@ -311,8 +311,14 @@ the matching filter.
 lists. Each list shows how many of its cards you own, what the missing ones would
 cost at market price, and what the whole list is worth.
 
-- **New list** makes one. **Add to list…** on the Add page's card form, or **To
-  list…** on a set's Missing Cards, puts a card on a list (or a new one).
+- **New list** makes one. **Add to list…** on the Add dialog's card form, or **To
+  list…** on a set's missing cards page, puts a card on a list (or a new one).
+  **Create a list of missing cards…** on a set makes a list of every card you don't
+  own yet.
+- **Take cards off this list once I own them**, on a list's page, crosses cards off
+  for you: a card leaves the list as soon as you own as many as it wants, however you
+  added them (Add, an import, another device). Lists of missing cards start with it
+  on; untick it to keep owned cards on the list.
 - **Paste a list…** on a list's page adds a decklist as Moxfield, Archidekt or MTG
   Arena export it. A line with a set (and number) wants that printing; a line with
   just a name counts any printing as owned.

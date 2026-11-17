@@ -8,7 +8,8 @@ import { anyPrice, compareNumber, plural, title, usd } from "../format.js";
 import { go } from "../nav.js";
 
 // createMissingList asks for a name ("Core Set 2019 Missing" to start with), then puts
-// one of each card of set `code` that you don't own on a new list, and opens it.
+// one of each card of set `code` that you don't own on a new list, and opens it. The
+// list takes cards off as they join the collection.
 // `m` is the missing cards when they're already loaded.
 export async function createMissingList(code, setName, m) {
   const name = await askName("Create a list of the missing cards", `${setName || code.toUpperCase()} Missing`);
@@ -17,7 +18,8 @@ export async function createMissingList(code, setName, m) {
     status("Loading the set's cards…");
     const missing = m || (await api("GET", gameAPI(`/missing?set=${encodeURIComponent(code)}`)));
     if (!missing.missing.length) { status("You have every card in this set, so there's nothing to put on a list."); return; }
-    const list = await api("POST", gameAPI("/lists"), { name });
+    // A missing list crosses cards off as you add them (remove_owned).
+    const list = await api("POST", gameAPI("/lists"), { name, remove_owned: true });
     await api("PUT", gameAPI(`/lists?id=${encodeURIComponent(list.id)}`),
       { entries: missing.missing.map((c) => ({ card: c, quantity: 1, any_printing: false, finish: "" })) });
     status(`Made the list ${name} with ${plural(missing.missing.length, "card", "cards")}.`);
