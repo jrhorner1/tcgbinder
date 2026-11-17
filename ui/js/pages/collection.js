@@ -1,15 +1,19 @@
-// The Collection page: the filtered list or grid, its filters, chips and sort, the
-// set page, and exporting what is listed.
+// The Collection page: unfinished lots' banners, the filters, chips and sort, every
+// matching card as a line item with its copies (pages/copies.js), a lot's panel when
+// the list is filtered to one, the set page, and exporting what is listed.
 
 import { api, exportCollection, gameAPI, loadLots } from "../api.js";
-import { addInDialog, addToList, cardRows, cardTagList, copiesSummary, openCard, sameTag, tagChip, thumbnail, tickInfo, ticks } from "../cards.js";
+import { addInDialog, addToList, cardRows, sameTag, tagChip, tickInfo, ticks } from "../cards.js";
 import { gain, tile } from "../charts.js";
 import { $, askDialog, fill, h, status } from "../dom.js";
-import { anyPrice, choiceNames, compareNumber, englishPrice, fname, languageName, noted, plural, sn, title, usd } from "../format.js";
-import { go, hashParams } from "../nav.js";
+import { anyPrice, choiceNames, compareNumber, fname, languageName, plural, title, usd } from "../format.js";
+import { go, hashParams, route } from "../nav.js";
 import { state } from "../state.js";
 import { showBulkEdit } from "./bulk.js";
+import { openAdd } from "./add.js";
 import { renderCard } from "./card.js";
+import { cardLine } from "./copies.js";
+import { lotPanel, lotProgress } from "./lots.js";
 
 // The collection list's sort keys (as GET /cards takes them) and labels.
 const SORTS = [["name", "Name"], ["set", "Set"], ["number", "Number"], ["price", "Price each"], ["value", "Value"],
@@ -18,15 +22,17 @@ const SORTS = [["name", "Name"], ["set", "Set"], ["number", "Number"], ["price",
 // Keys that start ascending when chosen; the rest start with the most first.
 
 const ASCENDING_FIRST = ["name", "number", "tag"];
+// How many cards the list draws at a time.
+const PAGE = 60;
 // Collection URL parameters that aren't filters.
 
-const LIST_KEYS = ["key", "sort", "dir", "view"];
+const LIST_KEYS = ["key", "sort", "dir"];
 // The filters in the More filters panel.
 
-const MORE_KEYS = ["condition", "language", "card_type", "lot", "price_min", "price_max", "acquired_from", "acquired_to", "min_copies", "has_note", "no_price_paid", "unpriced",
+const MORE_KEYS = ["condition", "language", "card_type", "price_min", "price_max", "acquired_from", "acquired_to", "min_copies", "no_price_paid", "unpriced",
   "tags", "tags_mode", "tags_not", "untagged"];
 
-const FLAGS = [["has_note", "Has a note"], ["no_price_paid", "No price paid"], ["unpriced", "No market price"], ["untagged", "Untagged"]];
+const FLAGS = [["no_price_paid", "No price paid"], ["unpriced", "No market price"], ["untagged", "Untagged"]];
 // The tags in a filter parameter ("binder A,elves deck").
 
 const paramTags = (q, name) => (q.get(name) || "").split(",").map((t) => t.trim()).filter(Boolean);
@@ -45,8 +51,7 @@ function moreFilters(q, nav, menu, gameFilters, lots, tagCounts) {
       // "Mana value: 3" rather than a bare "3" once chosen.
       gameFilters.map((x) => menu("f." + x.Name, x.Name, x.Options, (o) => `${x.Name}: ${o}`)),
       menu("condition", "Condition", f.conditions, (x) => choiceNames.default_condition[x] || x),
-      (f.languages || []).length ? menu("language", "Language", f.languages.map((l) => ({ value: l.code, label: l.name }))) : null,
-      lots.length ? menu("lot", "Lot", lots.map((l) => ({ value: l.id, label: l.name }))) : null),
+      (f.languages || []).length ? menu("language", "Language", f.languages.map((l) => ({ value: l.code, label: l.name }))) : null),
     h("div.more-fields",
       h("label", "Type", field("card_type", { type: "text", placeholder: "e.g. creature" })),
       h("label", "At least", field("min_copies", { type: "number", min: 1, step: 1, placeholder: "copies" })),
@@ -109,7 +114,7 @@ function filterChip(k, v, lots) {
     case "condition": return `Condition: ${choiceNames.default_condition[v] || v}`;
     case "language": return `Language: ${languageName(v)}`;
     case "card_type": return `Type: ${v}`;
-    case "lot": return `Lot: ${lots.find((l) => l.id === v)?.name || v}`;
+    case "lot": return v === "none" ? "Bought in no lot" : `Bought in: ${lots.find((l) => l.id === v)?.name || v}`;
     case "price_min": return `Price ≥ ${usd(Number(v))}`;
     case "price_max": return `Price ≤ ${usd(Number(v))}`;
     case "acquired_from": return `Acquired from ${v}`;
@@ -143,17 +148,22 @@ function filterChips(q, nav, lots) {
 // edit), and beside them the selected card's editor or, when a set is chosen, the
 // set's page.
 export async function viewCollection(params) {
-  // Selecting a card redraws the list: keep its scroll position if it lists the same cards.
-  const listScroll = document.querySelector(".pane-list .list")?.scrollTop || 0;
   const f = state.filters;
   const q = new URLSearchParams(params);
   const nav = (mutate, replace) => { const p = hashParams(); mutate(p); go("collection", p, replace); };
+  // A card chosen: its page, in place of the list.
+  if (q.get("key")) {
+    const detail = h("div.pane-detail.full");
+    fill($("#main"), detail);
+    await renderCard(detail, q.get("key"));
+    return;
+  }
   const menu = (name, label, options, display) => h("select" + (q.get(name) ? ".on" : ""), {
     "aria-label": label, onchange: (e) => nav((p) => { e.target.value ? p.set(name, e.target.value) : p.delete(name); p.delete("key"); }) },
     h("option", { value: "" }, label),
     options.map((o) => h("option", { value: o.value ?? o, selected: q.get(name) === (o.value ?? o) }, display ? display(o) : (o.label ?? o))));
 
-  const search = h("input", { type: "search", placeholder: "Search name, set, or collector number", value: q.get("q") || "", "aria-label": "Search the collection" });
+  const search = h("input", { type: "search", placeholder: "Filter this list by name, set, number or tag", value: q.get("q") || "", "aria-label": "Filter the collection" });
   let timer;
   search.addEventListener("input", () => {
     clearTimeout(timer);
@@ -161,20 +171,21 @@ export async function viewCollection(params) {
   });
   const setMenu = menu("set", "Set", (f.sets || []).map((x) => ({ value: x.Code, label: x.Label })));
   setMenu.classList.add("set-menu"); // set names are long: the menu gets its own line
-  // The game's first filter (Magic's Color) stays in view; the rest go in More filters.
-  const [firstFilter, ...otherFilters] = f.filters || [];
-  const filters = h("div.filters", search, h("div.menus",
-    setMenu,
-    firstFilter ? menu("f." + firstFilter.Name, firstFilter.Name, firstFilter.Options) : null,
-    menu("rarity", "Rarity", f.rarities, title),
-    menu("finish", "Finish", f.finishes, fname)));
 
   const apiQ = new URLSearchParams(q);
   for (const k of LIST_KEYS) if (k !== "sort" && k !== "dir") apiQ.delete(k);
   const [data, lots, tagTotals] = await Promise.all([api("GET", gameAPI(`/cards?${apiQ}`)), loadLots(),
     (state.filters.tags || []).length ? api("GET", gameAPI("/tags")) : { tags: [] }]);
   const filtering = [...apiQ.keys()].some((k) => !LIST_KEYS.includes(k));
-  const grid = q.get("view") === "grid";
+  // The game's first filter (Magic's Color) stays in view; the rest go in More filters.
+  const [firstFilter, ...otherFilters] = f.filters || [];
+  const lotMenu = lots.length ? menu("lot", "Bought in", [{ value: "none", label: "No lot" }, ...lots.map((l) => ({ value: l.id, label: `📦 ${l.name}` }))]) : null;
+  const filters = h("div.filters", search, h("div.menus",
+    setMenu,
+    firstFilter ? menu("f." + firstFilter.Name, firstFilter.Name, firstFilter.Options) : null,
+    menu("rarity", "Rarity", f.rarities, title),
+    menu("finish", "Finish", f.finishes, fname),
+    lotMenu));
   filters.append(...[moreFilters(q, nav, menu, otherFilters, lots, tagTotals.tags), filterChips(q, nav, lots)].filter(Boolean));
   const ticked = ticks();
   if (!filtering) { // every card is listed: drop ticks for cards no longer owned
@@ -182,7 +193,7 @@ export async function viewCollection(params) {
     for (const k of [...ticked.keys()]) if (!keys.has(k)) ticked.delete(k);
   }
 
-  // Sorting and the list or grid view, kept in the URL with the filters.
+  // Sorting, kept in the URL with the filters.
   const sortMenu = h("select", { "aria-label": "Sort by", onchange: (e) => nav((p) => {
     p.set("sort", e.target.value);
     p.set("dir", ASCENDING_FIRST.includes(e.target.value) ? "asc" : "desc");
@@ -191,39 +202,31 @@ export async function viewCollection(params) {
   const dirButton = h("button.dir", { type: "button", "aria-label": desc ? "Descending; switch to ascending" : "Ascending; switch to descending",
     title: desc ? "Descending" : "Ascending",
     onclick: () => nav((p) => { p.set("sort", data.sort); p.set("dir", desc ? "asc" : "desc"); }, true) }, desc ? "↓" : "↑");
-  const viewToggle = h("div.ranges", { role: "group", "aria-label": "Show as" },
-    [["list", "List"], ["grid", "Grid"]].map(([v, label]) => h("button" + ((v === "grid") === grid ? ".on" : ""), {
-      type: "button", "aria-pressed": String((v === "grid") === grid),
-      onclick: () => nav((p) => { v === "grid" ? p.set("view", "grid") : p.delete("view"); }, true) }, label)));
-  const listbar = h("div.listbar", sortMenu, dirButton, viewToggle);
+  const listbar = h("div.listbar", sortMenu, dirButton);
 
-  const boxes = new Map();
-  const row = (c) => {
-    const box = h("input", { type: "checkbox", checked: ticked.has(c.key), "aria-label": `Tick ${c.name} for bulk edit`,
-      onclick: (e) => e.stopPropagation(),
-      onchange: (e) => { e.target.checked ? ticked.set(c.key, tickInfo(c)) : ticked.delete(c.key); updateBar(); } });
-    boxes.set(c.key, box);
-    const priced = (c.purchases || []).some((p) => p.market > 0);
-    // The tick box and the button that opens the card sit side by side.
-    return h("div.card" + (c.key === q.get("key") ? ".sel" : "") + (cardTagList(c).length ? ".tagged" : ""),
-      box, h("button.entry", { type: "button", onclick: () => openCard(c.key) },
-        thumbnail(c, grid),
-        h("span.text", h("span.name", c.name), h("span.meta", [sn(c), copiesSummary(c), englishPrice(c), noted(c)].filter(Boolean).join(" · "))),
-        h("span.qty", `×${c.copy_count}`),
-        // "each" only when every copy is one finish: with two, one price doesn't fit them all.
-        h("span.money", priced ? usd(c.market_value) : "—",
-          c.copy_count > 1 && priced && new Set(c.purchases.map((p) => p.finish)).size === 1 ? h("small", `${usd(c.each)} each`) : null)),
-      rowTags(c));
+  // The line items, a page at a time. A change saved on a line redraws the page
+  // (keeping the scroll); a split not saved yet just redraws the lines.
+  let shown = Math.max(PAGE, state.linesShown && state.listKey === `${apiQ}` ? state.linesShown : 0);
+  const list = h("div.lines");
+  const more = h("button", { type: "button", onclick: () => { shown += PAGE; drawLines(); } }, "Show more");
+  const ctx = {
+    lots,
+    onTick: () => updateBar(),
+    redraw: async (refetch = true) => {
+      if (!refetch) { drawLines(); return; }
+      const y = window.scrollY;
+      state.linesShown = shown;
+      await loadLots();
+      await route();
+      window.scrollTo(0, y);
+    },
   };
-  // A row's tags: up to three chips (each filters the list by its tag), then "+N".
-  const rowTags = (c) => {
-    const tags = cardTagList(c);
-    if (!tags.length) return null;
-    return h("div.row-tags", tags.slice(0, 3).map((t) => tagChip(t, { "aria-label": `Show cards tagged ${t}`, title: `Show cards tagged ${t}`,
-      onclick: () => nav((p) => { p.set("tags", t); p.delete("tags_not"); p.delete("tags_mode"); p.delete("key"); }) })),
-      tags.length > 3 ? h("span.more", { title: tags.slice(3).join(", ") }, `+${tags.length - 3}`) : null);
-  };
-  const list = h("div.list" + (grid ? ".grid" : ""), data.cards.length ? data.cards.map(row) : h("p.muted.empty", "No cards match."));
+  function drawLines() {
+    fill(list, data.cards.length ? data.cards.slice(0, shown).map((c) => cardLine(c, ctx)) : h("p.muted.empty", "No cards match."),
+      data.cards.length > shown ? h("p.more", more, h("span.muted", ` ${shown} of ${data.cards.length}`)) : null);
+  }
+  drawLines();
+  state.listKey = `${apiQ}`;
 
   const counts = `${plural(data.uniqueCards, "unique card", "unique cards")} · ${plural(data.cardCount, "card", "cards")} · ${plural(data.sets, "set", "sets")}`;
   const money = `${usd(data.marketValue)} value · ${usd(data.pricePaid)} paid`;
@@ -235,12 +238,13 @@ export async function viewCollection(params) {
 
   // The selection bar: how many are ticked, and the bulk edit actions.
   const count = h("span.count");
-  const selectAll = h("button", { type: "button", onclick: () => { data.cards.forEach((c) => ticked.set(c.key, tickInfo(c))); boxes.forEach((b) => { b.checked = true; }); updateBar(); } }, "Select all shown");
-  const clearTicks = h("button", { type: "button", onclick: () => { ticked.clear(); boxes.forEach((b) => { b.checked = false; }); updateBar(); } }, "Clear");
+  const selectAll = h("button", { type: "button", onclick: () => { data.cards.forEach((c) => ticked.set(c.key, tickInfo(c))); drawLines(); updateBar(); } }, "Select all shown");
+  const clearTicks = h("button", { type: "button", onclick: () => { ticked.clear(); drawLines(); updateBar(); } }, "Clear");
   const bulk = h("button.primary", { type: "button", onclick: () => showBulkEdit() }, "Bulk edit…");
   const bar = h("div.selbar", count, selectAll, clearTicks, bulk);
   function updateBar() {
-    const hidden = [...ticked.keys()].filter((k) => !boxes.has(k)).length;
+    const listed = new Set(data.cards.map((c) => c.key));
+    const hidden = [...ticked.keys()].filter((k) => !listed.has(k)).length;
     count.textContent = !ticked.size ? "Tick cards to bulk edit them" :
       `${plural(ticked.size, "card", "cards")} ticked${hidden ? ` (${hidden} hidden by filters)` : ""}`;
     bar.classList.toggle("ticked", ticked.size > 0);
@@ -249,29 +253,21 @@ export async function viewCollection(params) {
   }
   updateBar();
 
-  const detail = h("div.pane-detail");
-  const split = h("div.split", h("div.pane-list", filters,
-    h("p.counts.muted", h("span", filtering ? `Matching: ${counts}` : counts, h("span.money-line", ` · ${money}`)), h("span.count-actions", clear, exportButton)),
-    listbar, list, bar), detail);
-  fill($("#main"), split);
-  const listKey = `${apiQ}|${grid}`;
-  if (state.listKey === listKey) {
-    list.scrollTop = listScroll;
-    if (!q.get("key") && state.listWindowY != null) window.scrollTo(0, state.listWindowY);
-  }
-  if (!q.get("key")) state.listWindowY = null;
-  state.listKey = listKey;
-  if (q.get("key")) {
-    split.classList.add("showing-detail");
-    await renderCard(detail, q.get("key"));
-  } else if (q.get("set")) {
-    await renderSet(detail, q.get("set"));
-  } else {
-    split.classList.add("no-detail");
-    detail.append(h("div.detail", h("h2", { style: "margin-top:0" }, "Your collection"),
-      h("p.muted", "Select a card to see and edit it, or choose a set in the Set filter to see its page."),
-      h("p.muted", "To change many cards at once, tick them (narrow the list with the search and filters, then Select all shown) and press Bulk edit.")));
-  }
+  // Unfinished lots: keep entering their cards from here.
+  const banners = lots.filter((l) => l.open && l.id !== q.get("lot")).map((l) => h("div.card-box.notice.lot-banner",
+    h("div.grow", h("strong", "📦 ", l.name), h("span.muted", ` — ${lotProgress(l)} · ${usd(l.total_paid)} paid`),
+      l.expected ? h("div.bar", h("i", { style: `width:${Math.min(100, (l.entered / l.expected) * 100)}%` })) : null),
+    h("button.primary", { type: "button", onclick: () => openAdd({ lot: l.id }) }, "Keep adding"),
+    h("button", { type: "button", onclick: () => nav((p) => { p.set("lot", l.id); }) }, "Show its cards")));
+  const lot = lots.find((l) => l.id === q.get("lot"));
+  const setBox = h("div");
+  fill($("#main"),
+    h("datalist", { id: "tag-names" }, (f.tags || []).map((t) => h("option", { value: t }))),
+    banners, lot ? lotPanel(lot, (id) => openAdd({ lot: id })) : null, setBox,
+    h("div.collection", filters,
+      h("p.counts.muted", h("span", filtering ? `Matching: ${counts}` : counts, h("span.money-line", ` · ${money}`)), h("span.count-actions", clear, exportButton)),
+      listbar, list, bar));
+  if (q.get("set")) await renderSet(setBox, q.get("set"));
 }
 
 // renderSet shows a set's completion and value, its most valuable cards (by one copy)

@@ -79,7 +79,7 @@ function) that holds it.
 - **Copy:** one physical card. A card holds its copies as `Copies`: finish →
   condition → purchases.
 - **Purchase:** copies bought together, the same in every way that matters: the same
-  price paid, date, note and tags (`core::collection::Purchase`). It has a
+  price paid, date and tags (`core::collection::Purchase`). It has a
   `quantity`. The card page's "Your Copies" rows are purchases.
 - **Finish:** how the card is printed: `nonfoil`, `foil` or `etched` (Magic's).
 - **Condition:** how worn a copy is: NM, LP, MP, HP or DMG (`core::collection::Condition`).
@@ -119,7 +119,7 @@ function) that holds it.
 | `ui/js/format.js` | Money, plurals, dates, names of finishes and settings choices | You format something new |
 | `ui/js/charts.js` | The line chart, bar rows and number tiles | You change a chart |
 | `ui/js/cards.js` | Pieces several pages share: card rows, tags, the add-a-card form, add to a list, watch | A change shows on more than one page |
-| `ui/js/pages/*.js` | One page each (home, collection, card, bulk, add, scan, search, lots, lists, watchlist, sealed, earnings, tags, stats, tools, settings) | You change what one page shows or does |
+| `ui/js/pages/*.js` | One page each (home, collection, card, bulk, scan, search, lists, watchlist, sealed, earnings, tags, stats, tools, settings), plus `add.js` (the Add dialog: a card, or a pack, bundle or lot), `copies.js` (the collection's line items and their rows of copies) and `lots.js` (a lot's panel, editing and finishing a lot) | You change what one page shows or does |
 | `scripts/check-ui.mjs` | Checks the UI's JavaScript | It fails in CI |
 | `crates/api/src/lib.rs` | The `Api` type, `handle` and `route` (every endpoint, grouped by file) | You add an endpoint |
 | `crates/api/src/*.rs` | Handlers for each part of the API: `home`, `collection`, `catalog`, `tags`, `transfer` (import, export, backups, jobs), `settings`, `lots`, `lists`, `sales`, `watchlist`, `sealed`, `folders`, `report` (the printable valuation); `views.rs` shapes cards in answers | You change what an endpoint does |
@@ -150,7 +150,8 @@ press **Save changes**.
 
 1. **The page.** `renderCard` in `ui/js/pages/card.js` draws the card's purchases as
    rows of inputs. Its `save` function reads every row (finish, condition, quantity,
-   price paid, date, note, lot, tags) into a `purchases` list.
+   price paid, date, lot, tags) into a `purchases` list. (The collection's rows,
+   in `ui/js/pages/copies.js`, save the same way: `purchasesOf` builds the list.)
 2. **The request.** `save` calls
    `api("PUT", gameAPI("/card?key=<printing ID>"), { purchases })`. `api()` in
    `ui/js/api.js` sends it with the `X-TCGBinder-Client` header, which every change
@@ -178,7 +179,7 @@ the checks (section 1).
 
 ### Add a field to a purchase
 
-Follow the `note` field.
+Follow the `acquired_date` field.
 
 1. `crates/core/src/collection/copies.rs`: add the field to `Purchase`, with
    `#[serde(skip_serializing_if = ...)]` so an empty value stays out of the file (the
@@ -187,7 +188,7 @@ Follow the `note` field.
 2. `crates/core/src/collection/store/mod.rs`: if selling must match it, compare it in
    `Store::take_copies`, and in `GameService::sell` (`crates/core/src/service.rs`).
    Add it to `Sale` (`crates/core/src/sales.rs`) and `GameService::delete_sale` if
-   undoing a sale should restore it (as `purchase_note` does).
+   undoing a sale should restore it (as `acquired_date` is).
 3. `crates/api/src/views.rs`: add it to `PurchaseView` and set it in `view`.
 4. `crates/api/src/collection.rs`: add it to `PurchaseForm`, check it in `validate`,
    and set it in `add`.
@@ -197,12 +198,14 @@ Follow the `note` field.
    `crates/core/src/collection/csv_export.rs`; `Row`, `Field`, `HEADER_ALIASES` and
    `parse_csv` in `crates/mtg/src/importer/formats.rs`; and the `Purchase` built in
    `crates/mtg/src/lib.rs` (`Magic::import`).
-7. `ui/js/pages/card.js`: an input in `renderCard`'s purchase rows, and the field in
-   `save`'s `purchases.push(...)`. Also the add form (`addForm` in `ui/js/cards.js`)
-   and the sell request in `showSell` if they need it.
+7. The UI: in `ui/js/pages/copies.js`, the row's display (`rowEl`), the signature
+   that groups copies (`sig`) and the purchases saved (`purchasesOf`); in
+   `ui/js/pages/card.js`, an input in `renderCard`'s purchase rows and the field in
+   `save`'s `purchases.push(...)`; and the Add dialog's card fields
+   (`ui/js/pages/add.js`) and the sell requests if they need it.
 8. Docs: the purchase fields in `docs/web-api.md`, and `docs/user-guide.md`.
 9. Tests: a core test like `copies::tests` (what is stored), and an API test like
-   `notes_on_purchases` in `crates/api/src/tests/collection.rs`.
+   `edit_and_delete_card` in `crates/api/src/tests/collection.rs`.
 
 ### Add a filter to the collection list
 
@@ -286,7 +289,7 @@ Follow the Tags page.
    phone width.
 
 Pages import from the shared files. A page may import a dialog or panel another
-page owns (Add uses the lot dialog from `pages/lots.js`), but never another page's
+page owns (the collection uses the Add dialog from `pages/add.js`), but never another page's
 view: only `main.js` imports those. If two pages need the same small function, it
 belongs in a shared file.
 
@@ -332,7 +335,7 @@ Follow Dragon Shield.
 
 ## 6. Rules that aren't obvious
 
-- **UI text goes through `h()` and `fill()`, never `innerHTML`.** Card names, notes
+- **UI text goes through `h()` and `fill()`, never `innerHTML`.** Card names, lot names
   and tags come from other apps' files and from Scryfall. Inserted as text, they
   can't add markup or scripts to the page.
 - **Stored formats may change freely until the first public release.** Until then

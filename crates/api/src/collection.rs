@@ -7,8 +7,8 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use tcgbinder_core::collection::{
-    BulkChange, Card, Condition, Query, SortKey, card_has_tag, card_key, clean_user_tag, is_any, is_system_tag, lot_tag, round_cents,
-    sort_cards, split_tags, unique_cards, with_printing,
+    BulkChange, Card, Condition, Query, SortKey, card_has_tag, card_key, clean_user_tag, is_any, is_system_tag, lot_of, lot_tag,
+    round_cents, sort_cards, split_tags, unique_cards, with_printing,
 };
 use tcgbinder_core::service::GameService;
 use tcgbinder_core::{Purchase, dates};
@@ -23,7 +23,6 @@ struct PurchaseForm {
     /// Per copy.
     price_paid: f64,
     acquired_date: String,
-    note: String,
     /// The lot the copies belong to; its total sets their price.
     lot: String,
     /// The owner's tags on these copies.
@@ -52,16 +51,35 @@ impl PurchaseForm {
             quantity: self.quantity,
             price_paid: self.price_paid,
             acquired_date: self.acquired_date.clone(),
-            note: self.note.trim().to_string(),
             tags: views::stored_tags(&self.tags, &self.lot).unwrap_or_default(), // checked by validate
         };
         c.add_purchase(&finish, Condition::parse(&self.condition), p);
     }
 }
 
+/// The lots a card has copies in.
+fn lots_of(c: &Card) -> Vec<String> {
+    c.copies.each().filter_map(|(_, _, p)| lot_of(&p.tags).map(str::to_string)).collect()
+}
+
+/// Reprices each lot named (once), so its cards' shares follow copies added, removed or
+/// moved. Lots that no longer exist are skipped.
+fn reprice_lots(g: &GameService, ids: impl IntoIterator<Item = String>) -> Result<()> {
+    let mut seen = HashSet::new();
+    for id in ids {
+        if seen.insert(id.clone())
+            && let Some(lot) = g.lots.get(&id)
+        {
+            g.reprice_lot(&lot).map_err(internal)?;
+        }
+    }
+    Ok(())
+}
+
 impl Api {
     /// The filtered cards, sorted, with counts and money totals. Filters: q, set,
-    /// rarity, finish, condition, language, card_type, lot, has_note, price_min,
+    /// rarity, finish, condition, language, card_type, lot (an ID, or "none" for copies
+    /// in no lot), price_min,
     /// price_max, acquired_from, acquired_to, min_copies, no_price_paid, unpriced,
     /// tags, tags_mode (all or any), tags_not, untagged, and one per game filter,
     /// named f.<filter name>. Sorting: sort (a [`SortKey`] name)
@@ -102,7 +120,9 @@ impl Api {
             let v = get(k);
             if v.is_empty() || dates::parse(&v).is_some() { Ok(v) } else { Err(bad(format!("{k} must be a date like 2024-03-15"))) }
         };
-        let lot = Some(get("lot")).filter(|l| !l.is_empty()).map(|l| lot_tag(&l));
+        // `lot=`: a lot's ID, or "none" for cards with copies in no lot.
+        let no_lot = get("lot") == "none";
+        let lot = Some(get("lot")).filter(|l| !l.is_empty() && !no_lot).map(|l| lot_tag(&l));
         let q = Query {
             text: get("q"),
             set: get("set"),
@@ -111,7 +131,6 @@ impl Api {
             condition: get("condition"),
             language: get("language"),
             card_type: get("card_type"),
-            has_note: flag("has_note"),
             price_min: number("price_min")?,
             price_max: number("price_max")?,
             acquired_from: date("acquired_from")?,
@@ -120,8 +139,8 @@ impl Api {
             no_price_paid: flag("no_price_paid"),
             unpriced: flag("unpriced"),
             matches: Some(Box::new(move |c: &Card| {
-                // `lot=`: a purchase carries the lot's tag.
                 lot.as_ref().is_none_or(|tag| card_has_tag(c, tag))
+                    && (!no_lot || c.copies.each().any(|(_, _, p)| lot_of(&p.tags).is_none()))
                     && filters.iter().all(|f| params.get(&format!("f.{}", f.name)).is_none_or(|opt| is_any(opt) || (f.matches)(c, opt)))
             })),
             tags: split_tags(&get("tags")),
@@ -181,6 +200,7 @@ impl Api {
             purchases: Vec<PurchaseForm>,
         }
         let req: Req = decode(body)?;
+        let before = lots_of(&c);
         c.copies = Default::default();
         for p in &req.purchases {
             p.validate(&c)?;
@@ -188,6 +208,8 @@ impl Api {
         }
         let copies = c.copy_count();
         let (new_key, merged) = g.store.save_card(key, c.clone()).map_err(internal)?;
+        // The lots the card's copies were in or are in now: their split changes.
+        reprice_lots(g, before.into_iter().chain(lots_of(&c)))?;
         tracing::info!(game = g.game.id(), card = c.name, key = new_key, copies, "card updated");
         Ok(Reply::Json(json!({ "key": new_key, "merged": merged, "deleted": copies == 0 })))
     }
@@ -195,6 +217,7 @@ impl Api {
     pub(crate) fn delete_card(&self, g: &GameService, key: &str) -> Result {
         let c = self.find(g, key)?;
         g.store.remove_card(key).map_err(internal)?;
+        reprice_lots(g, lots_of(&c))?;
         tracing::info!(game = g.game.id(), card = c.name, key, "card deleted");
         Ok(Reply::Json(json!({ "deleted": key })))
     }
@@ -277,8 +300,6 @@ impl Api {
             finish: String,
             price_paid: Option<f64>,
             acquired_date: String,
-            /// `null` leaves notes as they are; "" clears them.
-            note: Option<String>,
             add_tags: Vec<String>,
             remove_tags: Vec<String>,
             clear_tags: bool,
@@ -300,7 +321,6 @@ impl Api {
             finish: (!req.finish.is_empty()).then_some(req.finish),
             price_paid: req.price_paid,
             acquired_date: (!req.acquired_date.is_empty()).then_some(req.acquired_date),
-            note: req.note,
             add_tags: tags_from(&req.add_tags)?,
             remove_tags: req.remove_tags,
             clear_tags: req.clear_tags,

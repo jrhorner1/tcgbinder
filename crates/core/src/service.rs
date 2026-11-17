@@ -150,15 +150,14 @@ impl GameService {
     }
 
     /// Sells copies from one purchase of the card stored under `key` (the purchase is
-    /// `sale`'s finish and condition with `purchase`'s price paid, acquired date, note
-    /// and user tags; the lot isn't compared). The sale is recorded first, then the copies leave the collection: if
+    /// `sale`'s finish and condition with `purchase`'s price paid, acquired date and user
+    /// tags; the lot isn't compared). The sale is recorded first, then the copies leave the collection: if
     /// the second step fails, the sale exists and the copies remain, both visible.
     pub fn sell(&self, key: &str, purchase: &Purchase, mut sale: Sale) -> Result<Sale> {
         let Some(card) = self.store.get(key) else { bail!("that card isn't in the collection") };
         let found = card.purchases(&sale.finish, sale.condition).into_iter().find(|p| {
             p.price_paid == purchase.price_paid
                 && p.acquired_date == purchase.acquired_date
-                && p.note == purchase.note
                 && same_tags(&user_tags(&p.tags).cloned().collect::<Vec<_>>(), &user_tags(&purchase.tags).cloned().collect::<Vec<_>>())
         });
         let Some(p) = found else { bail!("that purchase isn't in the collection any more") };
@@ -168,7 +167,6 @@ impl GameService {
         sale.card = CardRef::from(&card);
         sale.cost_each = p.price_paid;
         sale.acquired_date = p.acquired_date.clone();
-        sale.purchase_note = p.note.clone();
         sale.purchase_tags = p.tags.clone();
         let sale = self.sales.add(sale)?;
         if let Err(e) = self.store.take_copies(key, &sale.finish, sale.condition, &p, sale.quantity) {
@@ -189,7 +187,6 @@ impl GameService {
                 quantity: sale.quantity,
                 price_paid: sale.cost_each,
                 acquired_date: sale.acquired_date.clone(),
-                note: sale.purchase_note.clone(),
                 tags: sale.purchase_tags.clone(),
             };
             let existing = self.store.cards_where(|c| c.id == sale.card.id);

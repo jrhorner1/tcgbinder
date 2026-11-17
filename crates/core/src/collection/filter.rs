@@ -22,7 +22,7 @@ pub type CardMatch<'a> = Box<dyn Fn(&Card) -> bool + 'a>;
 #[derive(Default)]
 pub struct Query<'a> {
     /// Whitespace-separated terms; every term must match the name, set code, set name,
-    /// collector number, or a purchase's note or tags.
+    /// collector number, or a purchase's tags.
     pub text: String,
     /// Set code (case-insensitive); "" or [`FILTER_ANY`] for all.
     pub set: String,
@@ -35,8 +35,6 @@ pub struct Query<'a> {
     pub language: String,
     /// Text the type line contains, ignoring case ("creature", "legendary").
     pub card_type: String,
-    /// Only cards with a note on a purchase.
-    pub has_note: bool,
     /// One copy's price ([`Card::best_price`]) at least / at most this; unpriced cards
     /// don't match either bound.
     pub price_min: Option<f64>,
@@ -96,7 +94,6 @@ impl Query<'_> {
                 && (is_any(&self.language) || c.language.eq_ignore_ascii_case(&self.language))
                 && (card_type.is_empty() || contains_fold(&c.type_line, &card_type))
                 && condition.is_none_or(|want| c.copies.each().any(|(_, cond, p)| cond == want && p.quantity > 0))
-                && (!self.has_note || c.copies.each().any(|(_, _, p)| !p.note.trim().is_empty()))
                 && (self.price_min.is_none() && self.price_max.is_none()
                     || c.best_price().is_some_and(|x| self.price_min.is_none_or(|m| x >= m) && self.price_max.is_none_or(|m| x <= m)))
                 && (!dated || c.copies.each().any(|(_, _, p)| in_range(&p.acquired_date)))
@@ -105,10 +102,10 @@ impl Query<'_> {
                 && (!self.unpriced || c.market_value().1 > 0)
                 && self.tags_match(c)
                 && self.matches.as_ref().is_none_or(|m| m(c))
-                // Each term in the name, set code, set name, number or a purchase's note.
+                // Each term in the name, set code, set name, number or a purchase's tags.
                 && terms.iter().all(|t| {
                     [&c.name, &c.set, &c.set_name, &c.collector_number].iter().any(|field| contains_fold(field, t))
-                        || c.copies.each().any(|(_, _, p)| contains_fold(&p.note, t) || user_tags(&p.tags).any(|tag| contains_fold(tag, t)))
+                        || c.copies.each().any(|(_, _, p)| user_tags(&p.tags).any(|tag| contains_fold(tag, t)))
                 })
         }
     }
@@ -357,24 +354,6 @@ mod tests {
     }
 
     #[test]
-    fn search_finds_notes() {
-        let mut noted = card("Opt", "DOM", "60", "common", "nonfoil");
-        noted.add_purchase(
-            "foil",
-            Condition::NearMint,
-            Purchase { quantity: 1, note: "Trade binder, page 3".into(), ..Default::default() },
-        );
-        let plain = card("Shock", "M19", "156", "common", "nonfoil");
-        let find = |text: &str| {
-            let q = Query { text: text.into(), ..Query::default() };
-            [&noted, &plain].iter().filter(|c| q.matcher()(c)).map(|c| c.name.clone()).collect::<Vec<_>>()
-        };
-        assert_eq!(find("binder"), ["Opt"]);
-        assert_eq!(find("opt page"), ["Opt"], "terms can mix name and note");
-        assert!(find("binder shock").is_empty());
-    }
-
-    #[test]
     fn collector_numbers() {
         let mut v = vec!["10a", "A1", "2", "10", "★1"];
         v.sort_by(|a, b| compare_collector_number(a, b));
@@ -493,13 +472,9 @@ mod tests {
         cards[3].type_line = "Legendary Creature — Goblin".into();
         cards[1].language = "ja".into();
         for c in &mut cards[..1] {
-            c.add_purchase("nonfoil", Condition::LightPlay, Purchase { quantity: 1, note: " ".into(), ..Default::default() });
+            c.add_purchase("nonfoil", Condition::LightPlay, Purchase { quantity: 1, ..Default::default() });
         }
-        cards[3].add_purchase(
-            "foil",
-            Condition::NearMint,
-            Purchase { quantity: 1, note: "binder".into(), tags: vec!["lot:lot1".into()], ..Default::default() },
-        );
+        cards[3].add_purchase("foil", Condition::NearMint, Purchase { quantity: 1, tags: vec!["lot:lot1".into()], ..Default::default() });
         cards[2].market.clear(); // Shock: unpriced
         let q = |f: &dyn Fn(&mut Query)| {
             let mut q = Query::default();
@@ -515,7 +490,6 @@ mod tests {
         assert_eq!(q(&|q| q.tags = vec!["lot:lot1".into()]), "Zap");
         assert_eq!(q(&|q| q.text = "lot1".into()), "", "the lot's tag isn't searched");
         assert_eq!(q(&|q| q.untagged = true), "Bolt,Opal,Zap", "Zap: a purchase whose only tag is a lot's is untagged");
-        assert_eq!(q(&|q| q.has_note = true), "Zap", "a blank note isn't a note");
         assert_eq!(q(&|q| q.price_min = Some(1.0)), "Bolt,Opal");
         assert_eq!(q(&|q| q.price_max = Some(1.0)), "Bolt,Zap", "unpriced Shock matches no bound");
         assert_eq!(

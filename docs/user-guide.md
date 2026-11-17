@@ -6,10 +6,10 @@ The same app runs on the desktop (macOS, Windows, Linux), on iPhone and iPad, an
 web browser (`tcgbinder --web`), with the same pages everywhere.
 
 On the desktop (and in a wide browser window) the sidebar has **Home**, your
-collection (**Magic**), **Statistics**, **Lists**, **Bundles/Lots**, **Tools** and
-**Settings**, with **Add cards** (a menu: a single card, or a pack, bundle or lot)
-and **Scan a card** below them. On phones the tab bar at the bottom has **Home**, **Cards**,
-**Add**, **Tools** and **Settings**.
+collection (**Magic**), **Statistics**, **Lists**, **Tools** and **Settings**, with
+**Add…** and **Scan a card** below them. On phones the tab bar at the bottom has
+**Home**, **Cards**, **Add**, **Tools** and **Settings**. The search box at the top of
+every page searches your cards and the catalog (see Search).
 
 ## Home
 
@@ -46,66 +46,83 @@ as soon as the import finishes.
 
 ## Collection
 
-- **Browse:** every card is listed with its set, number and copies, and on the right
-  what all its copies are worth (with the price of one copy underneath when there are
-  several in one finish). With card images on, each row has a small picture.
+- **Browse:** every card is a line: its picture, name, set, number and rarity, the
+  lots its copies came from, how many copies you have and what they're worth. Under
+  it, its copies are listed in groups (copies that are the same in every way: finish,
+  condition, price paid, date, lot and tags), each with its actions on the same row:
+  - **− / +** takes a copy away or adds one; taking the last one away removes the
+    group. The finish and condition menus change the group.
+  - The price paid each, the date and what one copy is worth; a 📦 badge names the
+    lot the copies came from (click it to see that lot's cards); tag chips (click one
+    to remove that tag) and **+ tag** to add one.
+  - **Put in lot…** (or **Move…** for copies already in a lot) puts the group in a
+    lot, or takes it out: in a lot, copies take its date and their share of its
+    price, and the lot is repriced.
+  - **Sell…** records a sale of some of the group's copies right there (see Selling
+    cards).
+  - **Split** moves one copy into a group of its own, to tag it or change its
+    condition apart from the rest. Pressing it again moves another copy into that
+    same group. Once the new group is changed, it's kept apart, and the next split
+    starts another group. A split that's never changed goes back with the others
+    when the app is reopened, since identical copies are kept together.
+  - **Delete** removes the group's copies, after asking.
+
+  Every change is saved straight away. A card's name, picture or **Details…** opens
+  its page, for changing its printing, watching its price, or editing it in full.
+  The list shows 60 cards at a time; **Show more** adds the next 60.
 - **Sort:** the **Sort** menu above the list orders by name, set (release date, then
   collector number), number, price of one copy, value of every copy, gain or loss
   (cards with no price paid last), price paid, quantity, acquired date (the earliest
   purchase; undated cards last), release date, or rarity. The arrow beside it turns
   the order around. Choosing a sort starts with the most first, except for name and
   number. Until you choose one, the list follows **Settings → Card order**.
-- **List or grid:** **Grid** shows the cards as pictures, with the number of copies
-  and their value on each.
-- **Filter:** search by name, set, collector number or a purchase's note, and filter by
-  set, color, rarity and finish. **More filters** adds color identity, mana value,
-  condition (any copy in it), language, lot, type ("creature" matches every type line
-  with it), price of one copy (from and to), acquired date (any purchase in the
-  range), a minimum number of copies, and cards that have a note, have a copy with no
-  price paid, or have a copy with no market price. Each filter in use shows as a chip
+- **Filter:** filter the list by name, set, collector number or tag, and by set,
+  color, rarity, finish and **Bought in** (a lot, or **No lot** for copies bought on
+  their own). **More filters** adds color identity, mana value, condition (any copy in
+  it), language, type ("creature" matches every type line with it), price of one copy
+  (from and to), acquired date (any purchase in the range), a minimum number of
+  copies, and cards that have a copy with no price paid, or a copy with no market
+  price. Each filter in use shows as a chip
   under the filters; click the chip to remove it.
 - The line under the filters counts unique cards, cards and sets, and adds up the
   market value and price paid of the cards shown. **Clear filters** shows everything
-  again and keeps the sort and view. Sort, view and filters are part of the page's
-  address, so a bookmark keeps them.
-- **Set pages:** choose a set in the **Set** filter, or click a set on Home. They show
+  again and keeps the sort. Sort and filters are part of the page's address, so a
+  bookmark keeps them.
+- **Set pages:** choose a set in the **Set** filter, or click a set on Home. Above the
+  set's cards, they show
   completion, value, the most valuable cards (ranked by one copy), and **Missing
   Cards**. That list is loaded from Scryfall on request and follows the Set completion
   setting. It says what one of each missing card would cost at market price, sorts
   by number or most expensive first, and **Copy to a list…** puts them all on a list
   (a new one, or one you have). Click a missing card to add it.
 
-On a wide screen the selected card or set shows beside the list. On a phone (or a
-narrow window) a card replaces the list, with a **Back** button, which returns to
-the same place in the list. Selecting a card keeps the list where it was scrolled.
-When the card has little room, its picture sits above the details and each purchase
-takes two lines. In the desktop and iPhone apps, **View on Scryfall** and other links
+A card's page replaces the list, with a **Back** button, which returns to the list.
+On a phone each group of copies takes three lines: the quantity, finish and
+condition; the price, lot and tags; and the actions. In the desktop and iPhone apps, **View on Scryfall** and other links
 to websites open in your browser.
 
 ### Editing a card
 
 Each printing you own appears once. Its copies are grouped by **finish**, then
 **condition**, and each condition keeps a list of **purchases**: how many copies,
-the price paid for each, the date acquired, and an optional note. For example, two near-mint normal
+the price paid for each, the date acquired, and its tags. For example, two near-mint normal
 copies bought for $0.10 and $0.12 are two purchases, so price paid and value over
 time stay exact.
 
-- **Your Copies** lists one row per purchase: finish, condition, quantity, price
-  paid (each) and acquired date, with **Add a note** beneath for where the copies are
-  kept, who they're for, or anything else. **Add purchase** adds a row; ✕ removes
-  one. Setting every quantity to 0 removes the card when you save.
+- **Your Copies** on the card's page lists one row per purchase: finish, condition,
+  quantity, price paid (each) and acquired date, with **Add tags** beneath. **Add
+  purchase** adds a row; ✕ removes one. Setting every quantity to 0 removes the card
+  when you save.
   - The finish menu lists only the finishes that printing comes in ("Normal",
     "Foil", "Etched").
-  - Purchases with the same finish, condition, price, date and note are combined;
-    a different note keeps them apart.
-  - Cards with a note say "has a note" in the collection list, and the search box
-    finds them by their note.
+  - Purchases with the same finish, condition, price, date and tags are combined;
+    different tags keep them apart.
 - **Language** is shown on every card. It belongs to the printing, so to change it,
   use **Change printing…**.
 - **Change printing…** moves every copy to another printing of the same card (for
   example, a different set or language) without deleting and re-adding it. The
   **Language** menu shows the printings in that language (the card's own at
-  first). Each purchase keeps its condition, price paid, date and note; a finish the
+  first). Each purchase keeps its condition, price paid, date and tags; a finish the
   new printing doesn't come in becomes its first finish.
 - **Raw data** shows the card exactly as stored, as JSON.
 - **Delete** removes every copy, after asking.
@@ -120,8 +137,7 @@ Every card in the collection list has a tick box:
    several searches; the bar below the list says how many are ticked and how many
    the filters hide. **Clear** unticks everything.
 3. **Bulk edit…** opens the changes for the ticked cards: condition, finish, price
-   paid, acquired date or note for every copy (**Set to…** a note, or **Remove
-   notes**), tags (**Add tags**, **Remove tags**, or **Remove all tags**; see Tags),
+   paid or acquired date for every copy, tags (**Add tags**, **Remove tags**, or **Remove all tags**; see Tags),
    or delete them. You can still untick cards
    there. Finish changes skip printings that don't come in that finish, and copies
    that end up identical join one purchase.
@@ -171,48 +187,45 @@ your cards, and a tag disappears when it is removed from its last card.
 
 ## Adding cards
 
-**Add cards** in the sidebar offers **A single card** (the Add page) or **A pack,
-bundle or lot…** (see below); on a phone, the Add tab opens the Add page, which offers
-both. **Add** searches Scryfall by name, set code or both, and lists every printing, newest
-first (cards you already own say so). Pick the exact one, then set the quantity,
-finish, condition, price paid and date. Adding a printing you already own adds a
-purchase to it (or to a matching purchase with the same finish, condition, price and
-date).
+**Add…** in the sidebar (on a phone, the **Add** tab) opens the Add dialog, ready to
+add a card. Set the price paid each, the date and any tags once at the top; they're
+used for every card you add until you change them. Then search the catalog by name,
+or a name and set code ("Shock M19"; a set code is the last word, with a digit or in
+capitals). Every printing is listed, with what it's worth and how many you own; set
+the quantity, finish and condition on a printing's row and press **Add**. The search
+stays, so the next copy is one click away, and what you've added is listed under
+**Added just now**. **Done** closes the dialog and shows the collection.
 
 - **Searching:** a name is searched as a phrase, so "sol ring" finds Sol Ring and not
   every card with "sol" and "ring" somewhere in its name. If the phrase finds
   nothing, the words are searched anywhere in a name. Scryfall's search syntax (such
   as `t:goblin cmc<=2`, or a name in quotes) is used as typed.
-- **Suggestions:** after two letters, card names appear under the name box; pick one
-  to search for it.
-- **Adding many cards:** after adding, the page stays open with the name box empty
-  and the finish, condition, price and date kept for the next card. The cards appear
-  under **Added this session**, beside the add form (below it on a phone, so the
-  results keep their room), each with **Undo**, which takes back exactly those
-  copies.
-- **Keyboard:** Enter searches; ↑ and ↓ move through the results (or the
-  suggestions); Enter then adds the selected printing.
+- **Adding a printing you already own** adds a purchase to it (or to a matching
+  purchase with the same finish, condition, price, date and tags).
 - **Paste a list…** takes a card list, one card per line, as decklists from
   Moxfield, Archidekt or MTG Arena write them: `4 Lightning Bolt`,
   `4x Lightning Bolt`, `4 Lightning Bolt (M11) 149`, `4 Lightning Bolt [M11] 149`, with
   `*F*` or `(foil)` at the end for foil. Headings such as "Sideboard" and comments
   (`//`, `#`) are skipped. It shows the same preview as an import before anything is
   saved. Import accepts such a list as a file too.
+- **From the search at the top:** a catalog card's **Add…** opens the dialog on that
+  printing.
 - **Missing cards:** on a set page, **Add…** beside a missing card adds it without
   leaving the page.
 
 ## Adding a pack, bundle or lot
 
-When you buy cards together for one price (a pack, usually 14 or 15 cards; a bundle;
-a bulk lot), **A pack, bundle or lot…** records the purchase once (from the sidebar's
-**Add cards** menu, the Add page, or **Add a pack, bundle or lot…** on the
-Bundles/Lots page; they're all the same to the app) and works out each card's price for you:
-- **Name, total paid and date.** Every card in the lot gets the date.
-- **How many cards?**
-  - **I counted them:** one number.
-  - **It's a bundle:** packs × cards per pack (14 by default), other cards, and
-    basic lands. Basic lands cost nothing unless **Lands share the cost** is ticked.
-  - **I'll count as I add:** the total is divided by the cards entered so far.
+When you buy cards together for one price (a booster pack or box, a bundle, a deck
+builder's toolkit, an eBay lot), record the purchase once and the app works out each
+card's price. In the Add dialog, press **📦 A pack, bundle or lot…** beside the
+title; the **×** beside it goes back to adding a card. The form starts blank:
+- **Fill in:** small buttons (Booster pack, Booster box, Collector booster box,
+  Bundle, Prerelease kit, Deck builder's toolkit) fill in what that product usually
+  holds, and the name if it's empty. Change anything that's different.
+- **Name, total paid and date bought.** Every card in the lot gets the date.
+- **What's in it:** packs × cards per pack (14 if left blank), other cards (a promo,
+  a toolkit's cards, or the count of a bulk lot), and basic lands. Basic lands don't
+  take a share of the cost.
 - **Split the cost:**
   - **By each card's market value** (the default): a card worth more costs more. If
     the lot's cards are worth $80 and it cost $55, each card is costed at 68.75% of
@@ -221,39 +234,36 @@ Bundles/Lots page; they're all the same to the app) and works out each card's pr
   - **Evenly:** every card costs the same, kept to four decimal places so the lot
     adds up to its total ($38 for 500 cards is $0.0760 each).
 
-While a lot is open, the Add page shows it with how many cards are entered, **Pause**
-and **Finish**. Cards you add (by search, scan or **Paste a list…**) belong to the
-lot, which sets their price and date. Until it's finished they carry an even share.
+**Start entering cards** keeps the dialog open on the lot: it shows how many cards are
+entered ("37 of 504 entered") and what each costs so far. Search and add the lot's
+cards as above (or **Paste a list…**); they belong to the lot, which sets their price
+and date. Until it's finished they carry an even share. **Pause** closes the dialog;
 **Finish** works out a value split from that day's prices (refreshing older ones
 first), showing what each card will be costed at before saving. If you entered fewer
 cards than counted, it asks whether to spread the total over the cards entered.
 
-A paused lot is offered again the next time you open Add, on any device sharing the
-data folder. While you enter a lot, its banner links to the lot's page and to all
-lots. **Bundles/Lots** (in the sidebar; on a phone, **Tools → Bundles/Lots…**) lists
-every lot with what it cost, how many of its cards are entered ("37 of 500
-entered"), and what its cards are worth now; **Add a pack, bundle or lot…** there starts a new one
-and goes on to the Add page to enter its cards. A lot's page lists its cards, with
-**Edit** (changing the total, count, date or split reprices the cards), **Continue
-adding**, **Add cards you own…**, **Recalculate at today's prices** (finished
-value-split lots) and **Delete** (keep the cards with their prices, or delete them
-too).
+An unfinished lot shows as a banner above the collection, on any device sharing the
+data folder, with **Keep adding** and **Show its cards**. Choosing a lot in the
+collection's **Bought in** filter (or clicking a 📦 badge) shows its cards with the
+lot's figures above them: what it cost, what its cards are worth now, how many are
+entered, and the gain or loss, with **Keep adding** (or **Add more** for a finished
+lot), **Finish**, **Reprice at today's prices** (finished value-split lots), **Edit**
+(changing the total, count, date or split reprices the cards) and **Delete** (keep
+the cards with their prices, or delete them too).
 
-- **Cards you already own** can join a lot, for a purchase you entered card by card
-  before. **Add cards you own…** on the lot's page searches your collection: choose
-  how many copies of a card to put in. Or tick cards in the collection list and use
-  **Bulk edit → Put in a lot** to put every copy of them in. Either way the copies
-  take the lot's date and their share of its price (the lot is repriced), copies that
-  were in another lot leave it, and Undo puts things back.
-- **Remove from lot** beside a card on the lot's page takes it out of the lot without
-  removing it from your collection: its copies keep the price and date the lot gave
-  them, and the lot's other cards are repriced. On a card's page, copies from a lot name it; a price typed there
-is replaced the next time the lot is repriced.
+- **Cards you already own** can join a lot: **Put in lot…** on a group of copies in
+  the collection, or tick cards and use **Bulk edit → Put in a lot** to put every
+  copy of them in. Either way the copies take the lot's date and their share of its
+  price (the lot is repriced), and copies that were in another lot leave it.
+- **Taking copies out:** **Move…** on a group, then **No lot**. The copies keep the
+  price and date the lot gave them, and the lot's other cards are repriced. Deleting
+  a lot's copies reprices it too.
 
 ## Selling cards
 
-To record a sale, open the card and choose **Sell…** under the purchase the copies
-came from. Say how many copies, what each sold for, the date, any fees for the whole
+To record a sale, choose **Sell…** on the group of copies in the collection (say how
+many and what each sold for, and any fees), or open the card and choose **Sell…**
+under the purchase the copies came from for the full form. Say how many copies, what each sold for, the date, any fees for the whole
 sale, and a note (where or to whom). The dialog shows the gain as you type: what they
 sold for, less fees and what you paid. The copies leave your collection (a card with
 none left leaves the list), and the sale is kept even after the card is gone.
@@ -375,9 +385,13 @@ card in view. Scanning can't tell foil from non-foil, so set the finish yourself
 
 ## Search
 
-The search box at the top searches your whole collection, across every game. If the
-card isn't there, **Search the catalog** opens Add with the same search. It shows the first 200 matches per game; **Show all N** opens the collection list
-with the same search.
+The search box at the top of every page searches as you type: **In your collection**
+lists your cards that match (click one to open it; **Show all N** opens the collection
+filtered to the search), and **In the catalog** lists matching printings from
+Scryfall, each with **Add…**, which opens the Add dialog on it. Press **/** anywhere
+to jump to the box, and Escape to close the results. Enter shows the full search page:
+your whole collection across every game, the first 200 matches per game, with **Search
+the catalog** to add a card that isn't there.
 
 ## Tools
 
@@ -392,7 +406,7 @@ The Tools page works on the selected game:
   downloads it. The other exports go to the same place.
 - **Export CSV:** every card as a CSV file for spreadsheets and other collection
   apps, one row per purchase: name, set code and name, collector number, language,
-  finish, condition, quantity, price paid, acquired date, note, tags, rarity, market
+  finish, condition, quantity, price paid, acquired date, tags, rarity, market
   price and Scryfall ID. Other apps can match the cards on the Scryfall ID, or on set code
   and collector number. Import reads it back.
 - **Valuation report:** a page listing every card by set, newest set first, with

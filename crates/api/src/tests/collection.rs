@@ -28,7 +28,6 @@ fn sorting_filters_and_totals() {
     assert_eq!(names("/api/games/mtg/cards?min_copies=2"), ["Shock"]);
     assert_eq!(names("/api/games/mtg/cards?no_price_paid=1"), ["Opt"]);
     assert_eq!(names("/api/games/mtg/cards?unpriced=true"), ["Opt"]);
-    assert_eq!(names("/api/games/mtg/cards?has_note=1").len(), 0);
     assert_eq!(names(&format!("/api/games/mtg/cards?{}=R", enc("f.Color identity"))).len(), 0, "no identity stored");
     let matched = get(&f.api, "/api/games/mtg/cards?min_copies=2");
     assert_eq!((matched["marketValue"].as_f64(), matched["pricePaid"].as_f64()), (Some(0.40), Some(0.50)));
@@ -132,28 +131,6 @@ fn bulk_edit_and_search_all() {
     let found = get(&f.api, "/api/search?q=shock");
     assert_eq!(found["games"].as_array().unwrap().len(), 1);
     assert_eq!(found["games"][0]["Total"], 1);
-}
-
-#[test]
-fn notes_on_purchases() {
-    let f = fixture();
-    let rows = json!([
-        { "finish": "nonfoil", "condition": "NM", "quantity": 1, "price_paid": 0.25, "acquired_date": "2018-08-08", "note": "  Binder A  " },
-        { "finish": "nonfoil", "condition": "NM", "quantity": 1, "price_paid": 0.25, "acquired_date": "2018-08-08", "note": "" },
-    ]);
-    let (status, _) = call(&f.api, "PUT", &format!("/api/games/mtg/card?key={SHOCK}"), Some(json!({ "purchases": rows })));
-    assert_eq!(status, 200);
-    let card = &get(&f.api, &format!("/api/games/mtg/card?key={SHOCK}"))["card"];
-    let notes: Vec<&str> = card["purchases"].as_array().unwrap().iter().map(|p| p["note"].as_str().unwrap()).collect();
-    assert_eq!(notes.len(), 2, "different notes keep purchases apart");
-    assert!(notes.contains(&"Binder A"));
-    assert_eq!(get(&f.api, "/api/games/mtg/cards?q=binder")["cards"][0]["name"], "Shock");
-
-    let (status, _) = call(&f.api, "POST", "/api/games/mtg/bulk", Some(json!({ "keys": [SHOCK], "note": "" })));
-    assert_eq!(status, 200);
-    let card = &get(&f.api, &format!("/api/games/mtg/card?key={SHOCK}"))["card"];
-    assert_eq!(card["purchases"].as_array().unwrap().len(), 1, "cleared notes join up again");
-    assert_eq!(get(&f.api, "/api/games/mtg/cards?q=binder")["cards"].as_array().unwrap().len(), 0);
 }
 
 #[test]

@@ -28,9 +28,6 @@ export const anyPrice = (c) => (c.each ? c.each : Object.values(c.market || {})[
 // languageName shows a language code as its name, e.g. "ja" → "Japanese".
 
 export const languageName = (code) => ((state.filters && state.filters.languages) || []).find((l) => l.code === code)?.name || (code || "").toUpperCase();
-// noted marks a card with a note on any of its purchases.
-
-export const noted = (c) => ((c.purchases || []).some((p) => p.note) ? "has a note" : null);
 // englishPrice marks a card valued at its English printing's price (the catalog has
 
 // none for its own language).

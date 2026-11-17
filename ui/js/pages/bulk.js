@@ -33,9 +33,6 @@ export function showBulkEdit() {
   const fin = h("select", h("option", { value: "" }, "Unchanged"), f.finishes.map((x) => h("option", { value: x }, fname(x))));
   const price = h("input", { type: "number", min: 0, step: "0.01", placeholder: "Unchanged" });
   const date = h("input", { type: "date", "aria-label": "Acquired date" });
-  const noteText = h("input", { type: "text", placeholder: "The note", "aria-label": "Note", hidden: true });
-  const noteMode = h("select", { "aria-label": "Note", onchange: () => { noteText.hidden = noteMode.value !== "set"; if (!noteText.hidden) noteText.focus(); } },
-    h("option", { value: "" }, "Unchanged"), h("option", { value: "set" }, "Set to…"), h("option", { value: "clear" }, "Remove notes"));
   const del = h("input", { type: "checkbox" });
   const addTags = tagEditor([], { label: "Tags to add" });
   // Only the tags the ticked cards have can be removed.
@@ -52,7 +49,7 @@ export function showBulkEdit() {
     try { add_tags = addTags.value(); remove_tags = removeTags.value(); } catch (e) { err.textContent = e.message; return; }
     if (lotMenu.value) {
       // Putting cards in a lot is a change of its own: the lot sets their price and date.
-      if (del.checked || cond.value || fin.value || date.value || price.value !== "" || noteMode.value || add_tags.length || remove_tags.length || clearTags.checked) {
+      if (del.checked || cond.value || fin.value || date.value || price.value !== "" || add_tags.length || remove_tags.length || clearTags.checked) {
         err.textContent = "Put in a lot on its own: set the other changes back to Unchanged, or do them after."; return;
       }
       const lot = state.lots.find((x) => x.id === lotMenu.value);
@@ -71,12 +68,7 @@ export function showBulkEdit() {
     const body = { keys: [...chosen.keys()], condition: cond.value, finish: fin.value, acquired_date: date.value, delete: del.checked,
       add_tags, remove_tags, clear_tags: clearTags.checked };
     if (price.value !== "") body.price_paid = parseFloat(price.value);
-    if (noteMode.value === "clear") body.note = "";
-    if (noteMode.value === "set") {
-      if (!noteText.value.trim()) { err.textContent = "Type the note, or choose Unchanged."; noteText.focus(); return; }
-      body.note = noteText.value.trim();
-    }
-    if (!body.delete && !body.condition && !body.finish && !body.acquired_date && body.price_paid === undefined && body.note === undefined
+    if (!body.delete && !body.condition && !body.finish && !body.acquired_date && body.price_paid === undefined
       && !add_tags.length && !remove_tags.length && !body.clear_tags) { err.textContent = "Choose at least one change."; return; }
     const n = plural(chosen.size, "card", "cards");
     if (!(await (body.delete ? ask(`Delete every copy of ${n}? You can undo it right after, or restore a backup from Tools.`) : confirmDialog(`Apply the changes to every copy of ${n}?`, { action: "Apply" })))) return;
@@ -96,7 +88,6 @@ export function showBulkEdit() {
       list,
       h("div.form",
         h("label", "Condition"), cond, h("label", "Finish"), fin, h("label", "Price paid (each)"), price, h("label", "Acquired"), date,
-        h("label", "Note"), h("div.stack", noteMode, noteText),
         h("label", "Put in a lot"), (state.lots || []).length ? lotMenu : h("span.muted", "No lots yet."),
         h("label", "Add tags"), addTags.el,
         h("label", "Remove tags"), onTicked.length ? removeTags.el : h("span.muted", "The ticked cards have no tags."),

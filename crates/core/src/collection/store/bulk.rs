@@ -54,7 +54,7 @@ impl Store {
     /// another device at the same time), without counting anything twice: the union of
     /// both files' cards; for a card in both, the union of their purchases, taking the
     /// larger quantity where both have the same purchase (finish, condition, price paid,
-    /// acquired date and note). A card or purchase deleted on one side comes back. Returns
+    /// acquired date and tags). A card or purchase deleted on one side comes back. Returns
     /// the number of cards that changed or were added.
     pub fn merge_copy(&self, cards: Vec<Card>) -> Result<usize> {
         self.file.mutate(|data| {

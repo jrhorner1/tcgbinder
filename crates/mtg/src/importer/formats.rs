@@ -36,7 +36,6 @@ pub struct Row {
     pub price_paid: f64,
     /// `YYYY-MM-DD`, or "".
     pub acquired_date: String,
-    pub note: String,
     /// The owner's tags on these copies, cleaned (see `read_tags`).
     pub tags: Vec<String>,
     /// The row as it appears in the file, so unmatched rows can be handed back.
@@ -78,7 +77,6 @@ enum Field {
     Language,
     Price,
     Date,
-    Note,
     Tags,
 }
 
@@ -105,7 +103,6 @@ const HEADER_ALIASES: &[(Field, &[&str])] = &[
         &["purchase price", "price acquired", "price bought", "price paid", "acquired price", "purchase cost", "buy price", "cost"],
     ),
     (Field::Date, &["date acquired", "date bought", "date added", "acquired date", "acquired", "purchase date", "acquired on", "added"]),
-    (Field::Note, &["note", "notes", "comment", "comments"]),
     (Field::Tags, &["tags", "tag", "labels", "label"]),
 ];
 
@@ -259,7 +256,6 @@ pub fn parse_csv(data: &[u8]) -> Result<ParsedCsv> {
             language: parse_language(get(Field::Language)).to_string(),
             price_paid: price.unwrap_or(0.0),
             acquired_date: date,
-            note: get(Field::Note).to_string(),
             tags: read_tags(get(Field::Tags), &mut tags_skipped),
             text: text_of(i),
         };
@@ -410,7 +406,6 @@ mod tests {
                     language: "ja".into(),
                     price_paid: 0.1234,
                     acquired_date: "2024-03-15".into(),
-                    note: "trade, binder".into(),
                     tags: vec!["Binder A".into(), "elves deck".into()],
                     ..Row::default()
                 },
@@ -551,14 +546,14 @@ mod tests {
         assert_eq!(parsed.rows[3].name, "Lightning Bolt (1)");
         assert_eq!(parsed.rows.iter().filter(|r| r.finish == "foil").count(), 1);
         assert_eq!(parsed.rows[0].text, std::str::from_utf8(ECHOMTG).unwrap().lines().nth(1).unwrap());
-        assert!(parsed.rows.iter().all(|r| r.scryfall_id.is_empty() && r.note.is_empty()));
+        assert!(parsed.rows.iter().all(|r| r.scryfall_id.is_empty()));
     }
 
     #[test]
-    fn split_quantities_and_notes() {
+    fn split_quantities() {
         let parsed = parse_csv(b"Name,Reg Qty,Foil Qty,Finish,Notes\nBolt,2,1,etched,binder A\nOpt,0,0,,\nShock,0,3,,\n").unwrap();
-        let got: Vec<_> = parsed.rows.iter().map(|r| (r.name.as_str(), r.quantity, r.finish.as_str(), r.note.as_str(), r.line)).collect();
-        assert_eq!(got, [("Bolt", 2, "nonfoil", "binder A", 2), ("Bolt", 1, "foil", "binder A", 2), ("Shock", 3, "foil", "", 4)]);
+        let got: Vec<_> = parsed.rows.iter().map(|r| (r.name.as_str(), r.quantity, r.finish.as_str(), r.line)).collect();
+        assert_eq!(got, [("Bolt", 2, "nonfoil", 2), ("Bolt", 1, "foil", 2), ("Shock", 3, "foil", 4)]);
         assert!(parsed.warnings.is_empty());
     }
 

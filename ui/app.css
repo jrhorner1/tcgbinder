@@ -78,8 +78,8 @@ input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--blue); mar
   display: flex; align-items: center; gap: 12px; padding: 10px 20px; position: sticky; top: 0; z-index: 5;
   background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line);
 }
-#globalsearch { margin-left: auto; }
-#globalsearch input { width: 260px; }
+#globalsearch { position: relative; flex: 1; max-width: 640px; }
+#globalsearch input { width: 100%; padding: 8px 12px; border-radius: 9px; }
 main { flex: 1; padding: 18px 20px 24px; width: 100%; max-width: 1440px; }
 footer { padding: 8px 20px; color: var(--muted); font-size: 13px; min-height: 2.2em; }
 footer.error { color: var(--red); }
@@ -231,13 +231,6 @@ button.tag-chip { cursor: pointer; font-family: inherit; }
 }
 
 /* The sidebar's Add menu, and the Add page's choices */
-.add-menu { position: relative; display: grid; }
-.add-menu-items { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 20; display: grid; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); box-shadow: 0 8px 24px rgb(0 0 0 / 25%); }
-.add-menu-items[hidden] { display: none; }
-.add-menu-items a { padding: 7px 10px; border-radius: 6px; color: var(--text); text-decoration: none; font-size: 14px; }
-.add-menu-items a:hover, .add-menu-items a:focus-visible { background: var(--panel-2); }
-.add-kinds { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; margin: 0 0 12px; }
-.add-kinds button.on { border-color: var(--blue); background: var(--blue-soft); }
 
 /* Putting owned cards in a lot */
 .list.picker { max-height: 50vh; margin-top: 8px; }
@@ -468,4 +461,106 @@ dialog .form select, dialog .form input:not([type=checkbox]) { width: 100%; }
   dialog .dlg > footer { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
   dialog .form { grid-template-columns: 1fr; }
   dialog .form label { text-align: left; }
+}
+
+/* The search at the top: results as you type. */
+.gresults { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 30; background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 12px 30px rgb(0 0 0 / 35%); max-height: 70vh; overflow: auto; padding: 6px 0; }
+.gresults h4 { margin: 8px 14px 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.gresults .none { margin: 2px 14px 8px; color: var(--muted); font-size: 14px; }
+.gresults .gmore { margin: 2px 14px 6px; }
+.gresult { display: flex; gap: 10px; align-items: center; width: 100%; border: 0; border-radius: 0; background: none; padding: 6px 14px; text-align: left; justify-content: flex-start; }
+.gresult:hover, .gresult:focus-visible { background: var(--panel-2); }
+.gresult .thumb { width: 30px; aspect-ratio: 488 / 680; object-fit: cover; border-radius: 3px; flex: none; }
+.gresult .text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.gresult .meta { color: var(--muted); font-size: 13px; }
+.button.small { padding: 2px 10px; font-size: 13px; }
+
+/* The collection: a line per card, its copies under it with their actions. */
+.collection { display: flex; flex-direction: column; gap: 8px; }
+.listbar select { max-width: 260px; }
+.filters .menus select[aria-label="Bought in"] { min-width: 12em; }
+.lines { display: flex; flex-direction: column; gap: 8px; }
+.lines .more { display: flex; gap: 10px; align-items: center; }
+.line-item { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+.line { display: grid; grid-template-columns: auto 40px minmax(0, 1fr) auto auto auto; gap: 12px; align-items: center; padding: 8px 12px; }
+.thumb-btn { padding: 0; border: 0; background: none; }
+.line .thumb { width: 40px; aspect-ratio: 488 / 680; object-fit: cover; border-radius: 4px; display: block; }
+.line .thumb.none { display: grid; place-items: center; height: 56px; font-size: 11px; color: var(--muted); border: 1px solid var(--line); }
+.line .text { display: flex; flex-direction: column; min-width: 0; }
+.line .name { font-weight: 600; color: var(--text); text-align: left; justify-content: flex-start; white-space: normal; }
+.line .meta { color: var(--muted); font-size: 13px; }
+.line .count { color: var(--muted); font-size: 13px; text-align: right; }
+.line .value { font-weight: 600; text-align: right; min-width: 64px; font-variant-numeric: tabular-nums; }
+button.ghost { background: none; border-color: transparent; color: var(--muted); }
+button.ghost:hover { color: var(--text); border-color: var(--line); }
+.copies { border-top: 1px solid var(--line); padding: 2px 12px 6px 66px; }
+.copy { display: grid; grid-template-columns: auto auto auto minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 7px 0; border-bottom: 1px dashed var(--line); }
+.copy:last-child { border-bottom: 0; }
+.qty { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.qty button { border: 0; border-radius: 0; padding: 3px 9px; }
+.qty span { min-width: 2.2em; text-align: center; font-weight: 600; font-variant-numeric: tabular-nums; }
+.copy select { padding: 3px 6px; }
+.where { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; min-width: 0; }
+.where .paid { color: var(--muted); }
+.where .tag-input { width: 9em; padding: 1px 8px; font-size: 13px; border-radius: 999px; }
+.addtag { font-size: 12.5px; color: var(--muted); background: none; border: 1px dashed var(--line); border-radius: 999px; padding: 1px 9px; }
+.lot-badge { display: inline-flex; align-items: center; gap: 4px; border-radius: 6px; padding: 1px 8px; font-size: 12.5px; text-decoration: none; color: var(--text);
+  background: color-mix(in srgb, var(--amber) 18%, transparent); border: 1px solid color-mix(in srgb, var(--amber) 50%, transparent); }
+.copyacts { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.copyacts button { padding: 3px 9px; font-size: 13px; }
+button.danger-text { color: var(--red); }
+.inline-form { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; background: var(--panel-2); border-radius: 8px; padding: 8px 10px; font-size: 14px; }
+.inline-form input[type=number] { width: 6em; }
+.inline-form[hidden] { display: none; }
+.pane-detail.full { max-width: 1100px; }
+
+/* Lots: banners for unfinished ones, and a lot's panel above its cards. */
+.lot-banner .grow { flex: 1; min-width: 220px; }
+.bar { height: 6px; background: var(--raised); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+.bar > i { display: block; height: 100%; background: var(--amber); }
+.lot-panel { margin-bottom: 14px; }
+.lot-head { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; margin-bottom: 12px; }
+.lot-head h2 { margin: 0 0 4px; }
+.lot-head p { margin: 0; }
+.lot-head .buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* The Add dialog. */
+dialog.add-dialog { width: min(820px, 96vw); }
+.addhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.addhead h2 { margin: 0; flex: 1; }
+.toggle { display: inline-flex; }
+.toggle .on { background: var(--blue-soft); border-color: var(--blue); border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.toggle .x { background: var(--blue-soft); border-color: var(--blue); border-left: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; padding: 6px 10px; }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.presets button { padding: 2px 10px; font-size: 13px; border-radius: 999px; }
+.presets button.on { background: var(--blue-soft); border-color: var(--blue); }
+.counts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.counts input { width: 5em; }
+.add-defaults { margin-top: 0; }
+.add-search > input { width: 100%; }
+.add-results { margin-top: 8px; }
+.add-result { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 6px 2px; border-bottom: 1px solid var(--line); }
+.add-result .thumb { width: 34px; aspect-ratio: 488 / 680; object-fit: cover; border-radius: 3px; }
+.add-result .text { display: flex; flex-direction: column; min-width: 0; }
+.add-result .meta { color: var(--muted); font-size: 13px; }
+.add-result .controls { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.add-result .controls input { width: 4.2em; }
+.add-result .controls select { padding: 4px 6px; }
+.added h3 { font-size: 14px; color: var(--muted); margin: 14px 0 6px; }
+.added ul { margin: 0; padding-left: 18px; font-size: 14px; }
+.paste textarea { width: 100%; font: inherit; }
+.lot-progress { margin-bottom: 10px; }
+
+@media (max-width: 800px) {
+  .line { grid-template-columns: auto 34px minmax(0, 1fr) auto; }
+  .line .count { display: none; }
+  .line .ghost { grid-column: 3 / -1; justify-self: start; padding: 0; }
+  .copies { padding: 2px 10px 8px; }
+  .copy { display: flex; flex-wrap: wrap; gap: 8px; }
+  .copy select { width: 6.5em; }
+  .copy .where, .copy .copyacts, .copy .inline-form { flex-basis: 100%; justify-content: flex-start; }
+  .add-result { grid-template-columns: 34px minmax(0, 1fr); }
+  .add-result .controls { grid-column: 1 / -1; justify-content: flex-start; }
+  .lot-panel .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

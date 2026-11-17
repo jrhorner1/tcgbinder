@@ -65,7 +65,7 @@ fn csv_export_reads_back() {
     shock.add_purchase(
         "foil",
         Condition::LightPlay,
-        Purchase { quantity: 1, note: "trade, \"binder\"".into(), tags: vec!["binder A".into(), "for sale".into()], ..Default::default() },
+        Purchase { quantity: 1, tags: vec!["binder A".into(), "for sale".into()], ..Default::default() },
     );
     f.svc.store.save_card(SHOCK, shock).unwrap();
 
@@ -74,7 +74,7 @@ fn csv_export_reads_back() {
     let lines: Vec<&str> = csv.lines().collect();
     assert_eq!(lines[0], format!("{},Scryfall ID", tcgbinder_core::collection::CSV_COLUMNS.join(",")));
     assert_eq!(lines.len(), 4, "a row per purchase: {csv}");
-    assert!(lines.contains(&format!("Shock,M19,Core Set 2019,156,en,nonfoil,NM,2,0.25,2018-08-08,,,common,0.2,{SHOCK}").as_str()), "{csv}");
+    assert!(lines.contains(&format!("Shock,M19,Core Set 2019,156,en,nonfoil,NM,2,0.25,2018-08-08,,common,0.2,{SHOCK}").as_str()), "{csv}");
 
     // The list's filters and sort apply.
     let (_, red) = download(&f.api, "/api/games/mtg/export?format=csv&f.Color=R&sort=name");
@@ -96,7 +96,7 @@ fn csv_export_reads_back() {
                 c.purchase_rows().into_iter().map(move |r| {
                     let p = r.purchase;
                     format!(
-                        "{}|{}|{}|{}|{}|{:?}|{}|{}|{}|{}|{}",
+                        "{}|{}|{}|{}|{}|{:?}|{}|{}|{}|{}",
                         c.name,
                         c.set.to_uppercase(),
                         c.collector_number,
@@ -106,7 +106,6 @@ fn csv_export_reads_back() {
                         p.quantity,
                         p.price_paid,
                         p.acquired_date,
-                        p.note,
                         p.tags.join(";")
                     )
                 })

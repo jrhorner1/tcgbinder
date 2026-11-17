@@ -32,18 +32,11 @@
       <a href="#/collection" data-view="collection"><svg class="ico" aria-hidden="true"><use href="#i-cards"/></svg><span class="game-name">Collection</span></a>
       <a href="#/stats" data-view="stats"><svg class="ico" aria-hidden="true"><use href="#i-stats"/></svg>Statistics</a>
       <a href="#/lists" data-view="lists"><svg class="ico" aria-hidden="true"><use href="#i-lists"/></svg>Lists</a>
-      <a href="#/lots" data-view="lots"><svg class="ico" aria-hidden="true"><use href="#i-lots"/></svg>Bundles/Lots</a>
       <a href="#/tools" data-view="tools"><svg class="ico" aria-hidden="true"><use href="#i-tools"/></svg>Tools</a>
       <a href="#/settings" data-view="settings"><svg class="ico" aria-hidden="true"><use href="#i-settings"/></svg>Settings</a>
     </nav>
     <div class="side-actions">
-      <div class="add-menu">
-        <button class="button primary" type="button" id="add-menu-button" aria-haspopup="true" aria-expanded="false" aria-controls="add-menu-items"><svg class="ico" aria-hidden="true"><use href="#i-add"/></svg>Add cards</button>
-        <div class="add-menu-items" id="add-menu-items" hidden>
-          <a href="#/add">A single card</a>
-          <a href="#/add?new=lot">A pack, bundle or lot…</a>
-        </div>
-      </div>
+      <button class="button primary" type="button" id="add-button"><svg class="ico" aria-hidden="true"><use href="#i-add"/></svg>Add…</button>
       <a class="button" href="#/scan" data-scan hidden><svg class="ico" aria-hidden="true"><use href="#i-scan"/></svg>Scan a card</a>
     </div>
     <p class="side-foot muted" id="version"></p>
@@ -51,7 +44,10 @@
   <div class="content">
     <header class="topbar">
       <a class="brand phone-only" href="#/home"><img src="icon.png" alt=""><span>TCG Binder</span></a>
-      <form id="globalsearch" role="search"><input type="search" id="gsq" placeholder="Search all cards" aria-label="Search all cards"></form>
+      <form id="globalsearch" role="search">
+        <input type="search" id="gsq" placeholder="Search your cards and the catalog" aria-label="Search your cards and the catalog" autocomplete="off">
+        <div class="gresults" id="gresults" hidden></div>
+      </form>
     </header>
     <main id="main"><p class="muted">Loading…</p></main>
     <footer id="status" role="status" aria-live="polite"></footer>
@@ -65,6 +61,7 @@
   </nav>
 </div>
 <dialog id="dialog"></dialog>
+<dialog id="add-dialog" class="add-dialog"></dialog>
 <script type="module" src="js/main.js"></script>
 </body>
 </html>

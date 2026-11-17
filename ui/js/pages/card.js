@@ -34,7 +34,7 @@ function showSell(c, key, l) {
     if (each.value === "") { err.textContent = "Type what each copy sold for."; each.focus(); return; }
     try {
       const r = await api("POST", gameAPI(`/card/sell?key=${encodeURIComponent(key)}`), {
-        finish: l.finish, condition: l.condition, price_paid: l.price_paid || 0, acquired_date: l.acquired_date || "", note: l.note || "", tags: l.tags || [],
+        finish: l.finish, condition: l.condition, price_paid: l.price_paid || 0, acquired_date: l.acquired_date || "", tags: l.tags || [],
         quantity: q, sale_each: parseFloat(each.value), date: date.value, fees: parseFloat(fees.value) || 0, sale_note: note.value.trim(),
       });
       dlg.close();
@@ -96,21 +96,19 @@ export async function renderCard(container, key) {
       qty: h("input", { type: "number", min: 0, step: 1, value: l.quantity ?? 1, "aria-label": "Quantity", oninput: update }),
       price: h("input", { type: "number", min: 0, step: "0.01", placeholder: "Paid each", value: l.price_paid || "", "aria-label": "Price paid each" }),
       date: h("input", { type: "date", value: l.acquired_date || "", "aria-label": "Acquired" }),
-      note: h("input", { type: "text", value: l.note || "", placeholder: "Note: where they're kept, who they're for…", "aria-label": "Note" }),
       tags: tagEditor(l.tags, { label: "Tags on these copies" }),
     };
     r.lot = l.lot || "";
-    // The note and the tags sit on their own line, folded away as "Add a note" and
-    // "Add tags" until used.
+    // The tags sit on their own line, folded away as "Add tags" until used.
     const noteBox = h("div.purchase-note");
-    let noteShown = !!l.note, tagsShown = !!(l.tags && l.tags.length);
+    let tagsShown = !!(l.tags && l.tags.length);
     // A purchase from a lot names it; the lot sets its price.
     const lotName = r.lot ? ((state.lots || []).find((x) => x.id === r.lot) || {}).name || "a lot" : "";
-    const lotLine = r.lot ? h("p.note", "From ", h("a", { href: `#/lots?id=${encodeURIComponent(r.lot)}` }, lotName),
+    const lotLine = r.lot ? h("p.note", "From ", h("a", { href: `#/collection?lot=${encodeURIComponent(r.lot)}` }, lotName),
       ". The lot sets the price paid; a price typed here is replaced the next time the lot is repriced.") : null;
     // A saved purchase can be sold (as saved: unsaved edits to the row don't count).
     const sellButton = l.saved ? h("button.link", { type: "button", onclick: () => showSell(c, key, l) }, "Sell…") : null;
-    // Split: one copy into a row of its own, to tag or note it apart from the rest.
+    // Split: one copy into a row of its own, to tag it apart from the rest.
     const splitButton = h("button.link", { type: "button", title: "Move one copy to a row of its own, to tag it apart", onclick: () => {
       const q = parseInt(r.qty.value, 10);
       if (!(q > 1)) return;
@@ -118,12 +116,11 @@ export async function renderCard(container, key) {
       try { tags = r.tags.value(); } catch { tags = []; }
       r.qty.value = q - 1;
       addRow({ finish: r.finish.value, condition: r.cond.value, quantity: 1, price_paid: parseFloat(r.price.value) || 0,
-        acquired_date: r.date.value, note: r.note.value, lot: r.lot, tags }, r);
+        acquired_date: r.date.value, lot: r.lot, tags }, r);
       rows[rows.indexOf(r) + 1].qty.focus();
     } }, "Split");
     r.showSplit = () => { splitButton.hidden = !(parseInt(r.qty.value, 10) > 1); };
     const showLine = () => fill(noteBox,
-      noteShown ? r.note : h("button.link", { type: "button", onclick: () => { noteShown = true; showLine(); r.note.focus(); } }, "Add a note"),
       tagsShown ? r.tags.el : h("button.link", { type: "button", onclick: () => { tagsShown = true; showLine(); r.tags.focus(); } }, "Add tags"),
       splitButton, sellButton, lotLine);
     showLine();
@@ -159,7 +156,7 @@ export async function renderCard(container, key) {
       if (quantity === 0) continue;
       let tags;
       try { tags = r.tags.value(); } catch (e) { err.textContent = e.message; r.tags.focus(); return; }
-      purchases.push({ finish: r.finish.value, condition: r.cond.value, quantity, price_paid: r.price.value ? parseFloat(r.price.value) : 0, acquired_date: r.date.value, note: r.note.value.trim(), lot: r.lot, tags });
+      purchases.push({ finish: r.finish.value, condition: r.cond.value, quantity, price_paid: r.price.value ? parseFloat(r.price.value) : 0, acquired_date: r.date.value, lot: r.lot, tags });
     }
     if (!purchases.length && !(await ask(`Remove all of ${c.name} from your collection?`, "Remove"))) return;
     try {
@@ -208,7 +205,7 @@ export async function renderCard(container, key) {
           tile("PRICE PAID", c.price_paid ? usd(c.price_paid) : "—", c.price_paid ? paidDet : "price paid not recorded"),
           tile("GAIN / LOSS", g ? g.text : "—", g ? g.pct : "needs both prices", g ? g.color : null)),
         h("h2", "Your Copies"),
-        h("p.note", "One row per purchase, by finish and condition, with the price paid for each copy and an optional note. Copies with a different note stay a separate purchase."),
+        h("p.note", "One row per purchase, by finish and condition, with the price paid for each copy and its tags. Copies with different tags stay a separate purchase."),
         h("div.purchase.heads", h("span", "Finish"), h("span", "Condition"), h("span", "Qty"), h("span", "Paid each"), h("span", "Acquired"), h("span")),
         rowsBox,
         h("p", addPurchase),
@@ -241,7 +238,7 @@ async function showPrintings(box, key, c, lang) {
   try {
     const r = await api("GET", gameAPI(`/printings?key=${encodeURIComponent(key)}&lang=${encodeURIComponent(language)}`));
     fill(box, h("h2", "Change printing"),
-      h("p.note", "Pick the printing you own; every purchase moves with its condition, price paid, date and note. A card's language belongs to its printing, so choose a language to see its printings."),
+      h("p.note", "Pick the printing you own; every purchase moves with its condition, price paid, date and tags. A card's language belongs to its printing, so choose a language to see its printings."),
       langMenu,
       r.printings.length ? null : h("p.muted", `No printings in ${languageName(language)}.`),
       h("div.list.results", r.printings.map((p) => h("button.card" + (p.id === r.current ? ".sel" : ""), {

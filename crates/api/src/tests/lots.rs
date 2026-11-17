@@ -186,3 +186,44 @@ fn import_into_a_lot() {
     assert_eq!((status, r["lot"]["entered"].as_i64(), r["lot"]["priceEach"].as_f64()), (200, Some(4), Some(2.0)));
     assert_eq!(lot_purchases(&f, "aaaaaaaa-0000-4000-8000-000000000101", &lot["id"]), [(2.0, "2026-11-03".into(), 4)]);
 }
+
+#[test]
+fn editing_a_card_reprices_its_lots() {
+    let f = fixture();
+    // An even lot of 4 cards for $8, finished: $2 a card.
+    let (_, lot) = call(
+        &f.api,
+        "POST",
+        "/api/games/mtg/lots",
+        Some(
+            json!({"name": "Box", "total_paid": 8, "acquired_date": "2020-01-01", "count": {"kind": "known", "cards": 4}, "split": "even"}),
+        ),
+    );
+    let id = lot["id"].as_str().unwrap().to_string();
+    // Move Opt's copy into the lot by saving the card with the lot set, as the collection list does.
+    let opt = get(&f.api, &format!("/api/games/mtg/card?key={OPT}"))["card"].clone();
+    let mut p = opt["purchases"][0].clone();
+    p["lot"] = json!(id);
+    let (status, v) = call(&f.api, "PUT", &format!("/api/games/mtg/card?key={OPT}"), Some(json!({ "purchases": [p] })));
+    assert_eq!(status, 200, "{v}");
+    let p = get(&f.api, &format!("/api/games/mtg/card?key={OPT}"))["card"]["purchases"][0].clone();
+    assert_eq!(
+        (p["lot"].as_str(), p["price_paid"].as_f64(), p["acquired_date"].as_str()),
+        (Some(id.as_str()), Some(2.0), Some("2020-01-01"))
+    );
+    let lots = get(&f.api, "/api/games/mtg/lots");
+    assert_eq!(lots[0]["entered"].as_i64(), Some(1));
+
+    // Cards in no lot: Shock; Opt is now only in the lot.
+    let names: Vec<String> = get(&f.api, "/api/games/mtg/cards?lot=none")["cards"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap().into())
+        .collect();
+    assert_eq!(names, ["Shock"]);
+
+    // Deleting the card takes its copy out of the lot's count.
+    assert_eq!(call(&f.api, "DELETE", &format!("/api/games/mtg/card?key={OPT}"), None).0, 200);
+    assert_eq!(get(&f.api, "/api/games/mtg/lots")[0]["entered"].as_i64(), Some(0));
+}

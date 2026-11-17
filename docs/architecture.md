@@ -61,9 +61,17 @@ The UI's JavaScript is ES modules under `ui/js/`, loaded by
 app and holds the router (`route`); it is the only file that imports the pages'
 `view…` functions. Shared files (`state.js`, `nav.js`, `dom.js`, `api.js`,
 `format.js`, `charts.js`, `cards.js`) never import a page. A page may import a dialog
-or panel another page owns (the lot dialog from `pages/lots.js`, the import preview
-from `pages/tools.js`, the card editor from `pages/card.js`, bulk edit from
-`pages/bulk.js`), never its view, and the pages don't import each other in a circle.
+or panel another page owns (the Add dialog from `pages/add.js`, the collection's line
+items from `pages/copies.js`, a lot's panel and finishing a lot from `pages/lots.js`,
+the import preview from `pages/tools.js`, the card editor from `pages/card.js`, bulk
+edit from `pages/bulk.js`), never its view, and the pages don't import each other in
+a circle.
+
+The collection lists each card as a line item with its groups of copies
+(`pages/copies.js`). Each change on a row saves the whole card (`PUT /card`), which
+reprices any lot the card's copies were in or are in now. **Split** keeps a new group
+in memory (`pending`) until it's changed, because identical purchases merge when
+saved; the rows' order is also kept in memory, so a changed group keeps its place.
 Pages redraw with `route()` from `nav.js`, which `main.js` sets at start-up, so
 nothing imports `main.js`. `node scripts/check-ui.mjs` checks that every file parses
 as a module and every import names a file and an export that exist.
@@ -91,8 +99,8 @@ To add a game: create a crate like `crates/mtg`, implement the trait, and add it
 Per game, in `<data>/<game>/`:
 - `collection.json`: one card per printing (keyed by its catalog ID), holding the
   copies owned as `copies`: finish → condition → list of purchases (`quantity`,
-  `price_paid`, `acquired_date`, `note`, `tags`), the card editor's "Your Copies". Two
-  purchases are one (`Purchase::same_as`) when price paid, date, note and tags match. Also the game's
+  `price_paid`, `acquired_date`, `tags`), the card editor's "Your Copies". Two
+  purchases are one (`Purchase::same_as`) when price paid, date and tags match. Also the game's
   ID. A card's `price_from` is `"en"` when its prices are borrowed from the English
   printing (Magic's `borrow_english_prices`: Scryfall prices no other language). Kept
   in a `core::jsonfile::JsonFile` (see below).
@@ -129,8 +137,7 @@ Per game, in `<data>/<game>/`:
   stale prices before a value split. Conflict copies merge by lot ID, the later
   `created` winning.
 - `sales.json`: sold cards (`core::sales`). Each `Sale` keeps a
-  `CardRef` (the card's catalog fields), the purchase it came from (cost, date, note,
-  and every tag it had, a lot's included, in `purchase_tags`) and the sale. `GameService::sell` records the sale first and then takes the
+  `CardRef` (the card's catalog fields), the purchase it came from (cost, date, and every tag it had, a lot's included, in `purchase_tags`) and the sale. `GameService::sell` records the sale first and then takes the
   copies out (`Store::take_copies`): if the second write fails the sale and the copies
   both remain, visible and fixable, where the other order could lose the record.
   `GameService::delete_sale` can put the copies back, rebuilding a card that has left

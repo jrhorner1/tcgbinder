@@ -8,7 +8,7 @@ fn sell_and_earnings() {
     let sell = |key: &str, body: Value| call(&f.api, "POST", &format!("/api/games/mtg/card/sell?key={key}"), Some(body));
     let year = &tcgbinder_core::dates::today_string()[..4];
     // Shock: 2 non-foil NM bought at $0.25 on 2018-08-08.
-    let shock = json!({"finish": "nonfoil", "condition": "NM", "price_paid": 0.25, "acquired_date": "2018-08-08", "note": ""});
+    let shock = json!({"finish": "nonfoil", "condition": "NM", "price_paid": 0.25, "acquired_date": "2018-08-08"});
     let with = |extra: Value| {
         let mut b = shock.clone();
         b.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());

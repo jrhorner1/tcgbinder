@@ -1,5 +1,5 @@
 //! The copies of a card: `Copies` (finish → condition → purchases), each `Purchase`
-//! (quantity, price paid, date, note, tags) and the flat `PurchaseRow` the card editor
+//! (quantity, price paid, date, tags) and the flat `PurchaseRow` the card editor
 //! shows.
 
 use std::cmp::Ordering;
@@ -12,7 +12,7 @@ use super::{Card, Condition};
 use crate::serde_skip::is_zero;
 
 /// One purchase: copies of a printing in one finish and condition, bought for the same
-/// price on the same date, with the same note.
+/// price on the same date, with the same tags.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Purchase {
@@ -23,9 +23,6 @@ pub struct Purchase {
     /// `YYYY-MM-DD`, or "" when not recorded.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub acquired_date: String,
-    /// The owner's note on these copies (where they're kept, who they're for, ...).
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub note: String,
     /// The owner's labels on these copies ("binder A", "elves deck"), and the app's
     /// own (`lot:<id>` for the lot they were bought in, whose total sets their price).
     /// Kept normalized: see `normalize_tags`.
@@ -35,13 +32,9 @@ pub struct Purchase {
 
 impl Purchase {
     /// Whether `other` is the same purchase apart from its quantity, so the two can
-    /// be one: same price paid, acquired date, note and tags (ignoring case; a lot is a
-    /// tag).
+    /// be one: same price paid, acquired date and tags (ignoring case; a lot is a tag).
     pub fn same_as(&self, other: &Purchase) -> bool {
-        self.price_paid == other.price_paid
-            && self.acquired_date == other.acquired_date
-            && self.note == other.note
-            && same_tags(&self.tags, &other.tags)
+        self.price_paid == other.price_paid && self.acquired_date == other.acquired_date && same_tags(&self.tags, &other.tags)
     }
 }
 
@@ -70,7 +63,8 @@ impl Copies {
     }
 
     /// Adds a purchase. Copies bought for the same price on the same date, with the
-    /// same note and in the same lot, are one purchase, so a matching one grows instead.
+    /// same tags (and so in the same lot), are one purchase, so a matching one grows
+    /// instead.
     pub fn add(&mut self, finish: &str, cond: Condition, p: Purchase) {
         if p.quantity <= 0 {
             return;
@@ -91,7 +85,7 @@ impl Copies {
     }
 }
 
-/// Orders purchases by date (undated last), then price.
+/// Orders purchases by date (undated last), then price, then tags.
 fn purchase_order(a: &Purchase, b: &Purchase) -> Ordering {
     if a.acquired_date != b.acquired_date {
         if a.acquired_date.is_empty() || b.acquired_date.is_empty() {
@@ -99,12 +93,12 @@ fn purchase_order(a: &Purchase, b: &Purchase) -> Ordering {
         }
         return a.acquired_date.cmp(&b.acquired_date);
     }
-    a.price_paid.total_cmp(&b.price_paid).then_with(|| a.note.cmp(&b.note))
+    a.price_paid.total_cmp(&b.price_paid).then_with(|| a.tags.cmp(&b.tags))
 }
 
 impl Card {
     /// Adds a purchase. It joins an existing purchase in the same finish and condition
-    /// when the price paid, acquired date and note match.
+    /// when the price paid, acquired date and tags match.
     pub fn add_purchase(&mut self, finish: &str, cond: Condition, p: Purchase) {
         self.copies.add(finish, cond, p);
     }
@@ -189,19 +183,6 @@ mod tests {
 
     fn p(q: i64, price: f64, date: &str) -> Purchase {
         Purchase { quantity: q, price_paid: price, acquired_date: date.into(), ..Default::default() }
-    }
-
-    #[test]
-    fn notes_keep_purchases_apart() {
-        let mut c = Card::default();
-        let noted = |q, note: &str| Purchase { note: note.into(), ..p(q, 1.0, "2024-01-01") };
-        c.add_purchase("nonfoil", Condition::NearMint, noted(1, "binder A"));
-        c.add_purchase("nonfoil", Condition::NearMint, noted(2, ""));
-        c.add_purchase("nonfoil", Condition::NearMint, noted(3, "binder A"));
-        assert_eq!(c.purchases("nonfoil", Condition::NearMint), [noted(2, ""), noted(4, "binder A")]);
-        let json = serde_json::to_value(&c.copies).unwrap();
-        assert_eq!(json["nonfoil"]["NM"][0]["note"], "binder A");
-        assert_eq!(json["nonfoil"]["NM"][1].get("note"), None, "an empty note isn't stored");
     }
 
     #[test]

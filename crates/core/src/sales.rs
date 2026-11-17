@@ -93,10 +93,8 @@ pub struct Sale {
     /// The note on the sale.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub note: String,
-    /// The purchase's own note and tags (every tag, the lot's included), so undoing the
-    /// sale restores it as it was.
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub purchase_note: String,
+    /// The purchase's tags (every tag, the lot's included), so undoing the sale restores
+    /// it as it was.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub purchase_tags: Vec<String>,
 }
@@ -262,6 +260,6 @@ mod tests {
         assert!(s.get(&a.id).is_none());
         // Empty fields stay out of the file.
         let text = std::fs::read_to_string(s.path()).unwrap();
-        assert!(!text.contains("purchase_note") && !text.contains("cost_each"));
+        assert!(!text.contains("purchase_tags") && !text.contains("cost_each"));
     }
 }

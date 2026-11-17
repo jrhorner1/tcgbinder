@@ -67,8 +67,6 @@ pub struct BulkChange {
     pub finish: Option<String>,
     pub price_paid: Option<f64>,
     pub acquired_date: Option<String>,
-    /// Set every copy's note; an empty string clears it.
-    pub note: Option<String>,
     /// Tags to put on every purchase, take off it, or (`clear_tags`) remove all the
     /// user's tags from first (system tags, such as a lot's, stay). Applied in that
     /// order: clear, remove, add.
@@ -96,7 +94,6 @@ impl BulkChange {
             && self.finish.is_none()
             && self.price_paid.is_none()
             && self.acquired_date.is_none()
-            && self.note.is_none()
             && self.add_tags.is_empty()
             && self.remove_tags.is_empty()
             && !self.clear_tags
@@ -129,9 +126,6 @@ impl BulkChange {
             }
             if let Some(date) = &self.acquired_date {
                 r.purchase.acquired_date = date.clone();
-            }
-            if let Some(note) = &self.note {
-                r.purchase.note = note.trim().to_string();
             }
             r.purchase.tags =
                 self.tags_for(&r.purchase.tags).with_context(|| format!("{} ({} · {})", c.name, c.set, c.collector_number))?;
@@ -186,17 +180,6 @@ mod tests {
 
         let (out, _) = BulkChange { finish: Some("foil".into()), ..Default::default() }.apply(&c).unwrap();
         assert_eq!(out.finish_copy_count("foil"), 3);
-    }
-
-    #[test]
-    fn bulk_note_set_and_clear() {
-        let c = card("a", "1", &["nonfoil"]);
-        let (noted, _) = BulkChange { note: Some(" binder 2 ".into()), ..Default::default() }.apply(&c).unwrap();
-        assert!(noted.purchase_rows().iter().all(|r| r.purchase.note == "binder 2"));
-        assert_eq!(noted.copy_count(), 3);
-        let (cleared, _) = BulkChange { note: Some(String::new()), ..Default::default() }.apply(&noted).unwrap();
-        assert_eq!(cleared.copies, c.copies);
-        assert!(!BulkChange { note: Some(String::new()), ..Default::default() }.is_empty());
     }
 
     #[test]

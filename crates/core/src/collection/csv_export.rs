@@ -19,7 +19,6 @@ pub const CSV_COLUMNS: &[&str] = &[
     "Quantity",
     "Price Paid",
     "Acquired Date",
-    "Note",
     "Tags",
     "Rarity",
     "Market Price",
@@ -49,7 +48,6 @@ pub fn write_csv(cards: &[Card], id_label: &str) -> Result<Vec<u8>> {
                 &p.quantity.to_string(),
                 &money(Some(p.price_paid)),
                 &p.acquired_date,
-                &p.note,
                 &user_tags(&p.tags).map(String::as_str).collect::<Vec<_>>().join("; "),
                 &c.rarity,
                 &money(c.market_price(&r.finish)),
@@ -86,23 +84,16 @@ mod tests {
         c.add_purchase(
             "foil",
             Condition::LightPlay,
-            Purchase {
-                quantity: 1,
-                note: "trade, \"binder\"".into(),
-                tags: vec!["binder A".into(), "for sale".into()],
-                ..Default::default()
-            },
+            Purchase { quantity: 1, tags: vec!["binder A".into(), "for sale".into()], ..Default::default() },
         );
         let out = String::from_utf8(write_csv(&[c], "Scryfall ID").unwrap()).unwrap();
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(
             lines[0],
-            "Name,Set Code,Set Name,Collector Number,Language,Finish,Condition,Quantity,Price Paid,Acquired Date,Note,Tags,Rarity,Market Price,Scryfall ID"
+            "Name,Set Code,Set Name,Collector Number,Language,Finish,Condition,Quantity,Price Paid,Acquired Date,Tags,Rarity,Market Price,Scryfall ID"
         );
-        assert!(lines.contains(&"Fire // Ice,MH2,Modern Horizons 2,290,en,nonfoil,NM,2,0.1234,2024-03-15,,,uncommon,,abc"));
-        assert!(lines.contains(
-            &"Fire // Ice,MH2,Modern Horizons 2,290,en,foil,LP,1,,,\"trade, \"\"binder\"\"\",binder A; for sale,uncommon,1.5,abc"
-        ));
+        assert!(lines.contains(&"Fire // Ice,MH2,Modern Horizons 2,290,en,nonfoil,NM,2,0.1234,2024-03-15,,uncommon,,abc"));
+        assert!(lines.contains(&"Fire // Ice,MH2,Modern Horizons 2,290,en,foil,LP,1,,,binder A; for sale,uncommon,1.5,abc"));
         assert_eq!(lines.len(), 3);
     }
 }

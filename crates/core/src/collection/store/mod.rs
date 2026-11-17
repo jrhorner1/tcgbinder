@@ -172,8 +172,7 @@ impl Store {
     }
 
     /// Takes `quantity` copies out of one purchase of the card stored under `key`: the
-    /// one in `finish` and `cond` with `purchase`'s price paid, acquired date, note and
-    /// tags.
+    /// one in `finish` and `cond` with `purchase`'s price paid, acquired date and tags.
     /// A card left with no copies is deleted. Returns the purchase as it was.
     pub fn take_copies(&self, key: &str, finish: &str, cond: Condition, purchase: &Purchase, quantity: i64) -> Result<Purchase> {
         if quantity <= 0 {
@@ -187,7 +186,6 @@ impl Store {
                 l.iter_mut().find(|p| {
                     p.price_paid == purchase.price_paid
                         && p.acquired_date == purchase.acquired_date
-                        && p.note == purchase.note
                         && same_tags(&p.tags, &purchase.tags)
                         && p.quantity > 0
                 })
