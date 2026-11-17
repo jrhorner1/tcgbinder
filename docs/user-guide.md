@@ -69,7 +69,7 @@ as soon as the import finishes.
 
   Every change is saved straight away. A card's name, picture or **Details…** opens
   its page, for changing its printing, watching its price, or editing it in full.
-  The list shows 60 cards at a time; **Show more** adds the next 60.
+  More cards load by themselves as you scroll toward the end of the list.
 - **Sort:** the **Sort** menu above the list orders by name, set (release date, then
   collector number), number, price of one copy, value of every copy, gain or loss
   (cards with no price paid last), price paid, quantity, acquired date (the earliest
@@ -134,7 +134,7 @@ time stay exact.
 Every card in the collection list has a tick box:
 1. Narrow the list with the search box and the **Set**, **Color**, **Rarity** and
    **Finish** filters.
-2. Tick cards one by one, or **Select all shown** to tick everything the filters
+2. Tick cards one by one, or **Select all N** to tick everything the filters
    show. Ticks stay while you change filters, so you can build up a selection from
    several searches; the bar above the list (it stays in view as you scroll) says how many are ticked and how many
    the filters hide. **Clear** unticks everything.

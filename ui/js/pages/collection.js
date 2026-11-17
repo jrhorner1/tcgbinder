@@ -22,7 +22,7 @@ const SORTS = [["name", "Name"], ["set", "Set"], ["number", "Number"], ["price",
 // Keys that start ascending when chosen; the rest start with the most first.
 
 const ASCENDING_FIRST = ["name", "number", "tag"];
-// How many cards the list draws at a time.
+// How many more cards the list draws each time its end comes near.
 const PAGE = 60;
 // Collection URL parameters that aren't filters.
 
@@ -219,11 +219,21 @@ export async function viewCollection(params) {
     onclick: () => nav((p) => { p.set("sort", data.sort); p.set("dir", desc ? "asc" : "desc"); }, true) }, desc ? "↓" : "↑");
   const listbar = h("div.listbar", sortMenu, dirButton);
 
-  // The line items, a page at a time. A change saved on a line redraws the page
-  // (keeping the scroll); a split not saved yet just redraws the lines.
+  // The line items, drawn a page at a time as the end of the list scrolls near, so a
+  // big collection opens quickly and scrolling goes on through every match. A change
+  // saved on a line redraws the page (keeping the scroll); a split not saved yet just
+  // redraws the lines.
   let shown = Math.max(PAGE, state.linesShown && state.listKey === `${apiQ}` ? state.linesShown : 0);
   const list = h("div.lines");
-  const more = h("button", { type: "button", onclick: () => { shown += PAGE; drawLines(); } }, "Show more");
+  const end = h("p.muted.lines-end");
+  const nearEnd = new IntersectionObserver((seen) => {
+    if (!seen.some((e) => e.isIntersecting) || shown >= data.cards.length) return;
+    const from = shown;
+    shown = Math.min(shown + PAGE, data.cards.length);
+    end.before(...data.cards.slice(from, shown).map((c) => cardLine(c, ctx)));
+    showEnd();
+  }, { rootMargin: "1500px 0px" });
+  const showEnd = () => { end.textContent = data.cards.length > shown ? `Loading more… (${shown} of ${data.cards.length})` : ""; };
   const ctx = {
     lots,
     lot: q.get("lot") || "",
@@ -238,10 +248,11 @@ export async function viewCollection(params) {
     },
   };
   function drawLines() {
-    fill(list, data.cards.length ? data.cards.slice(0, shown).map((c) => cardLine(c, ctx)) : h("p.muted.empty", "No cards match."),
-      data.cards.length > shown ? h("p.more", more, h("span.muted", ` ${shown} of ${data.cards.length}`)) : null);
+    fill(list, data.cards.length ? data.cards.slice(0, shown).map((c) => cardLine(c, ctx)) : h("p.muted.empty", "No cards match."), end);
+    showEnd();
   }
   drawLines();
+  nearEnd.observe(end);
   state.listKey = `${apiQ}`;
 
   // Filtered to a lot (or to no lot), the totals count only the copies shown.
@@ -262,7 +273,8 @@ export async function viewCollection(params) {
   // The selection bar: how many are ticked, and the bulk edit actions. It sits above
   // the list and stays in view under the search bar as the list scrolls.
   const count = h("span.count");
-  const selectAll = h("button", { type: "button", onclick: () => { data.cards.forEach((c) => ticked.set(c.key, tickInfo(c))); drawLines(); updateBar(); } }, "Select all shown");
+  const selectAll = h("button", { type: "button", onclick: () => { data.cards.forEach((c) => ticked.set(c.key, tickInfo(c))); drawLines(); updateBar(); } },
+    data.cards.length > 1 ? `Select all ${data.cards.length.toLocaleString()}` : "Select all");
   const clearTicks = h("button", { type: "button", onclick: () => { ticked.clear(); drawLines(); updateBar(); } }, "Clear");
   const bulk = h("button.primary", { type: "button", onclick: () => showBulkEdit() }, "Bulk edit…");
   const bar = h("div.selbar", count, selectAll, clearTicks, bulk);

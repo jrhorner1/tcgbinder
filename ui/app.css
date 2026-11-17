@@ -489,7 +489,7 @@ dialog .form select, dialog .form input:not([type=checkbox]) { width: 100%; }
   background: var(--blue); border-color: var(--blue); color: #fff; box-shadow: 0 6px 18px rgb(0 0 0 / 35%); }
 .to-top[hidden] { display: none; }
 .lines { display: flex; flex-direction: column; gap: 8px; }
-.lines .more { display: flex; gap: 10px; align-items: center; }
+.lines-end { margin: 4px 2px; min-height: 1px; }
 .line-item { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
 .line { display: grid; grid-template-columns: auto 40px minmax(0, 1fr) auto auto auto; gap: 12px; align-items: center; padding: 8px 12px; }
 .thumb-btn { padding: 0; border: 0; background: none; }
