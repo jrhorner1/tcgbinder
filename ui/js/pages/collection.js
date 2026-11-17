@@ -3,10 +3,10 @@
 // the list is filtered to one, the set page, and exporting what is listed.
 
 import { api, exportCollection, gameAPI, loadLots } from "../api.js";
-import { addInDialog, addToList, cardRows, sameTag, tagChip, tickInfo, ticks } from "../cards.js";
+import { sameTag, tagChip, tickInfo, ticks } from "../cards.js";
 import { gain, tile } from "../charts.js";
-import { $, askDialog, fill, h, status } from "../dom.js";
-import { anyPrice, choiceNames, compareNumber, fname, languageName, plural, title, usd } from "../format.js";
+import { $, askDialog, fill, h } from "../dom.js";
+import { choiceNames, fname, languageName, plural, title, usd } from "../format.js";
 import { go, hashParams, route } from "../nav.js";
 import { state } from "../state.js";
 import { showBulkEdit } from "./bulk.js";
@@ -14,6 +14,7 @@ import { openAdd } from "./add.js";
 import { renderCard } from "./card.js";
 import { cardLine } from "./copies.js";
 import { lotPanel, lotProgress } from "./lots.js";
+import { createMissingList } from "./missing.js";
 
 // The collection list's sort keys (as GET /cards takes them) and labels.
 const SORTS = [["name", "Name"], ["set", "Set"], ["number", "Number"], ["price", "Price each"], ["value", "Value"],
@@ -322,40 +323,13 @@ export async function viewCollection(params) {
   if (q.get("set")) await renderSet(setBox, q.get("set"));
 }
 
-// renderSet shows a set's completion and value, its most valuable cards (by one copy)
-// and, on request, the cards you're missing.
+// renderSet shows a set's completion and value, with buttons for the cards you're
+// missing: a page of them, or a list of them.
 async function renderSet(container, code) {
   const d = await api("GET", gameAPI(`/set?code=${encodeURIComponent(code)}`));
   const g = gain(d.pricePaid, d.marketValue);
-  const missingBox = h("div.list.missing", { hidden: true });
-  const showMissing = h("button", { type: "button", onclick: async () => {
-    showMissing.disabled = true;
-    showMissing.textContent = "Loading the set's cards…";
-    try {
-      const m = await api("GET", gameAPI(`/missing?set=${encodeURIComponent(code)}`));
-      missingBox.hidden = false;
-      const byNumber = (a, b) => compareNumber(a.collector_number, b.collector_number);
-      const byPrice = (a, b) => (anyPrice(b) || 0) - (anyPrice(a) || 0) || byNumber(a, b);
-      const sortMenu = h("select", { "aria-label": "Sort the missing cards", onchange: () => show() },
-        h("option", { value: "number" }, "By number"), h("option", { value: "price" }, "Most expensive first"));
-      const copy = h("button", { type: "button", onclick: () => copyToList(m, code) }, "Copy to a list…");
-      const head = m.missing.length ? h("div.missing-head",
-        h("p.muted.empty", `${plural(m.missing.length, "card", "cards")} you don't own yet${m.printedSize ? ` (of the ${m.printedSize} printed)` : ""}: ${usd(m.totalCost)} for one of each${m.unpriced ? `, ${m.unpriced} without a price` : ""}. Add one here, or click it to search its printings.`),
-        h("div.row-actions", sortMenu, copy)) : h("p.muted.empty", "You have every card in this set.");
-      const show = () => fill(missingBox, head, [...m.missing].sort(sortMenu.value === "price" ? byPrice : byNumber).map((c) => {
-          const row = h("div.card",
-            h("a.rowlink", { href: `#/add?${new URLSearchParams({ text: c.name, set: code })}` },
-              h("span.num", c.collector_number), h("span.text", h("span.name", c.name),
-                h("span.meta", [title(c.rarity), anyPrice(c) ? usd(anyPrice(c)) : ""].filter(Boolean).join(" · ")))),
-            h("div.row-actions", h("button", { type: "button", onclick: () => addToList(c, 1) }, "To list…"),
-              h("button", { type: "button", onclick: () => addInDialog(c, () => row.remove()) }, "Add…")));
-          return row;
-        }));
-      show();
-      showMissing.remove();
-    } catch (e) { status(e.message, true); showMissing.disabled = false; }
-  } }, d.size > 0 ? `Show the ${Math.max(d.size - d.collected, 0)} missing cards` : "Show missing cards");
-  fill(container, h("div.detail",
+  const missing = d.size > 0 ? Math.max(d.size - d.collected, 0) : null;
+  fill(container, h("div.detail.set-page",
     h("h1", d.name || d.code),
     h("p.muted", [d.code, d.released ? `released ${d.released}` : ""].filter(Boolean).join(" · ")),
     h("div.tiles", { style: "grid-template-columns:repeat(auto-fit,minmax(150px,1fr))" },
@@ -363,37 +337,9 @@ async function renderSet(container, code) {
       tile("CARDS", d.cards.toLocaleString(), plural(d.uniqueCards, "unique card", "unique cards")),
       tile("MARKET VALUE", usd(d.marketValue), `price paid ${usd(d.pricePaid)}`, "var(--blue)"),
       tile("GAIN / LOSS", g.text, g.pct, g.color)),
-    h("h2", "Most Valuable in This Set"),
-    h("p.note", "Ranked by the value of one copy."),
-    d.top.length ? cardRows(d.top, (c) => c.each) : h("p.muted", "No market prices yet."),
-    h("h2", "Missing Cards"),
-    showMissing, missingBox));
-}
-
-// copyToList puts every missing card of a set on a new list (or an existing one).
-async function copyToList(m, code) {
-  const lists = await api("GET", gameAPI("/lists")).catch(() => []);
-  const NEW = "\u0000new";
-  const which = h("select", { "aria-label": "List", onchange: () => { name.hidden = which.value !== NEW; } },
-    h("option", { value: NEW }, "A new list"), lists.map((l) => h("option", { value: l.id }, l.name)));
-  const name = h("input", { type: "text", value: `${code} missing`, "aria-label": "New list's name" });
-  const v = await askDialog("Copy to a list", [
-    `Puts the ${plural(m.missing.length, "missing card", "missing cards")} on a list, one of each, as these printings.`, which, name,
-  ], [{ label: "Copy", value: "copy", primary: true }]);
-  if (!v) return;
-  try {
-    let id = which.value;
-    if (id === NEW) {
-      if (!name.value.trim()) { status("Name the new list.", true); return; }
-      id = (await api("POST", gameAPI("/lists"), { name: name.value.trim() })).id;
-    }
-    const list = await api("GET", gameAPI(`/lists?id=${encodeURIComponent(id)}`));
-    const entries = list.entries.map((e) => ({ card: e.card, quantity: e.quantity, any_printing: e.any_printing, finish: e.finish }))
-      .concat(m.missing.map((c) => ({ card: c, quantity: 1, any_printing: false, finish: "" })));
-    await api("PUT", gameAPI(`/lists?id=${encodeURIComponent(id)}`), { entries });
-    status(`Copied ${plural(m.missing.length, "card", "cards")} to ${list.list.name}.`);
-    go("lists", new URLSearchParams({ id }));
-  } catch (e) { status(e.message, true); }
+    h("div.buttons.missing-actions",
+      h("a.button", { href: `#/missing?${new URLSearchParams({ set: code })}` }, missing !== null ? `View the ${missing} missing cards` : "View the missing cards"),
+      h("button", { type: "button", onclick: () => createMissingList(code, d.name) }, "Create a list of missing cards…"))));
 }
 
 // exportListed offers the collection list's cards as CSV or a valuation report.

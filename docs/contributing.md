@@ -119,7 +119,7 @@ function) that holds it.
 | `ui/js/format.js` | Money, plurals, dates, names of finishes and settings choices | You format something new |
 | `ui/js/charts.js` | The line chart, bar rows and number tiles | You change a chart |
 | `ui/js/cards.js` | Pieces several pages share: card rows, tags, the add-a-card form, add to a list, watch | A change shows on more than one page |
-| `ui/js/pages/*.js` | One page each (home, collection, card, bulk, scan, search, lists, watchlist, sealed, earnings, tags, stats, tools, settings), plus `add.js` (the Add dialog: a card, or a pack, bundle or lot), `copies.js` (the collection's line items and their rows of copies) and `lots.js` (a lot's panel, editing and finishing a lot) | You change what one page shows or does |
+| `ui/js/pages/*.js` | One page each (home, collection, card, bulk, scan, search, lists, watchlist, sealed, earnings, tags, stats, tools, settings), plus `add.js` (the Add dialog: a card, or a pack, bundle or lot), `copies.js` (the collection's line items and their rows of copies), `missing.js` (a set's missing cards, and a list of them) and `lots.js` (a lot's panel, editing and finishing a lot) | You change what one page shows or does |
 | `scripts/check-ui.mjs` | Checks the UI's JavaScript | It fails in CI |
 | `crates/api/src/lib.rs` | The `Api` type, `handle` and `route` (every endpoint, grouped by file) | You add an endpoint |
 | `crates/api/src/*.rs` | Handlers for each part of the API: `home`, `collection`, `catalog`, `tags`, `transfer` (import, export, backups, jobs), `settings`, `lots`, `lists`, `sales`, `watchlist`, `sealed`, `folders`, `report` (the printable valuation); `views.rs` shapes cards in answers | You change what an endpoint does |

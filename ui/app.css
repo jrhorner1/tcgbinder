@@ -562,6 +562,8 @@ dialog.add-dialog { width: min(820px, 96vw); }
 .added h3 { font-size: 14px; color: var(--muted); margin: 14px 0 6px; }
 .added ul { margin: 0; padding-left: 18px; font-size: 14px; }
 .paste textarea { width: 100%; font: inherit; }
+.missing-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 12px 0; }
+.set-page { margin-bottom: 14px; }
 .add-links { display: flex; gap: 18px; flex-wrap: wrap; }
 dialog .body label.check { display: flex; gap: 8px; align-items: center; }
 .lot-progress { margin-bottom: 10px; }

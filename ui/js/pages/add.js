@@ -27,7 +27,7 @@ export async function viewAdd(params) {
   const pre = new URLSearchParams(params || "");
   history.replaceState(null, "", "#/collection");
   await route();
-  openAdd({ query: pre.get("text") || "", lot: pre.get("lot") || "" });
+  openAdd({ query: pre.get("text") || "", set: pre.get("set") || "", lot: pre.get("lot") || "" });
 }
 
 // openAdd opens the Add dialog: adding a card, or entering the cards of the open lot

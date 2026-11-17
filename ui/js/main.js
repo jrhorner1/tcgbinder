@@ -15,6 +15,7 @@ import { viewEarnings } from "./pages/earnings.js";
 import { viewHome } from "./pages/home.js";
 import { viewLists } from "./pages/lists.js";
 import { viewLots } from "./pages/lots.js";
+import { viewMissing } from "./pages/missing.js";
 import { viewScan } from "./pages/scan.js";
 import { viewSealed } from "./pages/sealed.js";
 import { viewSearch } from "./pages/search.js";
@@ -70,12 +71,13 @@ export async function route() {
   const [path, qs] = location.hash.replace(/^#\/?/, "").split("?");
   const view = path || "home";
   if (state.scanStop && view !== "scan") { state.scanStop(); state.scanStop = null; }
-  const active = ["import", "backups", "earnings", "watchlist", "sealed", "tags"].includes(view) ? "tools" : view === "scan" ? "add" : view;
+  const active = ["import", "backups", "earnings", "watchlist", "sealed", "tags"].includes(view) ? "tools" : view === "scan" ? "add" : view === "missing" ? "collection" : view;
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === active));
   // The tab bar has no Statistics tab: it's reached from Tools there.
   document.querySelectorAll(".tabbar a").forEach((a) => a.classList.toggle("active", a.dataset.view === (active === "stats" ? "tools" : active)));
   try {
     if (view === "collection") await viewCollection(qs || "");
+    else if (view === "missing") await viewMissing(qs || "");
     else if (view === "add") viewAdd(qs || "");
     else if (view === "scan") viewScan();
     else if (view === "search") await viewSearch(qs || "");

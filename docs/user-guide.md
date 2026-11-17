@@ -95,12 +95,15 @@ as soon as the import finishes.
   again and keeps the sort. Sort and filters are part of the page's address, so a
   bookmark keeps them.
 - **Set pages:** choose a set in the **Set** filter, or click a set on Home. Above the
-  set's cards, they show
-  completion, value, the most valuable cards (ranked by one copy), and **Missing
-  Cards**. That list is loaded from Scryfall on request and follows the Set completion
-  setting. It says what one of each missing card would cost at market price, sorts
-  by number or most expensive first, and **Copy to a list…** puts them all on a list
-  (a new one, or one you have). Click a missing card to add it.
+  set's cards, they show its completion and value, with two buttons:
+  - **View the N missing cards** opens a page of the cards you don't own yet, loaded
+    from Scryfall and following the Set completion setting. It says what one of each
+    would cost at market price, sorts by number or most expensive first, and has
+    **To list…** and **Add…** beside each card (click a card to search its
+    printings).
+  - **Create a list of missing cards…** (also on that page) asks for the list's name,
+    "Core Set 2019 Missing" to start with, and makes a list with one of each missing
+    card, then opens it.
 
 A card's page replaces the list, with a **Back** button, which returns to the list.
 On a phone each group of copies takes three lines: the quantity, finish and
@@ -216,8 +219,8 @@ stays, so the next copy is one click away, and what you've added is listed under
   saved. Import accepts such a list as a file too.
 - **From the search at the top:** a catalog card's **Add…** opens the dialog on that
   printing.
-- **Missing cards:** on a set page, **Add…** beside a missing card adds it without
-  leaving the page.
+- **Missing cards:** on a set's missing cards page, **Add…** beside a card adds it
+  without leaving the page.
 
 ## Adding a pack, bundle or lot
 
