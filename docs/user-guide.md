@@ -8,7 +8,7 @@ web browser (`tcgbinder --web`), with the same pages everywhere.
 On the desktop (and in a wide browser window) the sidebar has **Home**, your
 collection (**Magic**), **Statistics**, **Lists**, **Tools** and **Settings**, with
 **Add…** and **Scan a card** below them. On phones the tab bar at the bottom has
-**Home**, **Cards**, **Add**, **Tools** and **Settings**. The search box at the top of
+**Home**, **Cards**, **Add**, **Lists**, **Tools** and **Settings**. The search box at the top of
 every page searches your cards and the catalog (see Search).
 
 ## Home
@@ -298,7 +298,7 @@ the matching filter.
 
 ## Lists and decks
 
-**Lists** (in the sidebar on the desktop and in a wide browser window) keeps decks and want
+**Lists** (in the sidebar, and in a phone's tab bar) keeps decks and want
 lists. Each list shows how many of its cards you own, what the missing ones would
 cost at market price, and what the whole list is worth.
 

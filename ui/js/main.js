@@ -72,8 +72,8 @@ export async function route() {
   if (state.scanStop && view !== "scan") { state.scanStop(); state.scanStop = null; }
   const active = ["import", "backups", "earnings", "watchlist", "sealed", "tags"].includes(view) ? "tools" : view === "scan" ? "add" : view;
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === active));
-  // The tab bar has no Lists, Statistics or Lots tab: they're reached from Tools there.
-  document.querySelectorAll(".tabbar a").forEach((a) => a.classList.toggle("active", a.dataset.view === (["lists", "stats", "lots"].includes(active) ? "tools" : active)));
+  // The tab bar has no Statistics tab: it's reached from Tools there.
+  document.querySelectorAll(".tabbar a").forEach((a) => a.classList.toggle("active", a.dataset.view === (active === "stats" ? "tools" : active)));
   try {
     if (view === "collection") await viewCollection(qs || "");
     else if (view === "add") viewAdd(qs || "");

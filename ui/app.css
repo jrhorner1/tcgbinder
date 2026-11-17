@@ -442,7 +442,7 @@ dialog .form select, dialog .form input:not([type=checkbox]) { width: 100%; }
   main { padding: 14px 14px 20px; }
   footer { padding: 6px 14px; }
   .tabbar {
-    display: grid; grid-template-columns: repeat(5, 1fr); position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+    display: grid; grid-template-columns: repeat(6, 1fr); position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
     height: calc(var(--tabbar) + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom);
     background: color-mix(in srgb, var(--panel) 92%, transparent); backdrop-filter: blur(12px); border-top: 1px solid var(--line);
   }
