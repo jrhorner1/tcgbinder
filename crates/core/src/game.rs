@@ -7,8 +7,10 @@ use std::path::Path;
 use anyhow::Result;
 use serde::Serialize;
 
+use crate::collection::Breakdown;
 use crate::collection::{Card, CatalogUpdate, SetInfo};
 use crate::scan::Reading;
+use crate::sealed::SealedProduct;
 
 /// Progress callbacks receive the work done so far and the total.
 pub type Progress<'a> = &'a mut dyn FnMut(usize, usize);
@@ -39,9 +41,15 @@ pub trait Game: Send + Sync {
     /// Reads another app's export (CSV) and matches it to catalog printings.
     fn import(&self, data: &[u8], progress: Progress) -> Result<(Vec<Card>, ImportReport)>;
 
+    /// Card names starting like `text`, for suggestions while typing (none by default).
+    fn autocomplete(&self, _text: &str) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+
     /// Every printing of the same card (e.g. for moving a card to a different set),
-    /// newest first.
-    fn printings(&self, c: &Card) -> Result<Vec<Card>>;
+    /// newest first, in `language` (one of [`Game::languages`]'s codes; "" for the
+    /// catalog's usual choice).
+    fn printings(&self, c: &Card, language: &str) -> Result<Vec<Card>>;
     /// Every card in a set (by uppercase code), in collector-number order.
     fn set_cards(&self, code: &str) -> Result<Vec<Card>>;
 
@@ -51,12 +59,34 @@ pub trait Game: Send + Sync {
     fn finishes(&self) -> &'static [&'static str];
     /// A finish's display name, e.g. "Normal".
     fn finish_name(&self, finish: &str) -> String;
+    /// Whether the game calls a card a basic land (a bundle's lands may cost nothing).
+    fn is_basic_land(&self, _c: &Card) -> bool {
+        false
+    }
     /// The rarity filter options, lowest first.
     fn rarities(&self) -> &'static [&'static str];
+    /// The languages cards are printed in: code (as stored in `Card::language`) and
+    /// name, the usual one first.
+    fn languages(&self) -> &'static [(&'static str, &'static str)] {
+        &[]
+    }
     /// Extra filters shown with set, rarity and finish.
     fn filters(&self) -> Vec<Filter>;
+    /// The game's own groupings on the Statistics page (e.g. Magic's colors).
+    fn breakdowns(&self) -> Vec<Breakdown> {
+        Vec::new()
+    }
     /// Extra rows in the card editor.
     fn details(&self, c: &Card) -> Vec<Row>;
+    /// The sealed products the catalog lists for a set (boxes, bundles, decks), for
+    /// choosing one to add. None by default.
+    fn sealed_products(&self, _set: &str) -> Result<Vec<SealedProduct>> {
+        Ok(Vec::new())
+    }
+    /// The header of the catalog ID column in CSV exports, e.g. "Scryfall ID".
+    fn catalog_id_label(&self) -> &'static str {
+        "ID"
+    }
     /// A link to the card on the catalog's website: (label, URL).
     fn card_link(&self, c: &Card) -> Option<(String, String)>;
 
@@ -124,8 +154,24 @@ pub struct ImportReport {
     pub format: String,
     /// The rows read from the file.
     pub rows: usize,
-    /// Rows needing attention (approximate matches, not found).
+    /// Warnings about the file's columns first, then rows needing attention
+    /// (approximate matches, not found).
     pub notes: Vec<String>,
+    /// The rows that matched no card, as they appear in the file.
+    pub unmatched: Vec<UnmatchedRow>,
+    /// The file's header line, to put above the unmatched rows.
+    pub header: String,
+    /// The returned cards (by index) matched by name only, so any printing may be meant.
+    pub approximate: Vec<usize>,
+}
+
+/// A line of an import file that matched no card.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct UnmatchedRow {
+    /// The 1-based line in the file.
+    pub line: u64,
+    /// The line as it appears in the file.
+    pub text: String,
 }
 
 /// A game-specific filter menu, e.g. Magic's colors.

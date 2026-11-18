@@ -1,12 +1,18 @@
+//! The copies of a card: `Copies` (finish → condition → purchases), each `Purchase`
+//! (quantity, price paid, date, tags) and the flat `PurchaseRow` the card editor
+//! shows.
+
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::tags::same_tags;
 use super::{Card, Condition};
+use crate::serde_skip::is_zero;
 
 /// One purchase: copies of a printing in one finish and condition, bought for the same
-/// price on the same date.
+/// price on the same date, with the same tags.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Purchase {
@@ -17,10 +23,19 @@ pub struct Purchase {
     /// `YYYY-MM-DD`, or "" when not recorded.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub acquired_date: String,
+    /// The owner's labels on these copies ("binder A", "elves deck"), and the app's
+    /// own (`lot:<id>` for the lot they were bought in, whose total sets their price).
+    /// Kept normalized: see `normalize_tags`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
-fn is_zero(v: &f64) -> bool {
-    *v == 0.0
+impl Purchase {
+    /// Whether `other` is the same purchase apart from its quantity, so the two can
+    /// be one: same price paid, acquired date and tags (ignoring case; a lot is a tag).
+    pub fn same_as(&self, other: &Purchase) -> bool {
+        self.price_paid == other.price_paid && self.acquired_date == other.acquired_date && same_tags(&self.tags, &other.tags)
+    }
 }
 
 /// The copies of one printing owned: finish → condition → purchases. Each purchase
@@ -47,14 +62,15 @@ impl Copies {
         self.0.is_empty()
     }
 
-    /// Adds a purchase. Copies bought for the same price on the same date are one
-    /// purchase, so a matching one grows instead.
+    /// Adds a purchase. Copies bought for the same price on the same date, with the
+    /// same tags (and so in the same lot), are one purchase, so a matching one grows
+    /// instead.
     pub fn add(&mut self, finish: &str, cond: Condition, p: Purchase) {
         if p.quantity <= 0 {
             return;
         }
         let list = self.0.entry(norm_finish(finish)).or_default().entry(cond).or_default();
-        match list.iter_mut().find(|cur| cur.price_paid == p.price_paid && cur.acquired_date == p.acquired_date) {
+        match list.iter_mut().find(|cur| cur.same_as(&p)) {
             Some(cur) => cur.quantity += p.quantity,
             None => list.push(p),
         }
@@ -69,7 +85,7 @@ impl Copies {
     }
 }
 
-/// Orders purchases by date (undated last), then price.
+/// Orders purchases by date (undated last), then price, then tags.
 fn purchase_order(a: &Purchase, b: &Purchase) -> Ordering {
     if a.acquired_date != b.acquired_date {
         if a.acquired_date.is_empty() || b.acquired_date.is_empty() {
@@ -77,12 +93,12 @@ fn purchase_order(a: &Purchase, b: &Purchase) -> Ordering {
         }
         return a.acquired_date.cmp(&b.acquired_date);
     }
-    a.price_paid.total_cmp(&b.price_paid)
+    a.price_paid.total_cmp(&b.price_paid).then_with(|| a.tags.cmp(&b.tags))
 }
 
 impl Card {
     /// Adds a purchase. It joins an existing purchase in the same finish and condition
-    /// when the price paid and acquired date match.
+    /// when the price paid, acquired date and tags match.
     pub fn add_purchase(&mut self, finish: &str, cond: Condition, p: Purchase) {
         self.copies.add(finish, cond, p);
     }
@@ -166,7 +182,7 @@ mod tests {
     use super::*;
 
     fn p(q: i64, price: f64, date: &str) -> Purchase {
-        Purchase { quantity: q, price_paid: price, acquired_date: date.into() }
+        Purchase { quantity: q, price_paid: price, acquired_date: date.into(), ..Default::default() }
     }
 
     #[test]
@@ -199,5 +215,22 @@ mod tests {
         assert_eq!(c.price_paid(), (2.0, 1));
         assert_eq!(c.market_value(), (3.0, 1));
         assert_eq!(c.best_price(), Some(1.5));
+    }
+
+    #[test]
+    fn tags_decide_whether_purchases_merge() {
+        let tagged = |tags: &[&str]| Purchase { tags: tags.iter().map(|t| t.to_string()).collect(), ..p(1, 1.0, "2024-01-01") };
+        assert!(tagged(&["binder A", "deck"]).same_as(&tagged(&["binder A", "deck"])));
+        assert!(tagged(&["Binder A"]).same_as(&tagged(&["binder a"])), "ignoring case");
+        assert!(!tagged(&["binder A"]).same_as(&tagged(&["binder B"])));
+        assert!(!tagged(&["binder A"]).same_as(&tagged(&[])));
+        let mut c = Card::default();
+        c.add_purchase("nonfoil", Condition::NearMint, tagged(&["deck"]));
+        c.add_purchase("nonfoil", Condition::NearMint, tagged(&["deck"]));
+        c.add_purchase("nonfoil", Condition::NearMint, tagged(&["binder"]));
+        let mut got: Vec<(i64, Vec<String>)> =
+            c.purchases("nonfoil", Condition::NearMint).into_iter().map(|p| (p.quantity, p.tags)).collect();
+        got.sort();
+        assert_eq!(got, [(1, vec!["binder".to_string()]), (2, vec!["deck".to_string()])], "the same tags merge; others don't");
     }
 }

@@ -33,8 +33,8 @@ jobs:
         run: cargo fmt --all --check
       - name: clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: UI JavaScript parses
-        run: node --check ui/app.js
+      - name: UI JavaScript parses and its imports exist
+        run: node scripts/check-ui.mjs
 
   test:
     name: Test (${{ matrix.os }})

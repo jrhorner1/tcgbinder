@@ -1,8 +1,11 @@
+//! The Home dashboard's numbers: totals, per-set completion, the most valuable cards
+//! and the value and price-paid series over time.
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chrono::NaiveDate;
 
-use super::{Card, SetInfo};
+use super::{Card, SetInfo, in_printed_set};
 use crate::dates;
 
 /// A summary of the owned cards of one set.
@@ -86,12 +89,14 @@ fn keep_top(top: &mut Vec<CardValue>, v: CardValue, n: usize) {
 }
 
 /// Aggregates the collection. `sets` may be empty when set sizes aren't loaded.
-pub fn compute_stats(cards: &[Card], sets: &HashMap<String, SetInfo>) -> Stats {
-    compute_stats_at(cards, sets, dates::today())
+pub fn compute_stats(cards: &[Card], sets: &HashMap<String, SetInfo>, main_only: bool) -> Stats {
+    compute_stats_at(cards, sets, main_only, dates::today())
 }
 
-/// [`compute_stats`] with the history series ending on `today`.
-pub fn compute_stats_at(cards: &[Card], sets: &HashMap<String, SetInfo>, today: NaiveDate) -> Stats {
+/// [`compute_stats`] with the history series ending on `today`. With `main_only`, a
+/// set whose printed size is known counts toward completion only the cards in its
+/// printed run, out of that size.
+pub fn compute_stats_at(cards: &[Card], sets: &HashMap<String, SetInfo>, main_only: bool, today: NaiveDate) -> Stats {
     let mut st = Stats::default();
     let mut by_set: HashMap<String, SetStats> = HashMap::new();
     let mut numbers: HashMap<String, HashSet<&str>> = HashMap::new();
@@ -109,7 +114,7 @@ pub fn compute_stats_at(cards: &[Card], sets: &HashMap<String, SetInfo>, today: 
         let s = by_set.entry(code.clone()).or_insert_with(|| {
             let mut s = SetStats { code: code.clone(), name: c.set_name.clone(), released: c.released_at.clone(), ..Default::default() };
             if let Some(info) = info {
-                s.set_size = info.card_count;
+                s.set_size = info.completion_size(main_only);
                 s.released = info.released_at.clone();
                 if !info.name.is_empty() {
                     s.name = info.name.clone();
@@ -119,7 +124,10 @@ pub fn compute_stats_at(cards: &[Card], sets: &HashMap<String, SetInfo>, today: 
         });
         s.unique_cards += 1;
         s.cards += qty;
-        numbers.entry(code).or_default().insert(&c.collector_number);
+        let printed = info.map_or(0, |i| i.printed_size);
+        if !main_only || printed == 0 || in_printed_set(&c.collector_number, printed) {
+            numbers.entry(code).or_default().insert(&c.collector_number);
+        }
         if info.is_none() && !c.released_at.is_empty() && (s.released.is_empty() || c.released_at < s.released) {
             s.released = c.released_at.clone(); // no set metadata: use the earliest card release
         }
@@ -199,14 +207,24 @@ fn cumulative(by_date: &BTreeMap<NaiveDate, f64>, undated: f64, today: NaiveDate
     out
 }
 
-/// Rounds dollars to whole cents.
+/// Rounds dollars to whole cents. Never -0 (an empty sum is -0.0), which JSON would
+/// show as "-0.0".
 pub fn round_cents(v: f64) -> f64 {
-    (v * 100.0).round() / 100.0
+    (v * 100.0).round() / 100.0 + 0.0
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cents_without_negative_zero() {
+        let empty: f64 = std::iter::empty::<f64>().sum();
+        assert!(round_cents(empty).is_sign_positive());
+        assert!(round_cents(-0.001).is_sign_positive());
+        assert_eq!(round_cents(1.005_1), 1.01);
+        assert_eq!(round_cents(-2.345_1), -2.35);
+    }
     use crate::collection::{Condition, Purchase};
 
     fn day(s: &str) -> NaiveDate {
@@ -225,7 +243,11 @@ mod tests {
             ..Card::default()
         };
         for (q, paid, date) in buys {
-            c.add_purchase("nonfoil", Condition::NearMint, Purchase { quantity: *q, price_paid: *paid, acquired_date: date.to_string() });
+            c.add_purchase(
+                "nonfoil",
+                Condition::NearMint,
+                Purchase { quantity: *q, price_paid: *paid, acquired_date: date.to_string(), ..Default::default() },
+            );
         }
         if let Some(m) = market {
             c.market.insert("nonfoil".into(), m);
@@ -242,10 +264,16 @@ mod tests {
         ];
         let sets: HashMap<String, SetInfo> = [(
             "M19".to_string(),
-            SetInfo { code: "m19".into(), name: "Core Set 2019".into(), card_count: 280, released_at: "2018-07-13".into() },
+            SetInfo {
+                code: "m19".into(),
+                name: "Core Set 2019".into(),
+                card_count: 280,
+                released_at: "2018-07-13".into(),
+                printed_size: 0,
+            },
         )]
         .into();
-        let st = compute_stats_at(&cards, &sets, day("2024-03-01"));
+        let st = compute_stats_at(&cards, &sets, true, day("2024-03-01"));
         assert_eq!((st.cards, st.unique_cards, st.sets), (8, 3, 2));
         assert_eq!((st.price_paid, st.price_paid_unknown), (9.0, 1));
         assert_eq!((st.market_value, st.unpriced), (10.0, 1));
@@ -267,10 +295,36 @@ mod tests {
     }
 
     #[test]
+    fn completion_counts_the_printed_set() {
+        // Core Set 2019: 314 cards on Scryfall, 280 printed. Owned: 1, 280, 281 (a
+        // Planeswalker deck card), 12a and ★5 (variants).
+        let cards: Vec<Card> = ["1", "280", "281", "12a", "★5"].iter().map(|n| card(n, "M19", n, &[(1, 0.0, "")], None)).collect();
+        let sets: HashMap<String, SetInfo> =
+            [("M19".to_string(), SetInfo { code: "m19".into(), card_count: 314, printed_size: 280, ..SetInfo::default() })].into();
+        let main = compute_stats_at(&cards, &sets, true, day("2024-01-01"));
+        assert_eq!((main.by_set[0].collected, main.by_set[0].set_size), (2, 280));
+        let all = compute_stats_at(&cards, &sets, false, day("2024-01-01"));
+        assert_eq!((all.by_set[0].collected, all.by_set[0].set_size), (5, 314));
+        // No printed size known: every card, as before.
+        let unknown: HashMap<String, SetInfo> =
+            [("M19".to_string(), SetInfo { code: "m19".into(), card_count: 314, ..SetInfo::default() })].into();
+        let st = compute_stats_at(&cards, &unknown, true, day("2024-01-01"));
+        assert_eq!((st.by_set[0].collected, st.by_set[0].set_size), (5, 314));
+    }
+
+    #[test]
+    fn printed_run() {
+        assert!(in_printed_set("1", 280) && in_printed_set("280", 280) && in_printed_set("007", 280));
+        for n in ["281", "0", "12a", "★5", "A1", "", "-1"] {
+            assert!(!in_printed_set(n, 280), "{n}");
+        }
+    }
+
+    #[test]
     fn top_cards_capped() {
         let cards: Vec<Card> =
             (0..15).map(|i| card(&format!("c{i:02}"), "S", &i.to_string(), &[(1, 0.0, "")], Some(f64::from(i)))).collect();
-        let st = compute_stats_at(&cards, &HashMap::new(), day("2024-01-01"));
+        let st = compute_stats_at(&cards, &HashMap::new(), true, day("2024-01-01"));
         assert_eq!(st.top_cards.len(), TOP_CARDS);
         assert_eq!(st.top_cards[0].card.id, "c14");
         assert_eq!(st.top_cards[9].card.id, "c05");

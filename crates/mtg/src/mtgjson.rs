@@ -13,6 +13,7 @@ use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
 use crate::scryfall::USER_AGENT;
+use tcgbinder_core::sealed::SealedProduct;
 
 /// Finish ("nonfoil", "foil", "etched") → date (`YYYY-MM-DD`) → USD.
 pub type DailyPrices = HashMap<String, HashMap<String, f64>>;
@@ -125,6 +126,68 @@ impl Client {
             Some(e) if out.is_empty() => Err(e),
             _ => Ok(out),
         }
+    }
+
+    /// The sealed products in a set's file (`sealedProduct`), which MTGJSON lists but
+    /// doesn't price. An unknown set has none.
+    pub fn sealed_products(&self, set_code: &str) -> Result<Vec<SealedProduct>> {
+        #[derive(Deserialize)]
+        struct SetFile {
+            data: SetData,
+        }
+        #[derive(Deserialize, Default)]
+        #[serde(default, rename_all = "camelCase")]
+        struct SetData {
+            sealed_product: Vec<Product>,
+        }
+        #[derive(Deserialize, Default)]
+        #[serde(default, rename_all = "camelCase")]
+        struct Product {
+            uuid: String,
+            name: String,
+            set_code: String,
+            category: String,
+            subtype: String,
+            release_date: String,
+            identifiers: HashMap<String, serde_json::Value>,
+            purchase_urls: HashMap<String, String>,
+        }
+        let code = set_code.trim().to_uppercase();
+        if code.is_empty() {
+            return Ok(Vec::new());
+        }
+        let resp = match self.get(&format!("{code}.json.gz")) {
+            Err(e) if e.downcast_ref::<Status>().is_some_and(|s| s.0 == 404) => return Ok(Vec::new()),
+            other => other?,
+        };
+        let set: SetFile =
+            serde_json::from_reader(BufReader::new(flate2::read::GzDecoder::new(resp))).with_context(|| format!("mtgjson {code}"))?;
+        let mut out: Vec<SealedProduct> = set
+            .data
+            .sealed_product
+            .into_iter()
+            .map(|p| {
+                let tcg = p.identifiers.get("tcgplayerProductId");
+                let tcgplayer_product_id = tcg.and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))).unwrap_or(0);
+                let purchase_url = ["tcgplayer", "cardKingdom", "cardmarket"]
+                    .iter()
+                    .find_map(|k| p.purchase_urls.get(*k).cloned())
+                    .or_else(|| p.purchase_urls.values().next().cloned())
+                    .unwrap_or_default();
+                SealedProduct {
+                    uuid: p.uuid,
+                    name: p.name,
+                    set: if p.set_code.is_empty() { code.clone() } else { p.set_code.to_uppercase() },
+                    category: p.category,
+                    subtype: p.subtype,
+                    release_date: p.release_date,
+                    tcgplayer_product_id,
+                    purchase_url,
+                }
+            })
+            .collect();
+        out.sort_by(|a, b| a.category.cmp(&b.category).then_with(|| a.name.cmp(&b.name)));
+        Ok(out)
     }
 
     /// Downloads AllPrices (about 90 days of daily prices for every card) and returns
@@ -307,7 +370,12 @@ mod tests {
         gz.write_all(
             br#"{"data":{"code":"M19",
               "cards":[{"uuid":"uuid-shock","identifiers":{"scryfallId":"sf-shock"}}],
-              "tokens":[{"uuid":"uuid-angel","identifiers":{"scryfallId":"sf-angel"}}]}}"#,
+              "tokens":[{"uuid":"uuid-angel","identifiers":{"scryfallId":"sf-angel"}}],
+              "sealedProduct":[
+                {"uuid":"sp-box","name":"Core Set 2019 Booster Box","setCode":"M19","category":"booster_box","subtype":"draft",
+                 "releaseDate":"2018-07-13","identifiers":{"tcgplayerProductId":"166550"},
+                 "purchaseUrls":{"tcgplayer":"https://mtgjson.com/links/abc"}},
+                {"uuid":"sp-bundle","name":"Core Set 2019 Bundle","category":"bundle","subtype":"default"}]}}"#,
         )
         .unwrap();
         let gz = gz.finish().unwrap();
@@ -321,6 +389,12 @@ mod tests {
         let ids = c.uuids(&["m19".into(), "TM19".into(), "ZZZ".into()]).unwrap();
         assert_eq!(ids.len(), 2);
         assert_eq!((ids["sf-shock"].as_str(), ids["sf-angel"].as_str()), ("uuid-shock", "uuid-angel"));
+
+        let sealed = c.sealed_products("m19").unwrap();
+        assert_eq!(sealed.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["Core Set 2019 Booster Box", "Core Set 2019 Bundle"]);
+        assert_eq!((sealed[0].tcgplayer_product_id, sealed[0].purchase_url.as_str()), (166550, "https://mtgjson.com/links/abc"));
+        assert_eq!((sealed[1].set.as_str(), sealed[1].tcgplayer_product_id, sealed[1].purchase_url.as_str()), ("M19", 0, ""));
+        assert!(c.sealed_products("ZZZ").unwrap().is_empty(), "an unknown set has none");
 
         let mut last = 0;
         let prices = c.price_history(&want(&["uuid-shock"]), &mut |read, _| last = read).unwrap();

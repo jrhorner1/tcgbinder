@@ -1,3 +1,6 @@
+//! Matching imported rows to Scryfall printings: the lookups to try for each row,
+//! most precise first, and cleaning up the names some apps write.
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde_json::{Map, Value, json};

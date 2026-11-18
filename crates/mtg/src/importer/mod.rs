@@ -1,12 +1,26 @@
 //! Reading other collection apps' CSV exports (EchoMTG, ManaBox, Moxfield, Deckbox,
-//! TCGplayer, Dragon Shield, Archidekt, Delver Lens and generic files) and matching
-//! each row to its exact Scryfall printing.
+//! TCGplayer, Dragon Shield, Archidekt, Delver Lens and generic files) and pasted card
+//! lists, and matching each row to its exact Scryfall printing.
 
+mod decklist;
 mod formats;
 mod resolve;
 
-pub use formats::{Row, parse_csv};
+pub use decklist::parse_decklist;
+pub use formats::{ParsedCsv, Row, parse_csv};
 pub use resolve::{front_face, resolve};
+
+/// Reads a CSV export, or, when the data isn't a CSV with a recognised header, a
+/// pasted card list. The CSV's error is kept when neither reads.
+pub fn parse_any(data: &[u8]) -> anyhow::Result<ParsedCsv> {
+    let csv_err = match parse_csv(data) {
+        Ok(parsed) => return Ok(parsed),
+        Err(e) => e,
+    };
+    let text = String::from_utf8_lossy(data.strip_prefix("\u{feff}".as_bytes()).unwrap_or(data));
+    let list = parse_decklist(&text);
+    if list.rows.is_empty() { Err(csv_err) } else { Ok(list) }
+}
 
 /// The finish to record for a row: the one asked for when the printing comes in it (or
 /// nothing is known), else the printing's only finish.

@@ -11,15 +11,17 @@ use http::{StatusCode, header};
 
 use tcgbinder_api::{Api, Client, MAX_BODY, error_response, is_local_host};
 
-use crate::{APP_NAME, Options, default_root, open};
+use tcgbinder_core::datadir;
+
+use crate::{APP_NAME, Options, open};
 
 /// Serves the web app on `listen` until interrupted.
 pub fn serve(opts: &Options, listen: &str, open_browser: bool) -> ExitCode {
-    let Some(root) = opts.data_dir.clone().or_else(default_root) else {
-        eprintln!("tcgbinder: cannot find a data folder; use --data-dir");
+    let Some(local) = datadir::default_root() else {
+        eprintln!("tcgbinder: cannot find the app's folder (is HOME set?)");
         return ExitCode::FAILURE;
     };
-    let app = match open(opts, root, "web", true) {
+    let app = match open(opts, local, "web", true) {
         Ok(app) => app,
         Err(e) => {
             eprintln!("tcgbinder: {e}");

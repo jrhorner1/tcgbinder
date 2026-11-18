@@ -264,7 +264,7 @@ impl Scanner for Magic {
             return Ok(res);
         };
         res.name = sc.name.clone();
-        let mut printings = self.printings(&from_scryfall(&sc))?;
+        let mut printings = self.printings(&from_scryfall(&sc), "")?;
         if printings.is_empty() {
             printings = vec![from_scryfall(&sc)];
         }

@@ -1,3 +1,6 @@
+//! A card in the collection (`Card`, one printing with its copies), its condition
+//! grades (`Condition`), and fresh catalog data from a price refresh (`CatalogUpdate`).
+
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Deserializer, Serialize};
@@ -24,6 +27,10 @@ pub enum Condition {
 
 impl Condition {
     /// The short code stored and shown, e.g. "NM".
+    /// Every condition, best first.
+    pub const ALL: [Condition; 5] =
+        [Condition::NearMint, Condition::LightPlay, Condition::Moderate, Condition::HeavyPlay, Condition::Damaged];
+
     pub fn code(self) -> &'static str {
         match self {
             Condition::NearMint => "NM",
@@ -98,6 +105,10 @@ pub struct Card {
     /// `YYYY-MM-DD` of the last price refresh.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub prices_updated: String,
+    /// Where `market` came from when not this printing: `"en"` when the catalog has no
+    /// prices for it and the prices are the English printing's. Empty normally.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub price_from: String,
     /// Game-specific fields, keyed by their JSON name. Use the attr helpers.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub attrs: BTreeMap<String, Value>,
@@ -143,6 +154,8 @@ pub struct CatalogUpdate {
     pub market: BTreeMap<String, f64>,
     pub type_line: String,
     pub rules_text: String,
+    /// As [`Card::price_from`]: `"en"` when the prices are the English printing's.
+    pub price_from: String,
 }
 
 /// A set, for completion stats.
@@ -151,8 +164,27 @@ pub struct CatalogUpdate {
 pub struct SetInfo {
     pub code: String,
     pub name: String,
+    /// Every card Scryfall lists in the set, variants included.
     pub card_count: usize,
     pub released_at: String,
+    /// The number printed on the cards as the set's size ("123/280"); 0 when unknown.
+    pub printed_size: usize,
+}
+
+impl SetInfo {
+    /// The set's size for completion: the printed size when counting the main set and
+    /// it's known, else every card.
+    pub fn completion_size(&self, main_only: bool) -> usize {
+        if main_only && self.printed_size > 0 { self.printed_size } else { self.card_count }
+    }
+}
+
+/// Whether a collector number is in a set's printed run: a plain number from 1 to
+/// `printed_size` ("280" yes; "281", "12a", "★5", "A1" no).
+pub fn in_printed_set(collector_number: &str, printed_size: usize) -> bool {
+    !collector_number.is_empty()
+        && collector_number.bytes().all(|b| b.is_ascii_digit())
+        && collector_number.parse::<usize>().is_ok_and(|n| n >= 1 && n <= printed_size)
 }
 
 #[cfg(test)]

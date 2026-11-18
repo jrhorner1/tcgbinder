@@ -3,16 +3,23 @@
 TCG Binder is a Rust workspace with one user interface for every platform:
 
 ```
-ui/                    the user interface: plain HTML, CSS and JavaScript (no build step)
-src-tauri/             the app (crate `tcgbinder`): command-line flags, data folder, logging,
+ui/                    the user interface: plain HTML, CSS and JavaScript modules (no build step)
+src-tauri/             the app (crate `tcgbinder`): command-line flags, the two folders, logging,
                        single-instance lock; registers the games; runs the Tauri window
                        (desktop and iPhone) or, with --web, the HTTP server (src/web.rs)
 crates/api             the JSON API and the embedded UI, as one request → response handler
-crates/core            game-neutral: cards and their copies, the JSON store, price history,
-                       stats, filters, bulk edit; settings; the Game trait; the service for
-                       one game (import, prices, history, daily sync, value chart); logging,
-                       data folder, single-instance lock
-crates/mtg             Magic: Scryfall catalog, CSV importer, MTGJSON price history, scan matching
+                       (lib.rs: Api, handle, route; one file of handlers per feature)
+crates/core            game-neutral: cards and their copies (collection/), the collection
+                       file (collection/store/: reading and saving, backups, tags and lots,
+                       bulk changes), price history and the value chart, stats, filters,
+                       bulk edit; the records files (records.rs, with lots, lists,
+                       watchlist, sealed, sales); settings; JSON files shared with other
+                       devices (jsonfile.rs); the Game trait; the service for one game
+                       (service.rs: prices, history, daily sync, lots, sales) and importing
+                       (import.rs); logging, the folders (datadir.rs) and changing the data
+                       folder (datafolder.rs), single-instance lock
+crates/mtg             Magic: Scryfall catalog, CSV and card-list importer, MTGJSON price history,
+                       scan matching
 crates/vision          Apple's Vision framework reading text off a card photo (Objective-C)
 ```
 
@@ -32,7 +39,13 @@ URLs, so it doesn't know where it runs:
 - **Web (`--web`):** axum hands each HTTP request to the same `Api::handle`, after
   checking the Host header (loopback only answers `localhost` and IP addresses, which
   defeats DNS rebinding).
-- **Tests** call `Api::handle` directly (`crates/api/src/tests.rs`).
+- **Tests** call `Api::handle` directly (`crates/api/src/tests/`, one file per
+  feature).
+
+`crates/api/src/lib.rs` holds `Api`, `handle` and `route`; `route` lists every endpoint
+grouped by the file its handler is in (`home.rs`, `collection.rs`, `catalog.rs`,
+`tags.rs`, `transfer.rs`, `settings.rs`, `lots.rs`, `lists.rs`, `sales.rs`,
+`watchlist.rs`, `sealed.rs`, `folders.rs`).
 
 Requests that change data must carry the `X-TCGBinder-Client` header, which other
 websites can't add to cross-site requests. Long jobs (import, price refresh, price
@@ -42,6 +55,26 @@ changes with every save, so the open page refreshes after background work.
 The UI is embedded in release builds (`rust-embed`); debug builds read `ui/` from
 disk, so reloading the page shows UI changes without rebuilding. iPhone builds always
 embed it.
+
+The UI's JavaScript is ES modules under `ui/js/`, loaded by
+`<script type="module" src="js/main.js">`, with no build step. `main.js` starts the
+app and holds the router (`route`); it is the only file that imports the pages'
+`view…` functions. Shared files (`state.js`, `nav.js`, `dom.js`, `api.js`,
+`format.js`, `charts.js`, `cards.js`) never import a page. A page may import a dialog
+or panel another page owns (the Add dialog from `pages/add.js`, the collection's line
+items from `pages/copies.js`, a lot's panel and finishing a lot from `pages/lots.js`,
+the import preview from `pages/tools.js`, the card editor from `pages/card.js`, bulk
+edit from `pages/bulk.js`), never its view, and the pages don't import each other in
+a circle.
+
+The collection lists each card as a line item with its groups of copies
+(`pages/copies.js`). Each change on a row saves the whole card (`PUT /card`), which
+reprices any lot the card's copies were in or are in now. **Split** keeps a new group
+in memory (`pending`) until it's changed, because identical purchases merge when
+saved; the rows' order is also kept in memory, so a changed group keeps its place.
+Pages redraw with `route()` from `nav.js`, which `main.js` sets at start-up, so
+nothing imports `main.js`. `node scripts/check-ui.mjs` checks that every file parses
+as a module and every import names a file and an export that exist.
 
 ## A game
 
@@ -66,18 +99,135 @@ To add a game: create a crate like `crates/mtg`, implement the trait, and add it
 Per game, in `<data>/<game>/`:
 - `collection.json`: one card per printing (keyed by its catalog ID), holding the
   copies owned as `copies`: finish → condition → list of purchases (`quantity`,
-  `price_paid`, `acquired_date`), the card editor's "Your Copies". Also the game's
-  ID. Saves are atomic (a synced temporary file renamed over
-  the old one) and serialized.
+  `price_paid`, `acquired_date`, `tags`), the card editor's "Your Copies". Two
+  purchases are one (`Purchase::same_as`) when price paid, date and tags match. Also the game's
+  ID. A card's `price_from` is `"en"` when its prices are borrowed from the English
+  printing (Magic's `borrow_english_prices`: Scryfall prices no other language). Kept
+  in a `core::jsonfile::JsonFile` (see below).
 - `price-history.json`: daily prices per printing and finish, each as a start date
   and an array of prices in cents, one per day (`-1` for a day without one). That's
   much smaller and faster than a map by date. It is only ever added to: saves are
   serialized and synced, a save that would lose prices is refused, and an unreadable
-  file is set aside rather than overwritten.
+  file is set aside at startup rather than overwritten. Before each change and save,
+  prices another device saved to the file are taken in (days already recorded here
+  keep their price), so two devices recording prices never lose days.
+- The five records files below (`lots.json`, `sales.json`, `lists.json`,
+  `watchlist.json`, `sealed.json`) share one shape and one store,
+  `core::records::Records<T>`: each file is `{"records": [...]}`, read and saved
+  through a `JsonFile`. A record type says its file name, its ID, how a new one gets
+  its ID, how it is checked, the order it is listed in, and how two versions merge
+  (`core::records::Record`); a feature's own operations are `impl Records<Thing>`
+  blocks in its module. `GameService::files()` lists every file the service keeps
+  (`core::records::DataFile`: the collection, the price history and the records),
+  so refreshing them after another device's changes and the revision `/api/status`
+  reports are one loop, and `datadir::DATA_FILES` names them for moving the data
+  folder and finding conflict copies.
+- `lots.json`: lots, cards bought together for one price (`core::lots`). A purchase is in a lot when it carries the lot's tag, `lot:<lot ID>`
+  (`tags::lot_tag`, `tags::lot_of`): a system tag, which the user can't type
+  (`tags::clean_user_tag` checks every tag that comes in) and which every list or
+  count of the user's tags leaves out (`tags::user_tags`). A purchase can be in one
+  lot at most. The API still shows and takes a purchase's `lot` as a field of its
+  own: `api::views::shown_tags` and `stored_tags` are the only places that translate.
+  The lot code works through general tag operations on `Store`: `cards_with_tag`,
+  `tag_copies` (putting owned copies in a lot, taking a rival lot's tag off them),
+  `untag_card`, `untag_all` and `remove_tagged` (deleting a lot, keeping or removing
+  its cards). `lots::lot_prices` (pure) works out
+  each copy's price from the lot's total: evenly, or by market value once the lot is
+  finished; `Store::reprice_lot` saves them, and `GameService::save_lot` refreshes
+  stale prices before a value split. Conflict copies merge by lot ID, the later
+  `created` winning.
+- `sales.json`: sold cards (`core::sales`). Each `Sale` keeps a
+  `CardRef` (the card's catalog fields), the purchase it came from (cost, date, and every tag it had, a lot's included, in `purchase_tags`) and the sale. `GameService::sell` records the sale first and then takes the
+  copies out (`Store::take_copies`): if the second write fails the sale and the copies
+  both remain, visible and fixable, where the other order could lose the record.
+  `GameService::delete_sale` can put the copies back, rebuilding a card that has left
+  from its `CardRef` and refreshing its catalog data. `sales_totals` adds up proceeds,
+  fees, cost and gain, leaving sales of unknown cost out of cost and gain. Conflict
+  copies merge by sale ID.
+- `lists.json`: lists and decks (`core::lists`). Each `ListEntry`
+  holds a catalog copy of the card (no copies), so a list shows images and prices
+  without a lookup; `GameService::refresh_prices` refreshes the collection's and the
+  lists' cards in one `Game::refresh`. `ListEntry::owned` counts the collection's
+  copies of that printing, or with `any_printing` of every printing with the name.
+  `GameService::list_entries` turns a pasted list into entries through the game's
+  import; `ImportReport::approximate` marks the cards matched by name only, which
+  become any-printing entries. Conflict copies merge lists by ID and, within a list,
+  entries by card, the larger quantity winning.
+- `watchlist.json`: watched prices (`core::watchlist`). Each `Watch`
+  holds a catalog copy of the card, a finish, a baseline price and a `Rule` (a
+  percent move, or a price line). `GameService::refresh_prices` includes the watched
+  IDs and calls `Records<Watch>::apply_prices`, which triggers a watch when the refresh
+  takes its price from inside the line to past it (so a dismissed alert stays quiet
+  until the price comes back and crosses again), and passes each new alert to the
+  hook set with `GameService::set_alert_hook`. The desktop and iPhone apps set one
+  that posts a system notification (`tauri-plugin-notification`); `--web` has none.
+  Conflict copies merge by card and finish, the later `baseline_date` winning.
+- `sealed.json`: sealed product (`core::sealed`), valued by hand since no
+  free source prices it. `Game::sealed_products` lists a set's products for choosing;
+  Magic reads `sealedProduct` from MTGJSON's set file (`mtgjson::Client::sealed_products`,
+  cached per set for the session). Each item keeps MTGJSON's `product_uuid` (the key
+  for MTGJSON's sealed prices, should it publish them) and TCGplayer's product ID (for
+  a price source, if one becomes allowed; TCGCSV's rules exclude apps end users run, so
+  it isn't called). Conflict copies merge by item ID.
+- `backups/`: copies of `collection.json` taken before each import, bulk edit, bulk
+  delete and restore (`Store::backup`), named
+  `collection-YYYYMMDD-HHMMSS[-N]-<reason>.json`; the 10 newest are kept. Restoring
+  accepts only a name that is listed, never a path.
 - Caches, for example Magic's `scryfall-sets.json`.
 
-In `<data>/`: `settings.json` (the user's settings, `core::settings`),
-`tcgbinder.lock` (single instance), and `tcgbinder.log`.
+Caches stay in `<local>/<game>/`. In `<local>/`: `settings.json` (this device's
+settings, `core::settings`, also a `JsonFile`), `locks/<hash of the data folder>.lock`
+(single instance per data folder) and `tcgbinder.log`.
+
+### The local folder and the data folder
+
+`core::datadir` describes the two. The **local folder** is the platform's app data
+folder (Tauri's `app_data_dir`, or `datadir::default_root` for `--web`). The **data
+folder** is `--data-dir` / `TCGBINDER_DATA_DIR` (shown as fixed), else the
+`data_dir` setting, else the local folder. A chosen folder that doesn't exist at
+startup is an error, not a new empty collection. `GameService::open(local, data)`
+opens the game's caches in the first and its files in the second.
+
+Changing the data folder (`api/src/folders.rs`, `core::datafolder`): `inspect` says
+what a folder holds; `transfer` moves or copies each game's collection, price history
+and backups and checks the copies read back; the choice is saved as `data_dir`, and
+the app restarts (the desktop app through the `with_restart` hook; `--web` asks the
+user). Until then the API refuses changes. The folder picker is another hook,
+`with_folder_picker` (desktop: `tauri-plugin-dialog`). So is `with_url_opener`: the apps'
+web views (wry's WebKit delegate) drop links that would open a new window, so the UI
+sends links to other sites to `POST /api/open`, which the desktop and iPhone apps
+answer with `tauri-plugin-opener`.
+
+Conflict copies (`datafolder::conflict_copies`): files named `collection*.json`
+beside `collection.json`, which sync services leave when two devices save at once.
+`Store::merge_copy` merges one without counting twice: the union of cards; for a
+card in both, the union of purchases, the larger quantity where both have the same
+purchase.
+
+### Files another device may change
+
+The data folder can sit in a folder a sync service shares between devices, so another
+device may change these files while the app runs. `core::jsonfile::JsonFile<T>` holds
+a JSON document and saves every change before returning, so memory never holds
+anything the file doesn't. Each change (`mutate`) therefore needs no merging: if the
+file changed on disk, it is reloaded first, then the change is applied to a copy and
+saved atomically (a synced temporary file `<name>_*.tmp` renamed over the old one).
+Saves are serialized, and a change that fails leaves the data as it was.
+
+- **A change on disk** is noticed by the file's modified time and length, confirmed
+  by a hash of its contents, so a file a sync service only touched isn't reloaded.
+  Files modified in the last two seconds are always hashed, since some file systems
+  keep times only to the second.
+- **A file that doesn't parse or has gone** is most likely half-synced: nothing is
+  replaced or saved over it, and the change fails with "… is being updated by another
+  device; try again in a moment" (`jsonfile::FileBusy`). At startup a malformed
+  collection is still an error.
+- **While idle,** `GET /api/status` (the UI asks every 15 seconds) checks every game's
+  files first (`GameService::refresh_files`), so the revision changes and the open page
+  redraws. There is no file watcher.
+
+Two devices saving within the same moment, before the sync service has delivered
+either change, is not covered here: the service keeps both files as a conflict copy.
 
 ## Threads
 
@@ -87,6 +237,16 @@ thread: the URL-scheme handler answers each request on its own thread, and `--we
 uses `spawn_blocking`. Each game's daily sync and hourly price check run on a
 background thread (`GameService::start_background_sync`). Shared state is behind
 `RwLock`/`Mutex` in the store, price history and settings.
+
+## Scryfall's rate limits
+
+`scryfall::Client` keeps every request inside Scryfall's published limits: 2 requests
+a second for `/cards/search`, `/cards/named`, `/cards/random` and `/cards/collection`,
+and about 10 a second for everything else. The gap is chosen from the path. An HTTP
+429 means Scryfall has limited the app for 30 seconds, so the client waits that long
+(or the `Retry-After` header's time, if longer) and retries once; a second 429 fails
+with "Scryfall is limiting requests". Server and network errors are retried after
+short waits.
 
 ## Names
 
@@ -100,11 +260,18 @@ Code uses the UI's words, so a label on screen leads straight to the code behind
 | Cards / unique cards / sets | `Stats::cards`, `Stats::unique_cards`, `Stats::sets` |
 | N copies of a card | `Card::copy_count`, `finish_copy_count`, `condition_copy_count` |
 | Price paid / Market value / unpriced | `price_paid`, `market_value`, `unpriced` |
-| Set completion "12 / 280" | `SetStats::collected` / `SetStats::set_size` |
+| Set completion "12 / 280" | `SetStats::collected` / `SetStats::set_size`; `SetInfo::printed_size` (Scryfall's, 0 when unknown), `in_printed_set`, `compute_stats(…, main_only)` and `missing(…, printed_size)` follow the Set completion setting |
 | Collector number, rules text | `Card::collector_number`, `Card::rules_text` |
 | Bulk edit | `collection::BulkChange`, `Store::bulk_edit` |
 | Load / Update price history | `GameService::load_price_history`, `PriceHistory::history_loaded_on` |
-| Card order (Settings) | `Settings::card_order`, `collection::sort_cards` |
+| Card order (Settings) | `Settings::card_order`, `SortKey::from_card_order` |
+| Tags | `Purchase::tags`; `collection::tags` (`clean_tag`, `clean_user_tag`, `normalize_tags`, `split_tags`, `same_tag`, `tag_summaries`; system tags: `LOT_PREFIX`, `is_system_tag`, `user_tags`); one spelling per tag through `Store::canonical_tags` inside each save; `Query::tags`/`tags_not`/`untagged`, `SortKey::Tag`, `BulkChange::add_tags`/`remove_tags`/`clear_tags`, `Store::rename_tag`/`delete_tag` (after a backup) |
+| Statistics page | `collection::statistics` (breakdowns, value bands, by month), `Game::breakdowns` (Magic's Color and Card type) |
+| Collection list: Sort menu | `collection::SortKey`, `collection::sort_cards` (key, direction, the game's rarity order) |
+| Export CSV | `collection::write_csv`, `Game::catalog_id_label`; read back by the importer's "TCG Binder CSV" profile |
+| Valuation report | `crates/api/src/report.rs` (`valuation`, and `escape` for every piece of card text) |
+| Delete all data (Settings) | `GameService::delete_all` (`Store::clear`, `Records::clear`, `PriceHistory::clear`, `Store::delete_backups`); `Api::delete_all_data` in `crates/api/src/folders.rs` |
+| Collection list: filters and More filters | `collection::Query` (core filters), `Game::filters` (Magic's Color, Color identity, Mana value) |
 
 ## Card scanning
 

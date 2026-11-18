@@ -2,12 +2,14 @@
 //! shared by the desktop, phone and web apps. They are stored as settings.json in the
 //! data folder, so they move with the collection.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use crate::jsonfile::JsonFile;
 
 /// The settings file in the data folder.
 pub const FILE_NAME: &str = "settings.json";
@@ -23,6 +25,7 @@ pub mod choices {
         ("theme", &["system", "light", "dark"]),
         ("text_size", &["small", "normal", "large", "larger"]),
         ("card_order", &["name", "newest", "oldest", "value"]),
+        ("set_completion", &["main", "all"]),
         ("chart_range", CHART_RANGES),
         ("price_refresh", &["daily", "weekly", "manual"]),
         ("default_condition", CONDITIONS),
@@ -48,6 +51,9 @@ pub struct Settings {
     pub card_order: String,
     /// The value-over-time range shown first.
     pub chart_range: String,
+    /// Set completion counts the printed set (main: collector numbers up to the
+    /// number printed on the cards) or every card Scryfall lists in it (all).
+    pub set_completion: String,
 
     // Prices
     /// daily, weekly or manual.
@@ -66,6 +72,12 @@ pub struct Settings {
     pub confirm_delete: bool,
     /// debug, info, warn or error.
     pub log_level: String,
+
+    // Data
+    /// The data folder this device uses; "" for the local folder. Changed only through
+    /// the data folder API, which moves or checks the data first.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub data_dir: String,
 }
 
 impl Default for Settings {
@@ -77,23 +89,26 @@ impl Default for Settings {
             show_images: true,
             card_order: "name".into(),
             chart_range: "90D".into(),
+            set_completion: "main".into(),
             price_refresh: "daily".into(),
             auto_price_history: true,
             default_condition: "NM".into(),
             default_date: "today".into(),
             confirm_delete: true,
             log_level: "info".into(),
+            data_dir: String::new(),
         }
     }
 }
 
 impl Settings {
-    fn fields_mut(&mut self) -> [(&'static str, &mut String); 8] {
+    fn fields_mut(&mut self) -> [(&'static str, &mut String); 9] {
         [
             ("theme", &mut self.theme),
             ("text_size", &mut self.text_size),
             ("card_order", &mut self.card_order),
             ("chart_range", &mut self.chart_range),
+            ("set_completion", &mut self.set_completion),
             ("price_refresh", &mut self.price_refresh),
             ("default_condition", &mut self.default_condition),
             ("default_date", &mut self.default_date),
@@ -131,6 +146,9 @@ impl Settings {
     /// out keep their values; unknown fields are ignored.
     pub fn with_changes(&self, change: &Value) -> Result<Settings> {
         let Value::Object(change) = change else { bail!("settings must be a JSON object") };
+        if change.contains_key("data_dir") {
+            bail!("the data folder is changed in Settings → Data, which moves or checks the collection first");
+        }
         let mut v = serde_json::to_value(self)?;
         if let Value::Object(map) = &mut v {
             for (k, val) in change {
@@ -145,10 +163,15 @@ impl Settings {
 
 type Listener = Arc<dyn Fn(&Settings, &Settings) + Send + Sync>;
 
+/// Where the settings live: a file, or memory only (tests).
+enum Backing {
+    File(JsonFile<Settings>),
+    Memory(Mutex<Settings>),
+}
+
 /// Keeps the settings and saves every change.
 pub struct SettingsStore {
-    path: Option<PathBuf>,
-    current: Mutex<Settings>,
+    backing: Backing,
     listeners: Mutex<Vec<Listener>>,
 }
 
@@ -157,57 +180,59 @@ impl SettingsStore {
     /// can't be read is set aside and the defaults are used, so the app always starts.
     pub fn open(dir: &Path) -> SettingsStore {
         let path = dir.join(FILE_NAME);
-        let mut s = Settings::default();
-        match std::fs::read(&path) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => tracing::warn!(path = %path.display(), error = %e, "cannot read settings; using defaults"),
-            Ok(b) => match serde_json::from_slice::<Settings>(&b) {
-                Ok(mut read) => {
-                    read.normalize();
-                    s = read;
-                }
-                Err(e) => {
-                    let bad = path.with_extension("json.unreadable");
-                    tracing::warn!(path = %path.display(), moved_to = %bad.display(), error = %e, "settings file is damaged; using defaults");
-                    let _ = std::fs::rename(&path, &bad);
-                }
-            },
-        }
-        SettingsStore { path: Some(path), current: Mutex::new(s), listeners: Mutex::default() }
+        let file = JsonFile::open(&path, true).or_else(|e| {
+            let bad = path.with_extension("json.unreadable");
+            tracing::warn!(path = %path.display(), moved_to = %bad.display(), error = %e, "settings file is damaged; using defaults");
+            let _ = std::fs::rename(&path, &bad);
+            JsonFile::open(&path, true)
+        });
+        let backing = match file {
+            Ok(f) => Backing::File(f),
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "cannot read settings; using defaults");
+                Backing::Memory(Mutex::default())
+            }
+        };
+        SettingsStore { backing, listeners: Mutex::default() }
     }
 
     /// A store that isn't saved anywhere (tests).
     pub fn memory() -> SettingsStore {
-        SettingsStore { path: None, current: Mutex::new(Settings::default()), listeners: Mutex::default() }
+        SettingsStore { backing: Backing::Memory(Mutex::default()), listeners: Mutex::default() }
     }
 
-    /// The current settings.
+    /// The current settings. Values that aren't valid choices read as the defaults.
     pub fn get(&self) -> Settings {
-        self.current.lock().unwrap().clone()
+        let mut s = match &self.backing {
+            Backing::File(f) => f.read(Settings::clone),
+            Backing::Memory(m) => m.lock().unwrap().clone(),
+        };
+        s.normalize();
+        s
     }
 
     /// The settings file (`None` for a memory store).
     pub fn path(&self) -> Option<&Path> {
-        self.path.as_deref()
+        match &self.backing {
+            Backing::File(f) => Some(f.path()),
+            Backing::Memory(_) => None,
+        }
     }
 
     /// Validates and saves new settings, then tells the listeners.
     pub fn set(&self, s: Settings) -> Result<()> {
         s.validate()?;
-        let old = {
-            let mut cur = self.current.lock().unwrap();
-            if *cur == s {
-                return Ok(());
-            }
-            if let Some(path) = &self.path {
-                let mut b = serde_json::to_vec_pretty(&s)?;
-                b.push(b'\n');
-                let tmp = path.with_extension("json.tmp");
-                std::fs::write(&tmp, b)?;
-                std::fs::rename(&tmp, path)?;
-            }
-            std::mem::replace(&mut *cur, s.clone())
-        };
+        let old = self.get();
+        if old == s {
+            return Ok(());
+        }
+        match &self.backing {
+            Backing::File(f) => f.mutate(|cur| {
+                *cur = s.clone();
+                Ok(())
+            })?,
+            Backing::Memory(m) => *m.lock().unwrap() = s.clone(),
+        }
         tracing::info!(settings = ?s, "settings changed");
         let listeners = self.listeners.lock().unwrap().clone();
         for f in listeners {
@@ -268,5 +293,6 @@ mod tests {
         assert_eq!(next.theme, "system");
         assert!(s.with_changes(&serde_json::json!({"show_images": "yes"})).is_err());
         assert!(s.with_changes(&serde_json::json!([1])).is_err());
+        assert!(s.with_changes(&serde_json::json!({"data_dir": "/tmp"})).is_err());
     }
 }

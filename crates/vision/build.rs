@@ -1,5 +1,5 @@
-// Compiles the Objective-C Vision reader on Apple platforms; elsewhere there is nothing
-// to build and the crate reports that reading isn't available.
+//! Compiles the Objective-C Vision reader on Apple platforms; elsewhere there is nothing
+//! to build and the crate reports that reading isn't available.
 fn main() {
     println!("cargo:rerun-if-changed=native/read.m");
     println!("cargo:rerun-if-changed=native/read.h");

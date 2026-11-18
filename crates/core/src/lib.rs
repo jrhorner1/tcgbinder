@@ -7,13 +7,23 @@
 
 pub mod collection;
 pub mod datadir;
+pub mod datafolder;
 pub mod dates;
 pub mod game;
+pub mod import;
 pub mod instance;
+pub mod jsonfile;
+pub mod lists;
 pub mod logging;
+pub mod lots;
+pub mod records;
+pub mod sales;
 pub mod scan;
+pub mod sealed;
+pub mod serde_skip;
 pub mod service;
 pub mod settings;
 pub mod version;
+pub mod watchlist;
 
 pub use collection::{Card, Condition, Copies, Purchase};

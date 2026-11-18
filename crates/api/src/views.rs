@@ -3,7 +3,7 @@
 use chrono::NaiveDate;
 use serde::Serialize;
 
-use tcgbinder_core::collection::{Card, TimePoint, card_key, round_cents};
+use tcgbinder_core::collection::{Card, TimePoint, card_key, lot_of, lot_tag, normalize_tags, normalize_user_tags, round_cents, user_tags};
 use tcgbinder_core::dates;
 
 /// A card as the front end sees it: the card as stored, plus its key, totals, and its
@@ -34,21 +34,47 @@ pub struct PurchaseView {
     /// Per copy.
     pub price_paid: f64,
     pub acquired_date: String,
+    /// The lot it was bought in (its ID), or "".
+    pub lot: String,
+    pub tags: Vec<String>,
     /// The market price of one copy in this finish (0 if unknown).
     pub market: f64,
+}
+
+/// A purchase's stored tags as the API shows them: the lot they put it in ("" for
+/// none) and the user's tags. The lot is stored as a tag (`lot:<id>`) but the API
+/// keeps it a field of its own; this and [`stored_tags`] are the only places that
+/// translate.
+pub fn shown_tags(tags: &[String]) -> (String, Vec<String>) {
+    (lot_of(tags).unwrap_or("").to_string(), user_tags(tags).cloned().collect())
+}
+
+/// The tags to store for a purchase the API was sent: the user's `tags` (checked:
+/// none may start with a system prefix) and, with a `lot`, the lot's tag.
+pub fn stored_tags(tags: &[String], lot: &str) -> anyhow::Result<Vec<String>> {
+    let mut all = normalize_user_tags(tags)?;
+    if !lot.is_empty() {
+        all.push(lot_tag(lot));
+    }
+    normalize_tags(&all)
 }
 
 pub fn view(c: &Card) -> CardView<'_> {
     let purchases = c
         .purchase_rows()
         .into_iter()
-        .map(|r| PurchaseView {
-            market: c.market_price(&r.finish).unwrap_or(0.0),
-            finish: r.finish,
-            condition: r.condition.code(),
-            quantity: r.purchase.quantity,
-            price_paid: r.purchase.price_paid,
-            acquired_date: r.purchase.acquired_date,
+        .map(|r| {
+            let (lot, tags) = shown_tags(&r.purchase.tags);
+            PurchaseView {
+                market: c.market_price(&r.finish).unwrap_or(0.0),
+                finish: r.finish,
+                condition: r.condition.code(),
+                quantity: r.purchase.quantity,
+                price_paid: r.purchase.price_paid,
+                acquired_date: r.purchase.acquired_date,
+                lot,
+                tags,
+            }
         })
         .collect();
     CardView {

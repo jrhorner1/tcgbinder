@@ -16,12 +16,36 @@ use std::sync::Mutex;
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
+use tcgbinder_core::collection::Breakdown;
 use tcgbinder_core::collection::{Card, CatalogUpdate, Purchase, SetInfo};
 use tcgbinder_core::dates;
 use tcgbinder_core::game::{self, DailyPriceMap, Filter, Game, ImportReport, PriceHistorySource, Progress, Row, SearchPage};
+use tcgbinder_core::sealed::SealedProduct;
 
 /// The game's identifier and data folder name.
 pub const ID: &str = "mtg";
+
+/// The languages Magic cards are printed in, by Scryfall's code (the codes
+/// `importer::parse_language` returns).
+pub const LANGUAGES: &[(&str, &str)] = &[
+    ("en", "English"),
+    ("es", "Spanish"),
+    ("fr", "French"),
+    ("de", "German"),
+    ("it", "Italian"),
+    ("pt", "Portuguese"),
+    ("ja", "Japanese"),
+    ("ko", "Korean"),
+    ("ru", "Russian"),
+    ("zhs", "Simplified Chinese"),
+    ("zht", "Traditional Chinese"),
+    ("he", "Hebrew"),
+    ("la", "Latin"),
+    ("grc", "Ancient Greek"),
+    ("ar", "Arabic"),
+    ("sa", "Sanskrit"),
+    ("ph", "Phyrexian"),
+];
 
 /// Magic, using Scryfall and MTGJSON.
 pub struct Magic {
@@ -30,6 +54,8 @@ pub struct Magic {
     dir: Mutex<PathBuf>,
     /// The cache for [`Game::set_cards`].
     set_cards: Mutex<HashMap<String, Vec<Card>>>,
+    /// The cache for [`Game::sealed_products`], per set.
+    sealed: Mutex<HashMap<String, Vec<SealedProduct>>>,
 }
 
 impl Default for Magic {
@@ -41,7 +67,7 @@ impl Default for Magic {
 
 impl Magic {
     pub fn with_clients(scryfall: scryfall::Client, mtgjson: mtgjson::Client) -> Magic {
-        Magic { scryfall, mtgjson, dir: Mutex::default(), set_cards: Mutex::default() }
+        Magic { scryfall, mtgjson, dir: Mutex::default(), set_cards: Mutex::default(), sealed: Mutex::default() }
     }
 }
 
@@ -106,6 +132,43 @@ fn market_from_prices(p: &scryfall::Prices, finishes: &[String]) -> BTreeMap<Str
         .collect()
 }
 
+impl Magic {
+    /// Scryfall prices no non-English printing, so each one in `foreign` takes the
+    /// prices of the English printing with the same set and collector number, marked
+    /// with `price_from = "en"`. Printings with no English counterpart stay unpriced.
+    fn borrow_english_prices(&self, foreign: &[scryfall::Card], out: &mut HashMap<String, CatalogUpdate>) -> Result<()> {
+        let key = |set: &str, number: &str| (set.to_lowercase(), number.to_lowercase());
+        let mut wanted: Vec<(String, String)> = foreign.iter().map(|sc| key(&sc.set, &sc.collector_number)).collect();
+        wanted.sort();
+        wanted.dedup();
+        let mut english: HashMap<(String, String), scryfall::Card> = HashMap::new();
+        for chunk in wanted.chunks(scryfall::COLLECTION_BATCH_SIZE) {
+            let bodies: Vec<_> = chunk
+                .iter()
+                .map(|(set, number)| {
+                    serde_json::Map::from_iter([
+                        ("set".to_string(), Value::from(set.as_str())),
+                        ("collector_number".into(), Value::from(number.as_str())),
+                    ])
+                })
+                .collect();
+            let resp = self.scryfall.fetch_collection(&bodies).context("looking up English prices failed")?;
+            for en in resp.data.into_iter().filter(|c| c.lang == "en") {
+                english.insert(key(&en.set, &en.collector_number), en);
+            }
+        }
+        for sc in foreign {
+            let Some(en) = english.get(&key(&sc.set, &sc.collector_number)) else { continue };
+            let market = market_from_prices(&en.prices, &sc.finishes);
+            if let (false, Some(update)) = (market.is_empty(), out.get_mut(&sc.id)) {
+                update.market = market;
+                update.price_from = "en".into();
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Game for Magic {
     fn id(&self) -> &'static str {
         ID
@@ -120,10 +183,27 @@ impl Game for Magic {
         Ok(())
     }
 
+    /// Searches card names as a phrase (newest printings first); when that finds
+    /// nothing, searches again with the words anywhere in a name.
     fn search(&self, text: &str, set: &str, next_page: &str) -> Result<SearchPage> {
         let q = scryfall::build_search_query(text, set)?;
-        let page = self.scryfall.search_cards(&q, next_page)?;
+        let mut page = self.scryfall.search_cards(&q, next_page)?;
+        if next_page.is_empty() && page.cards.is_empty() {
+            let plain = scryfall::build_plain_query(text, set)?;
+            if plain != q {
+                page = self.scryfall.search_cards(&plain, "")?;
+            }
+        }
         Ok(SearchPage { cards: page.cards.iter().map(from_scryfall).collect(), total: page.total, next_page: page.next_page })
+    }
+
+    /// Scryfall's name suggestions, from 2 characters typed.
+    fn autocomplete(&self, text: &str) -> Result<Vec<String>> {
+        let text = text.trim();
+        if text.chars().count() < 2 {
+            return Ok(Vec::new());
+        }
+        self.scryfall.autocomplete(text)
     }
 
     fn search_hints(&self) -> (&'static str, &'static str) {
@@ -133,6 +213,7 @@ impl Game for Magic {
     fn refresh(&self, ids: &[String], progress: Progress) -> Result<HashMap<String, CatalogUpdate>> {
         let list: Vec<&String> = ids.iter().filter(|id| scryfall::is_uuid(id)).collect();
         let mut out = HashMap::new();
+        let mut foreign = Vec::new(); // non-English printings without prices
         for (n, chunk) in list.chunks(scryfall::COLLECTION_BATCH_SIZE).enumerate() {
             let bodies: Vec<_> =
                 chunk.iter().map(|id| serde_json::Map::from_iter([("id".to_string(), Value::from(id.as_str()))])).collect();
@@ -142,11 +223,16 @@ impl Game for Magic {
                     market: market_from_prices(&sc.prices, &sc.finishes),
                     type_line: sc.type_line.clone(),
                     rules_text: sc.text(),
+                    price_from: String::new(),
                 };
+                if update.market.is_empty() && !sc.lang.is_empty() && sc.lang != "en" {
+                    foreign.push(sc.clone());
+                }
                 out.insert(sc.id, update);
             }
             progress(((n + 1) * scryfall::COLLECTION_BATCH_SIZE).min(list.len()), list.len());
         }
+        self.borrow_english_prices(&foreign, &mut out)?;
         Ok(out)
     }
 
@@ -159,23 +245,41 @@ impl Game for Magic {
     /// Reads a CSV export, matches every row to its exact Scryfall printing and returns
     /// the cards to add.
     fn import(&self, data: &[u8], progress: Progress) -> Result<(Vec<Card>, ImportReport)> {
-        let (rows, format) = importer::parse_csv(data)?;
-        let mut report = ImportReport { format: format.clone(), rows: rows.len(), notes: Vec::new() };
-        if rows.is_empty() {
+        let parsed = importer::parse_any(data)?;
+        let format = parsed.format;
+        let mut report = ImportReport {
+            format: format.clone(),
+            rows: parsed.rows.len(),
+            notes: parsed.warnings,
+            unmatched: Vec::new(),
+            header: parsed.header,
+            approximate: Vec::new(),
+        };
+        if parsed.rows.is_empty() {
             bail!("no card rows found in this {format} file");
         }
         let (mut approx, mut missing, mut cards) = (Vec::new(), Vec::new(), Vec::new());
-        for r in importer::resolve(&self.scryfall, rows, progress) {
+        for r in importer::resolve(&self.scryfall, parsed.rows, progress) {
             let Some(sc) = &r.card else {
                 tracing::info!(row = r.row.describe(), reason = r.error, "import row not matched");
                 missing.push(format!("  {}", r.row.describe()));
+                // A row split into regular and foil copies is one line of the file.
+                if report.unmatched.last().is_none_or(|u| u.line != r.row.line) {
+                    report.unmatched.push(game::UnmatchedRow { line: r.row.line, text: r.row.text.clone() });
+                }
                 continue;
             };
             if r.approximate {
+                report.approximate.push(cards.len());
                 approx.push(format!("  {} → {} · {}", r.row.describe(), sc.set.to_uppercase(), sc.collector_number));
             }
             let mut card = from_scryfall(sc);
-            let purchase = Purchase { quantity: r.row.quantity, price_paid: r.row.price_paid, acquired_date: r.row.acquired_date.clone() };
+            let purchase = Purchase {
+                quantity: r.row.quantity,
+                price_paid: r.row.price_paid,
+                acquired_date: r.row.acquired_date.clone(),
+                tags: r.row.tags.clone(),
+            };
             card.add_purchase(&importer::choose_finish(&r.row.finish, &sc.finishes), r.row.condition, purchase);
             cards.push(card);
         }
@@ -190,10 +294,14 @@ impl Game for Magic {
         Ok((cards, report))
     }
 
-    /// Every printing of the card, found by its Oracle ID (or exact name).
-    fn printings(&self, c: &Card) -> Result<Vec<Card>> {
+    /// Every printing of the card, found by its Oracle ID (or exact name), in a
+    /// language (Scryfall's `lang:`).
+    fn printings(&self, c: &Card, language: &str) -> Result<Vec<Card>> {
         let oracle = c.attr_str("oracle_id");
-        let q = if oracle.is_empty() { format!("!\"{}\"", importer::front_face(&c.name)) } else { format!("oracleid:{oracle}") };
+        let mut q = if oracle.is_empty() { format!("!\"{}\"", importer::front_face(&c.name)) } else { format!("oracleid:{oracle}") };
+        if LANGUAGES.iter().any(|(code, _)| *code == language) {
+            q = format!("{q} lang:{language}");
+        }
         let mut out: Vec<Card> = self.scryfall.search_all(&q, 5)?.iter().map(from_scryfall).collect();
         out.sort_by(|a, b| b.released_at.cmp(&a.released_at));
         Ok(out)
@@ -226,17 +334,51 @@ impl Game for Magic {
         }
     }
 
+    fn languages(&self) -> &'static [(&'static str, &'static str)] {
+        LANGUAGES
+    }
+
+    fn is_basic_land(&self, c: &Card) -> bool {
+        c.type_line.contains("Basic Land")
+    }
+
     fn rarities(&self) -> &'static [&'static str] {
         &["common", "uncommon", "rare", "mythic", "special", "bonus"]
     }
 
     fn filters(&self) -> Vec<Filter> {
-        vec![Filter { name: "Color", options: &["W", "U", "B", "R", "G", COLOR_MULTICOLOR, COLOR_COLORLESS], matches: matches_color }]
+        vec![
+            Filter { name: "Color", options: COLORS, matches: matches_color },
+            Filter { name: "Color identity", options: COLORS, matches: matches_color_identity },
+            Filter { name: "Mana value", options: &["0", "1", "2", "3", "4", "5", "6", "7+"], matches: matches_mana_value },
+        ]
+    }
+
+    fn breakdowns(&self) -> Vec<Breakdown> {
+        vec![
+            Breakdown { name: "Color", param: Some("f.Color"), order: COLORS, labels: color_labels },
+            Breakdown { name: "Card type", param: Some("card_type"), order: CARD_TYPES, labels: type_labels },
+        ]
     }
 
     fn details(&self, c: &Card) -> Vec<Row> {
         let mana = c.attr_str("mana_cost");
         if mana.is_empty() { Vec::new() } else { vec![Row { label: "Mana cost".into(), value: mana.into() }] }
+    }
+
+    fn catalog_id_label(&self) -> &'static str {
+        "Scryfall ID"
+    }
+
+    /// MTGJSON's sealed products for the set, from its set file (kept for the session).
+    fn sealed_products(&self, set: &str) -> Result<Vec<SealedProduct>> {
+        let code = set.trim().to_uppercase();
+        if let Some(found) = self.sealed.lock().unwrap().get(&code) {
+            return Ok(found.clone());
+        }
+        let found = self.mtgjson.sealed_products(&code)?;
+        self.sealed.lock().unwrap().insert(code, found.clone());
+        Ok(found)
     }
 
     fn card_link(&self, c: &Card) -> Option<(String, String)> {
@@ -255,14 +397,54 @@ impl Game for Magic {
 
 const COLOR_MULTICOLOR: &str = "Multicolor";
 const COLOR_COLORLESS: &str = "Colorless";
+const COLORS: &[&str] = &["W", "U", "B", "R", "G", COLOR_MULTICOLOR, COLOR_COLORLESS];
+/// The main card types, as the Statistics page groups them.
+const CARD_TYPES: &[&str] = &["Creature", "Instant", "Sorcery", "Artifact", "Enchantment", "Planeswalker", "Land", "Battle"];
+
+/// A card's colors for the Statistics page, as the Color filter matches them: each of
+/// its colors, plus Multicolor for two or more, or Colorless for none.
+fn color_labels(c: &Card) -> Vec<String> {
+    let colors = c.attr_strings("colors");
+    let mut out: Vec<String> =
+        COLORS[..5].iter().filter(|x| colors.iter().any(|c| c.eq_ignore_ascii_case(x))).map(|x| x.to_string()).collect();
+    match out.len() {
+        0 => out.push(COLOR_COLORLESS.into()),
+        1 => {}
+        _ => out.push(COLOR_MULTICOLOR.into()),
+    }
+    out
+}
+
+/// The main types in a card's type line (an artifact creature counts under both).
+fn type_labels(c: &Card) -> Vec<String> {
+    let line = c.type_line.split('—').next().unwrap_or("");
+    CARD_TYPES.iter().filter(|t| line.split_whitespace().any(|w| w.eq_ignore_ascii_case(t))).map(|t| t.to_string()).collect()
+}
 
 /// A single color also matches the multicolor cards that include it.
 fn matches_color(c: &Card, want: &str) -> bool {
-    let colors = c.attr_strings("colors");
+    matches_colors(&c.attr_strings("colors"), want)
+}
+
+/// Color identity, as Commander uses it: the same choices as Color.
+fn matches_color_identity(c: &Card, want: &str) -> bool {
+    matches_colors(&c.attr_strings("color_identity"), want)
+}
+
+fn matches_colors(colors: &[&str], want: &str) -> bool {
     match want {
         COLOR_COLORLESS => colors.is_empty(),
         COLOR_MULTICOLOR => colors.len() > 1,
         _ => colors.iter().any(|col| col.eq_ignore_ascii_case(want)),
+    }
+}
+
+/// Mana value: "0" to "6" exactly, "7+" for seven or more.
+fn matches_mana_value(c: &Card, want: &str) -> bool {
+    let Some(mv) = c.attrs.get("cmc").and_then(Value::as_f64) else { return false };
+    match want.strip_suffix('+') {
+        Some(min) => min.parse::<f64>().is_ok_and(|min| mv >= min),
+        None => want.parse::<f64>().is_ok_and(|n| mv == n),
     }
 }
 
@@ -344,6 +526,139 @@ mod tests {
         }
         assert_eq!(Magic::default().finish_name("nonfoil"), "Normal");
         assert_eq!(Magic::default().finish_name("etched"), "Etched");
+    }
+
+    #[test]
+    fn statistics_labels() {
+        let mut c = Card { type_line: "Legendary Artifact Creature — Golem".into(), ..Card::default() };
+        c.set_attr("colors", vec!["U", "W"]);
+        assert_eq!(color_labels(&c), ["W", "U", COLOR_MULTICOLOR]);
+        assert_eq!(type_labels(&c), ["Creature", "Artifact"]);
+        c.set_attr("colors", Vec::<String>::new());
+        c.type_line = "Basic Land — Island".into();
+        assert_eq!((color_labels(&c), type_labels(&c)), (vec![COLOR_COLORLESS.to_string()], vec!["Land".to_string()]));
+        c.type_line = "Creature — Landfall Elemental".into();
+        assert_eq!(type_labels(&c), ["Creature"], "a subtype is not a type");
+    }
+
+    #[test]
+    fn identity_and_mana_value_filters() {
+        let mut c = Card::default();
+        c.set_attr("colors", Vec::<String>::new());
+        c.set_attr("color_identity", vec!["G", "U"]);
+        c.set_attr("cmc", 7.0);
+        assert!(!matches_color(&c, "G") && matches_color(&c, COLOR_COLORLESS), "an artifact with a green-blue ability");
+        assert!(matches_color_identity(&c, "G") && matches_color_identity(&c, COLOR_MULTICOLOR));
+        assert!(!matches_color_identity(&c, COLOR_COLORLESS));
+        assert!(matches_mana_value(&c, "7+") && matches_mana_value(&c, "7") && !matches_mana_value(&c, "6"));
+        c.set_attr("cmc", 3.0);
+        assert!(matches_mana_value(&c, "3") && !matches_mana_value(&c, "7+"));
+        assert!(!matches_mana_value(&Card::default(), "0"), "no mana value: matches nothing");
+        let names: Vec<&str> = Magic::default().filters().iter().map(|f| f.name).collect();
+        assert_eq!(names, ["Color", "Color identity", "Mana value"]);
+    }
+
+    /// A fake Scryfall with Sol Ring in Commander 2021 (263) in English ($1.85) and
+    /// Japanese (no prices), a Japanese-only promo, and an English card of its own.
+    fn language_server() -> testing::FakeServer {
+        use scryfall::{CollectionResponse, Prices};
+        let card = |id: &str, lang: &str, set: &str, number: &str, usd: Option<&str>| scryfall::Card {
+            id: id.into(),
+            name: "Sol Ring".into(),
+            lang: lang.into(),
+            set: set.into(),
+            collector_number: number.into(),
+            finishes: vec!["nonfoil".into(), "foil".into()],
+            prices: Prices { usd: usd.map(String::from), ..Default::default() },
+            ..Default::default()
+        };
+        let catalog = [
+            card(JA, "ja", "c21", "263", None),
+            card(EN, "en", "c21", "263", Some("1.85")),
+            card(PROMO, "ja", "pjp", "1", None),
+            card(OTHER, "en", "m19", "1", Some("0.50")),
+        ];
+        testing::FakeServer::start(move |req| {
+            if let Some(rest) = req.path.strip_prefix("/cards/") {
+                // /cards/{set}/{number}/{lang}: one printing in a language.
+                let parts: Vec<&str> = rest.split('/').collect();
+                if let [set, number, lang] = parts[..] {
+                    return match catalog.iter().find(|c| c.set == set && c.collector_number == number && c.lang == lang) {
+                        Some(c) => testing::Reply::json(c),
+                        None => testing::Reply::not_found(),
+                    };
+                }
+            }
+            let body: Value = serde_json::from_slice(&req.body).unwrap_or_default();
+            let mut resp = CollectionResponse::default();
+            for id in body["identifiers"].as_array().cloned().unwrap_or_default() {
+                // By set and number Scryfall answers with the English printing, if any.
+                let hit = catalog.iter().find(|c| match id.get("id") {
+                    Some(want) => c.id == *want,
+                    None => c.set == id["set"] && c.collector_number == id["collector_number"] && (c.lang == "en" || c.set == "pjp"),
+                });
+                match hit {
+                    Some(c) => resp.data.push(c.clone()),
+                    None => resp.not_found.push(id.as_object().cloned().unwrap_or_default()),
+                }
+            }
+            testing::Reply::json(&resp)
+        })
+    }
+
+    const JA: &str = "bbbbbbbb-0000-4000-8000-000000000001";
+    const EN: &str = "bbbbbbbb-0000-4000-8000-000000000002";
+    const PROMO: &str = "bbbbbbbb-0000-4000-8000-000000000003";
+    const OTHER: &str = "bbbbbbbb-0000-4000-8000-000000000004";
+
+    #[test]
+    fn foreign_printings_take_the_english_price() {
+        let srv = language_server();
+        let g = Magic::with_clients(scryfall::Client::unlimited(&srv.url), mtgjson::Client::new(&srv.url));
+        let ids: Vec<String> = [JA, PROMO, OTHER].iter().map(|s| s.to_string()).collect();
+        let got = g.refresh(&ids, &mut |_, _| {}).unwrap();
+        assert_eq!(got[JA].market, BTreeMap::from([("nonfoil".to_string(), 1.85)]));
+        assert_eq!(got[JA].price_from, "en");
+        assert!(got[PROMO].market.is_empty() && got[PROMO].price_from.is_empty(), "no English printing: unpriced");
+        assert_eq!((got[OTHER].market["nonfoil"], got[OTHER].price_from.as_str()), (0.5, ""));
+        let calls = srv.calls.lock().unwrap().len();
+        assert_eq!(calls, 2, "one batch by ID, one for the English printings");
+    }
+
+    #[test]
+    fn imported_foreign_cards_are_priced_at_once() {
+        let srv = language_server();
+        let g = Magic::with_clients(scryfall::Client::unlimited(&srv.url), mtgjson::Client::new(&srv.url));
+        let dir = tempfile::tempdir().unwrap();
+        let svc = tcgbinder_core::service::GameService::open(dir.path(), dir.path(), Box::new(g)).unwrap();
+        let res = svc.import(b"Name,Set Code,Collector Number,Language,Quantity\nSol Ring,C21,263,Japanese,2\n", &mut |_, _| {}).unwrap();
+        assert_eq!(res.cards, 2);
+        let card = svc.store.get(JA).expect("the Japanese printing");
+        assert_eq!((card.market_price("nonfoil"), card.price_from.as_str()), (Some(1.85), "en"));
+    }
+
+    #[test]
+    fn phrase_search_falls_back_to_words() {
+        // A Scryfall where only the loose word search finds anything.
+        let srv = testing::FakeServer::start(|req| match (req.path.as_str(), req.query.get("q").map(String::as_str)) {
+            ("/cards/search", Some(q)) if !q.starts_with("name:") => testing::Reply::json(&scryfall::SearchResponse {
+                total_cards: 1,
+                data: vec![scryfall::Card { id: "x".into(), name: "Sol Ring".into(), ..Default::default() }],
+                ..Default::default()
+            }),
+            ("/cards/autocomplete", Some(q)) => testing::Reply::json(&serde_json::json!({ "data": [format!("{q} Ring")] })),
+            _ => testing::Reply::not_found(),
+        });
+        let g = Magic::with_clients(scryfall::Client::unlimited(&srv.url), mtgjson::Client::new(&srv.url));
+        let page = g.search("sol rin", "", "").unwrap();
+        assert_eq!(page.cards.len(), 1);
+        let calls = srv.calls.lock().unwrap().clone();
+        assert_eq!(calls.len(), 2, "{calls:?}");
+        assert!(calls[0].contains("q=name%3A%22sol+rin%22") && calls[0].contains("order=released") && calls[0].contains("dir=desc"));
+        assert!(calls[1].contains("q=sol+rin&"));
+
+        assert_eq!(g.autocomplete("Sol").unwrap(), ["Sol Ring"]);
+        assert!(g.autocomplete("S").unwrap().is_empty(), "two characters at least");
     }
 
     /// Imports a real export against live Scryfall into a temporary collection; skipped
