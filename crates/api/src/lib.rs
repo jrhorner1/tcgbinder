@@ -155,10 +155,18 @@ enum Reply {
 
 type Result<T = Reply> = std::result::Result<T, Error>;
 
-/// The UI's files.
+/// The UI's files: ui/dist, as `npm run build` makes it (see ui/package.json). Debug
+/// builds read them from disk, so a rebuilt UI shows on reload; release builds carry
+/// them inside. Without a built UI the app still builds, and says how to build it.
 #[derive(rust_embed::RustEmbed)]
-#[folder = "../../ui/"]
+#[folder = "../../ui/dist/"]
+#[allow_missing = true]
 struct Ui;
+
+/// The page shown when the UI hasn't been built.
+const UI_NOT_BUILT: &str = "<!doctype html><meta charset=utf-8><title>TCG Binder</title>\
+<p>The user interface hasn't been built. In the repository's <code>ui</code> folder, run \
+<code>npm ci</code> and then <code>npm run build</code>, and reload this page.</p>";
 
 /// The request's query parameters (the first value of each).
 fn query_params(req: &Request) -> HashMap<String, String> {
@@ -390,6 +398,11 @@ fn static_file(path: &str) -> Response {
             .header(header::CONTENT_TYPE, mime_guess::from_path(name).first_or_octet_stream().as_ref())
             .header(header::CACHE_CONTROL, "no-cache")
             .body(f.data.into_owned())
+            .unwrap(),
+        None if name == "index.html" => http::Response::builder()
+            .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+            .header(header::CACHE_CONTROL, "no-cache")
+            .body(UI_NOT_BUILT.as_bytes().to_vec())
             .unwrap(),
         None => http::Response::builder().status(StatusCode::NOT_FOUND).body(b"not found".to_vec()).unwrap(),
     }

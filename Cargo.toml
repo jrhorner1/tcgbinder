@@ -5,7 +5,7 @@
 #   crates/vision  reading text off a photo of a card with Apple's Vision framework
 #   crates/api     the JSON API and the embedded browser UI, shared by every front end
 #   src-tauri      the app: the Tauri desktop and iPhone app, and the --web server
-#   ui             the user interface (plain HTML, CSS and JavaScript; no build step)
+#   ui             the user interface (Svelte and TypeScript, built with Vite into ui/dist)
 [workspace]
 resolver = "3"
 members = ["crates/core", "crates/mtg", "crates/vision", "crates/api", "src-tauri"]

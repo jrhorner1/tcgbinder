@@ -1,0 +1,189 @@
+/* TCG Binder's shared styles: the colours, the base look of text, buttons and fields,
+   and the few pieces many pages use. Everything else is styled in its own component
+   (its <style>), next to its markup.
+
+   Colours are tokens: dark by default, light from the system setting unless Settings
+   chose a theme. Sizes scale with Settings → Text size (--scale). */
+:root {
+  --bg: #121316;
+  --panel: #1b1c20;
+  --panel-2: #24262b;
+  --raised: #2c2f35;
+  --line: #31343a;
+  --text: #ececef;
+  --muted: #9a9ca5;
+  --blue: #5b95f7;
+  --blue-soft: color-mix(in srgb, var(--blue) 22%, transparent);
+  --amber: #e0a030;
+  --grey: #8a93a6;
+  --green: #3fb950;
+  --red: #e5534b;
+  --radius: 10px;
+  --sidebar: 228px;
+  --tabbar: 58px;
+  /* Tag chips: each tag's hue comes from its name (--tag-hue); these suit the theme. */
+  --tag-bg: 30%; --tag-fg: 88%; --tag-sat: 45%;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme=dark]) {
+    --bg: #f4f5f7; --panel: #ffffff; --panel-2: #eef0f3; --raised: #e4e7ec; --line: #dadde3;
+    --text: #1b1d21; --muted: #5d6270; --blue: #2f6fe0; color-scheme: light;
+    --tag-bg: 90%; --tag-fg: 26%; --tag-sat: 60%;
+  }
+}
+:root[data-theme=light] {
+  --bg: #f4f5f7; --panel: #ffffff; --panel-2: #eef0f3; --raised: #e4e7ec; --line: #dadde3;
+  --text: #1b1d21; --muted: #5d6270; --blue: #2f6fe0; color-scheme: light;
+  --tag-bg: 90%; --tag-fg: 26%; --tag-sat: 60%;
+}
+
+/* ---- Text, links, buttons and fields ---- */
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  zoom: var(--scale, 1);
+  background: var(--bg); color: var(--text);
+  font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+h1 { font-size: 26px; margin: 2px 0 12px; letter-spacing: -.01em; }
+h2 { font-size: 17px; margin: 26px 0 10px; }
+a { color: var(--blue); }
+code { background: var(--panel-2); padding: 2px 6px; border-radius: 4px; word-break: break-all; }
+:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+[hidden] { display: none !important; }
+.muted { color: var(--muted); }
+.note { color: var(--muted); font-size: 13px; margin: 6px 0; }
+.error { color: var(--red); }
+.error:empty { display: none; }
+/* Read by screen readers only. */
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+button, .button, select, input, textarea {
+  font: inherit; color: var(--text); background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 7px; padding: 6px 11px;
+}
+button, .button { cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; }
+button:hover, .button:hover { border-color: var(--muted); }
+button:disabled { opacity: .5; cursor: default; }
+button.primary, .button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+button.danger { background: var(--red); border-color: var(--red); color: #fff; }
+button.link { background: none; border: 0; padding: 0; color: var(--blue); }
+button.ghost { background: none; border-color: transparent; color: var(--muted); }
+button.ghost:hover { color: var(--text); border-color: var(--line); }
+button.danger-text { color: var(--red); }
+button.small, .button.small { padding: 2px 8px; font-size: 13px; }
+input[type=number] { width: 7em; }
+input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--blue); margin: 0; flex: none; }
+/* iOS gives date fields a width of their own unless told otherwise. */
+input[type=date] { min-width: 0; -webkit-appearance: none; appearance: none; }
+textarea { width: 100%; min-height: 8em; font-size: 16px; }
+label.check { display: flex; gap: 8px; align-items: center; }
+pre.raw { background: var(--panel-2); border-radius: 7px; padding: 10px; overflow: auto; max-height: 50vh; font-size: 12px; }
+
+/* ---- Layout pieces many pages use ---- */
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 26px; }
+.section-head h2 { margin: 0; }
+.card-box { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
+.card-box.notice { border-color: var(--amber); margin-bottom: 14px; }
+.card-box.notice h2 { margin-top: 0; }
+.card-box.notice p { overflow-wrap: anywhere; }
+/* A panel the size of a page's section: a set's figures, a card's page. */
+.detail { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; }
+.detail h1 { margin-top: 0; }
+.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.two-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 28px; }
+.buttons { display: flex; gap: 8px; justify-content: space-between; flex-wrap: wrap; margin-top: 10px; }
+.buttons .right { display: flex; gap: 8px; flex-wrap: wrap; }
+.row-actions { display: flex; gap: 6px; }
+.stack { display: grid; gap: 6px; min-width: 0; }
+.search { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.search input { flex: 1; min-width: 160px; }
+/* A progress bar: a lot's cards entered of those expected. */
+.bar { height: 6px; background: var(--raised); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+.bar > i { display: block; height: 100%; background: var(--amber); }
+/* A row of buttons where one is chosen: the chart's range, All/Any of a tag filter. */
+.ranges { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.ranges button { border: 0; border-radius: 0; background: transparent; padding: 5px 12px; }
+.ranges button.on { background: var(--blue); color: #fff; }
+
+/* A form: labels on the left, fields on the right. */
+.form { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 12px; align-items: center; margin: 12px 0; }
+.form label { color: var(--muted); text-align: right; }
+.form label.check { color: var(--text); text-align: left; }
+
+/* ---- Lists of cards and things ---- */
+/* .list: a box of rows (search results, a set's missing cards, printings). Rows that
+   are buttons, so the keyboard reaches them, look like rows. */
+.list { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: auto; }
+.list .card { display: flex; gap: 10px; align-items: center; padding: 7px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.list .card:last-child { border-bottom: 0; }
+.list .card:hover { background: var(--panel-2); }
+.list .card.sel { background: var(--blue-soft); }
+.list button.card { width: 100%; font: inherit; color: inherit; background: none; border-radius: 0; border-width: 0 0 1px; text-align: left; white-space: normal; justify-content: flex-start; }
+.list .card .text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.list .card .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list .card .meta { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list .card .num { color: var(--muted); min-width: 2.8em; text-align: right; font-variant-numeric: tabular-nums; }
+.list .card button { padding: 4px 10px; }
+
+/* .rows: a plain list of rows, each a link or button: name, where, amount. */
+.rows .row { display: flex; gap: 10px; align-items: baseline; width: 100%; padding: 7px 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0;
+  background: none; font: inherit; color: inherit; text-align: left; text-decoration: none; white-space: normal; justify-content: flex-start; cursor: pointer; }
+.rows .row:last-child { border-bottom: 0; }
+.rows .row:hover .name { color: var(--blue); }
+.rows .row .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rows .row .where { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
+.rows .row .amt { font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* .list-entry: a row with its own controls (a list's cards, watched prices, sealed). */
+.list-entry { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.list-entry:last-child { border-bottom: 0; }
+.list-entry .text { flex: 1 1 180px; min-width: 0; display: flex; flex-direction: column; }
+.list-entry .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list-entry .meta { color: var(--muted); font-size: 13px; }
+.list-entry .entry-controls { display: flex; gap: 6px; align-items: center; margin-left: auto; }
+.list-entry input[type=number] { width: 4.2em; }
+.list-entry .change { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.list-entry .change.up { color: var(--green); }
+.list-entry .change.down { color: var(--red); }
+
+/* ---- Tag chips ---- */
+.tag-chip {
+  display: inline-flex; align-items: center; gap: 2px; max-width: 100%; padding: 1px 8px; border: 0; border-radius: 999px;
+  font-size: 12px; line-height: 1.6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-decoration: none;
+  background: hsl(var(--tag-hue, 220) var(--tag-sat) var(--tag-bg)); color: hsl(var(--tag-hue, 220) 60% var(--tag-fg));
+}
+button.tag-chip { cursor: pointer; font-family: inherit; }
+.tag-chip .tag-name { color: inherit; text-decoration: none; overflow: hidden; text-overflow: ellipsis; }
+.tag-chip .tag-name:hover { text-decoration: underline; }
+.tag-chip .tag-x { border: 0; background: none; color: inherit; padding: 0 0 0 3px; font-size: 14px; line-height: 1; cursor: pointer; }
+
+/* ---- Dialogs (components/Modal.svelte, and the Add dialog) ---- */
+dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--text); padding: 0; width: min(560px, calc(100vw - 24px)); max-height: calc(100vh - 40px); }
+dialog::backdrop { background: rgba(0, 0, 0, .5); }
+dialog.ask { width: min(440px, calc(100vw - 24px)); }
+dialog .dlg { display: flex; flex-direction: column; max-height: calc(100vh - 42px); }
+dialog .dlg > header { padding: 16px 18px 6px; }
+dialog .dlg > header h2 { margin: 0; }
+dialog .dlg > .body { padding: 6px 18px; overflow: auto; }
+dialog .dlg > footer { padding: 12px 18px 16px; display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; border-top: 1px solid var(--line); }
+dialog .form { grid-template-columns: 120px minmax(0, 1fr); }
+dialog .form select, dialog .form input:not([type=checkbox]) { width: 100%; min-width: 0; max-width: 100%; }
+dialog.ask .body input[type=text] { width: 100%; }
+
+@media (max-width: 1100px) {
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .two-col { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 800px) {
+  /* iOS zooms into any field with text under 16px when it's focused. */
+  input, select, button, .button { font-size: 16px; }
+  .detail { padding: 14px; }
+  /* Dialogs rise from the bottom of a phone's screen. */
+  dialog { width: 100vw; max-width: 100vw; margin: auto 0 0; border-radius: 16px 16px 0 0; border-bottom: 0; }
+  dialog .dlg > footer { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+  dialog .form { grid-template-columns: 1fr; }
+  dialog .form label { text-align: left; }
+}

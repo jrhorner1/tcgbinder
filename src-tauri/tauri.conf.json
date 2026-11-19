@@ -3,7 +3,7 @@
   "productName": "TCG Binder",
   "identifier": "io.github.jrhorner1.tcgbinder",
   "build": {
-    "frontendDist": "../ui"
+    "frontendDist": "../ui/public"
   },
   "app": {
     "windows": [],

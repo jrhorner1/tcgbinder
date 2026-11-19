@@ -3,7 +3,7 @@
 TCG Binder is a Rust workspace with one user interface for every platform:
 
 ```
-ui/                    the user interface: plain HTML, CSS and JavaScript modules (no build step)
+ui/                    the user interface: Svelte 5 and TypeScript, built by Vite into ui/dist
 src-tauri/             the app (crate `tcgbinder`): command-line flags, the two folders, logging,
                        single-instance lock; registers the games; runs the Tauri window
                        (desktop and iPhone) or, with --web, the HTTP server (src/web.rs)
@@ -52,29 +52,57 @@ websites can't add to cross-site requests. Long jobs (import, price refresh, pri
 history) run one at a time per game. `GET /api/status` gives a revision number that
 changes with every save, so the open page refreshes after background work.
 
-The UI is embedded in release builds (`rust-embed`); debug builds read `ui/` from
-disk, so reloading the page shows UI changes without rebuilding. iPhone builds always
-embed it.
+The UI is built by Vite into `ui/dist` (`npm run build` in `ui/`), which the API
+serves (`rust-embed`): release and iPhone builds carry it inside, debug builds read it
+from disk, so a rebuilt UI shows on reload. Without a built UI the app still compiles,
+and its page says how to build it. (Tauri's own `frontendDist` points at `ui/public`
+only because Tauri requires one; the window loads its pages from the API.)
 
-The UI's JavaScript is ES modules under `ui/js/`, loaded by
-`<script type="module" src="js/main.js">`, with no build step. `main.js` starts the
-app and holds the router (`route`); it is the only file that imports the pages'
-`view…` functions. Shared files (`state.js`, `nav.js`, `dom.js`, `api.js`,
-`format.js`, `charts.js`, `cards.js`) never import a page. A page may import a dialog
-or panel another page owns (the Add dialog from `pages/add.js`, the collection's line
-items from `pages/copies.js`, a lot's panel and finishing a lot from `pages/lots.js`,
-the import preview from `pages/tools.js`, the card editor from `pages/card.js`, bulk
-edit from `pages/bulk.js`), never its view, and the pages don't import each other in
-a circle.
+The UI is Svelte 5 components in TypeScript, under `ui/src/`:
 
-The collection lists each card as a line item with its groups of copies
-(`pages/copies.js`). Each change on a row saves the whole card (`PUT /card`), which
-reprices any lot the card's copies were in or are in now. **Split** keeps a new group
-in memory (`pending`) until it's changed, because identical purchases merge when
-saved; the rows' order is also kept in memory, so a changed group keeps its place.
-Pages redraw with `route()` from `nav.js`, which `main.js` sets at start-up, so
-nothing imports `main.js`. `node scripts/check-ui.mjs` checks that every file parses
-as a module and every import names a file and an export that exist.
+```
+main.ts, App.svelte     start-up: loads the info and settings, draws the shell (sidebar,
+                        search, tab bar), the page the address names, and open dialogs
+lib/                    no components: app.svelte.ts (shared state, api(), the status
+                        line), router.svelte.ts (go(), route), dialogs.svelte.ts
+                        (openDialog, askDialog, confirmDialog), types.ts (what the API
+                        sends), format.ts, tags.ts, cards.ts, lots.ts and the like
+components/             pieces several pages use: Modal, Tile, Bars, LineChart, Thumb,
+                        TagEditor, ImportPreview, GlobalSearch
+pages/                  one page each, given the address's parameters (`params`)
+collection/             the collection table: Table (drawing only the rows in view),
+                        CardRow, the cells (ChoiceCell, TextCell, TagsCell), Filters,
+                        the lot and set panels, and edits.svelte.ts (saving changes)
+card/                   a card's page: its copies (the same table), printings, watching
+                        its price, adding it to a list
+add/                    the Add dialog: a card, or a pack, bundle or lot and its cards
+```
+
+State that pages share lives in `app` (`lib/app.svelte.ts`), a `$state` object, so a
+page that reads `app.lots` redraws when the lots change. A page loads its data in a
+`$derived` promise that reads `app.reloads`; `reload()` makes the page shown load
+again, and `watchForChanges` in `App.svelte` calls it when another device or the daily
+refresh changed the data. Dialogs are components opened with `openDialog`, which
+resolves to their answer; App draws the open ones, so they can stack.
+
+The collection is a table, edited in place (`collection/`). A change on a copy's row
+saves that group of copies; on a card's row it changes every group the filters show,
+and with several cards ticked, every ticked card. Each saves the whole card
+(`PUT /card`), which reprices any lot the card's copies were in or are in now, and the
+status line's Undo puts the cards' purchases back. **Split** keeps a new group in
+memory (`edits.svelte.ts`) until it's changed, because identical purchases merge when
+saved; the rows' order is also kept in memory, so a changed group keeps its place. The
+table draws only the rows in view, so it stays quick for any size of collection.
+
+Each component styles itself in its own `<style>`, which Svelte scopes to it, so a
+rule can't reach another component by accident and svelte-check warns about any rule
+that matches nothing. `app.css` holds only what many share: the colour tokens (dark
+and light), buttons and fields, and a few layout pieces (`.card-box`, `.tiles`,
+`.form`, `.list`, `.rows`, `.list-entry`, tag chips, the dialog frame). The collection
+table's rows and cells are components of their own, so their styles sit together in
+`collection/table.css`, which `Table.svelte` imports.
+
+`npm run check` (svelte-check) checks the types and templates; CI runs it and the build.
 
 ## A game
 

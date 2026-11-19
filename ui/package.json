@@ -1,0 +1,19 @@
+{
+  "name": "tcgbinder-ui",
+  "private": true,
+  "type": "module",
+  "description": "TCG Binder's user interface: Svelte 5 and TypeScript, built with Vite into dist/, which the app serves.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings --compiler-warnings state_referenced_locally:ignore"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@tsconfig/svelte": "^5.0.9",
+    "svelte": "^5.58.0",
+    "svelte-check": "^4.7.8",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.8"
+  }
+}

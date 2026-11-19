@@ -1,0 +1,81 @@
+/* The collection table: a spreadsheet of cards, their copies under them, edited in
+   place. Its rows (CardRow.svelte) and cells (ChoiceCell, TextCell, TagsCell) are
+   components of their own, so their styles live here, beside Table.svelte, which
+   imports this file, rather than repeated in each.
+
+   The table scrolls within itself, so its heading row and the Name column stay put.
+   Scrolled to the end, the page shows the top bar, the selection bar (sticky) and the
+   table filling the rest, above the status line. */
+.table-scroll { overflow: auto; max-height: max(320px, calc(100dvh - var(--topbar-h, 58px) - var(--selbar-h, 50px) - 72px));
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); }
+.table-scroll.compact { max-height: none; }
+table.grid { border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%; font-size: 14px; }
+.grid th, .grid td { padding: 0 6px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; background: var(--bg); }
+.grid tr.card td { height: 40px; }
+.grid tr.copy td { height: 34px; background: var(--panel-2); font-size: 13px; border-bottom-color: var(--bg); }
+.grid tr.copy.pending td { background: color-mix(in srgb, var(--amber) 8%, var(--panel-2)); }
+.grid tr.spacer td { padding: 0; border: 0; }
+.grid thead th { position: sticky; top: 0; z-index: 4; height: 34px; background: var(--panel); font-size: 12px; font-weight: 600; color: var(--muted); }
+.grid th .sorter { background: none; border: 0; padding: 0; color: inherit; font: inherit; }
+.grid th.sorted { color: var(--text); }
+.grid tfoot td { position: sticky; bottom: 0; z-index: 3; height: 34px; background: var(--panel); font-weight: 600; border-top: 1px solid var(--line); }
+.grid .r { text-align: right; }
+.grid .num { font-variant-numeric: tabular-nums; }
+.grid .small { font-size: 12px; }
+.grid .empty { padding: 14px; height: auto; }
+
+/* The Name column stays in view when the table scrolls sideways. */
+.grid .stick { position: sticky; left: 0; z-index: 2; }
+.grid thead .stick, .grid tfoot .stick { z-index: 5; }
+.grid tr.card:hover td { background: var(--panel); }
+.grid tr.card.selected td { background: color-mix(in srgb, var(--blue) 14%, var(--bg)); }
+.grid tr.copy td.stick { box-shadow: inset 3px 0 var(--blue); }
+.grid .namecell { display: flex; align-items: center; gap: 6px; min-width: 200px; max-width: 320px; }
+.grid .namecell .name { font: inherit; font-weight: 600; color: var(--text); background: none; border: 0; padding: 0; overflow: hidden; text-overflow: ellipsis; justify-content: flex-start; }
+.grid .namecell .name:hover { color: var(--blue); }
+.grid .caret { background: none; border: 0; padding: 0; width: 18px; color: var(--muted); font-size: 12px; }
+.grid .copyof { padding-left: 52px; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+
+/* Column widths. */
+.grid .c-tick { width: 30px; }
+.grid .c-name { max-width: 340px; }
+.grid .c-qty { min-width: 64px; } .grid .c-qty .cell { width: 56px; }
+.grid .c-finish { min-width: 100px; } .grid .c-condition { min-width: 84px; } .grid .c-language { min-width: 70px; }
+.grid .c-lot { min-width: 160px; } .grid .c-lot .cell { width: 160px; text-overflow: ellipsis; }
+.grid .c-paid { min-width: 90px; } .grid .c-paid .cell { width: 80px; }
+.grid .c-acquired { min-width: 132px; }
+.grid .c-tags { min-width: 150px; max-width: 320px; }
+.grid .c-value { min-width: 84px; }
+.grid .c-acts { min-width: 96px; }
+.grid .c-acts button { margin-right: 2px; }
+
+/* Cells you edit look like text until you point at them or Tab to them. */
+.cell { width: 100%; min-width: 0; padding: 3px 5px; border: 1px solid transparent; border-radius: 6px; background: transparent; font: inherit; color: inherit; }
+.cell:hover { border-color: var(--line); background: var(--panel-2); }
+.cell:focus { border-color: var(--blue); background: var(--panel-2); outline: none; }
+select.cell { appearance: none; -webkit-appearance: none; cursor: pointer; }
+select.cell:hover, select.cell:focus { background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 10px) 50%, calc(100% - 6px) 50%; background-size: 4px 4px; background-repeat: no-repeat; padding-right: 16px; }
+select.cell:disabled, input.cell:disabled { cursor: default; }
+.cell.mixed, .cell.mixed::placeholder { color: var(--muted); font-style: italic; }
+.cell.r { text-align: right; }
+.cell.readonly { display: block; color: var(--muted); border: 0; }
+.cell.readonly:hover { background: none; }
+input.cell[type=number] { width: 100%; }
+input.cell[type=number]::-webkit-inner-spin-button { opacity: 0; }
+input.cell[type=number]:hover::-webkit-inner-spin-button, input.cell[type=number]:focus::-webkit-inner-spin-button { opacity: .6; }
+.tagcell { display: flex; gap: 4px; align-items: center; overflow: hidden; }
+.tagcell .tag-chip { flex: none; }
+.tagcell .tag-chip.partial { opacity: .55; }
+.tagcell .tag-name { background: none; border: 0; padding: 0; font: inherit; color: inherit; }
+.tagcell .tag-add { flex: 1; width: 70px; min-width: 56px; }
+
+@media (max-width: 800px) {
+  /* A phone has room for the name, quantity and value; tap a name for the rest. */
+  .grid .c-set, .grid .c-finish, .grid .c-condition, .grid .c-language, .grid .c-lot, .grid .c-paid, .grid .c-acquired, .grid .c-tags, .grid .c-acts { display: none; }
+  .grid .namecell { min-width: 0; max-width: calc(100vw - 210px); }
+  .grid .c-qty { min-width: 48px; } .grid .c-qty .cell { width: 44px; }
+  .grid .c-value { min-width: 64px; }
+  .grid th, .grid td { padding: 0 4px; }
+  .table-scroll { max-height: calc(100dvh - var(--topbar-h, 58px) - var(--tabbar) - env(safe-area-inset-bottom) - 44px); }
+}
