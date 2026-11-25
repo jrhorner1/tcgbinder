@@ -1,22 +1,82 @@
 <!-- Lists and decks: every list, or (with ?id=) one list with what's owned and what the
-     rest would cost. -->
+     rest would cost, as a table with the collection's filters (in the address, like
+     the collection's). -->
+<script lang="ts" module>
+  import { SvelteSet } from "svelte/reactivity";
+  // Ticked entries (by index), for the list they were ticked on.
+  const ticked = { list: "", set: new SvelteSet<number>() };
+</script>
+
 <script lang="ts">
   import { api, app, failed, gameAPI, reload, status, whileRunning } from "../lib/app.svelte";
   import { askName, confirmDialog, openDialog } from "../lib/dialogs.svelte";
-  import { fname, plural, sn, usd } from "../lib/format";
+  import { plural, usd } from "../lib/format";
   import { go } from "../lib/router.svelte";
-  import type { CatalogCard, ListSummary } from "../lib/types";
+  import type { ListSummary } from "../lib/types";
   import { openAdd } from "../add/add";
   import AskText from "../components/AskText.svelte";
-  import Thumb from "../components/Thumb.svelte";
   import Tile from "../components/Tile.svelte";
+  import Filters from "../collection/Filters.svelte";
+  import ListTable, { type Entry, type EntryChange } from "../lists/ListTable.svelte";
 
   let { params }: { params: URLSearchParams } = $props();
 
-  interface Entry { index: number; card: CatalogCard; quantity: number; any_printing: boolean; finish: string; owned: number; price: number | null }
+  interface OneList { list: ListSummary; sets: { Code: string; Label: string }[]; entries: Entry[] }
   const id = $derived(params.get("id"));
   const all = $derived.by(() => { void app.reloads; return id ? null : api<ListSummary[]>("GET", gameAPI("/lists")); });
-  const one = $derived.by(() => { void app.reloads; return id ? api<{ list: ListSummary; entries: Entry[] }>("GET", gameAPI(`/lists?id=${encodeURIComponent(id)}`)) : null; });
+
+  // One list: loaded whenever the filters or the data change; the last one stays on
+  // screen meanwhile, so the table keeps its place.
+  let one = $state<OneList | null>(null);
+  let error = $state("");
+  const query = $derived(params.toString());
+  const filtering = $derived([...params.keys()].some((k) => !["id", "sort", "dir"].includes(k)));
+  $effect(() => {
+    void app.reloads;
+    const q = query, listId = id;
+    if (!listId) { one = null; return; }
+    if (ticked.list !== listId) { ticked.list = listId; ticked.set.clear(); }
+    (async () => {
+      try {
+        const d = await api<OneList>("GET", gameAPI(`/lists?${q}`));
+        if (q !== query) return; // the filters changed meanwhile
+        one = d; error = "";
+      } catch (e) { error = e instanceof Error ? e.message : String(e); }
+    })();
+  });
+  const selection = ticked.set;
+  const nav = (mutate: (p: URLSearchParams) => void, replace = false) => { const p = new URLSearchParams(params); mutate(p); go("lists", p, replace); };
+  const clearFilters = () => go("lists", Object.fromEntries([...params].filter(([k]) => ["id", "sort", "dir"].includes(k))));
+  function sortBy(by: string) {
+    nav((p) => {
+      if (p.get("sort") === by) p.set("dir", p.get("dir") === "desc" ? "asc" : "desc");
+      else { p.set("sort", by); p.set("dir", ["name", "set"].includes(by) ? "asc" : "desc"); }
+    }, true);
+  }
+
+  /** Saves changes to entries (by index), with Undo. */
+  async function edit(changes: EntryChange[], label: string) {
+    const entries = one?.entries || [];
+    const byIndex = new Map(entries.map((e) => [e.index, e]));
+    const removed = changes.filter((c) => c.remove).map((c) => byIndex.get(c.index)!).filter(Boolean);
+    const restore: EntryChange[] = changes.filter((c) => !c.remove).map((c) => {
+      const e = byIndex.get(c.index)!;
+      return { index: c.index, quantity: e.quantity, any_printing: e.any_printing, finish: e.finish };
+    });
+    try {
+      await api("PUT", gameAPI(`/lists/entries?id=${encodeURIComponent(id!)}`), { changes });
+      if (removed.length) selection.clear(); // the places after them moved up
+      status(`Saved: ${label}.`, false, async () => {
+        if (restore.length) await api("PUT", gameAPI(`/lists/entries?id=${encodeURIComponent(id!)}`), { changes: restore });
+        for (const e of removed) await api("POST", gameAPI(`/lists/entries?id=${encodeURIComponent(id!)}`), { card: e.card, quantity: e.quantity, any_printing: e.any_printing, finish: e.finish });
+      });
+      reload();
+    } catch (e) { failed(e); }
+  }
+  async function removeTicked() {
+    if (!(await confirmDialog(`Remove ${plural(selection.size, "card", "cards")} from the list? The cards in your collection stay.`, { danger: true, action: "Remove" }))) return;
+    edit([...selection].map((index) => ({ index, remove: true })), `removed ${plural(selection.size, "card", "cards")}`);
+  }
 
   async function create() {
     const name = await askName("New list", "");
@@ -28,11 +88,6 @@
   const path = () => gameAPI(`/lists?id=${encodeURIComponent(id!)}`);
   async function put(body: Record<string, unknown>, done?: string) {
     try { await api("PUT", path(), body); if (done) status(done); reload(); } catch (e) { failed(e); }
-  }
-  function saveEntries(entries: Entry[], change: (next: (Omit<Entry, "index" | "owned" | "price"> | null)[]) => void, done?: string) {
-    const next: (Omit<Entry, "index" | "owned" | "price"> | null)[] = entries.map((e) => ({ card: e.card, quantity: e.quantity, any_printing: e.any_printing, finish: e.finish }));
-    change(next);
-    put({ entries: next.filter(Boolean) }, done);
   }
   async function rename(l: ListSummary) { const name = await askName("Rename the list", l.name); if (name) put({ name }); }
   async function notes(l: ListSummary) { const v = await openDialog<string>(AskText, { title: "Notes", value: l.notes || "", rows: 4 }); if (v !== null) put({ notes: v }); }
@@ -72,10 +127,10 @@
       <p class="muted">No lists yet.</p>
     {/if}
   {:catch e}<p class="error">{e.message}</p>{/await}
-{:else if one}
-  {#await one}
-    <p class="muted">Loading…</p>
-  {:then { list: l, entries }}
+{:else if id}
+  {#if error}<p class="error">{error}</p>{/if}
+  {#if one}
+    {@const l = one.list}
     <p><a href="#/lists">← Lists</a></p>
     <div class="section-head">
       <h1>{l.name}</h1>
@@ -97,43 +152,35 @@
       <Tile cap="TO COMPLETE" value={usd(l.missingCost)} detail={l.missing ? `${plural(l.missing, "card", "cards")} missing, at market price` : "you own every card"} color="var(--blue)" />
       <Tile cap="LIST VALUE" value={usd(l.marketValue)} detail="every card, at market price" />
     </div>
-    {#if entries.length}
-      <div class="card-box">
-        {#each entries as e, i (e.index)}
-          {@const have = Math.min(e.owned, e.quantity)}
-          <div class="list-entry" class:have={have >= e.quantity}>
-            <Thumb card={e.card} />
-            <div class="text">
-              <span class="name">{e.card.name}</span>
-              <span class="meta">{[e.any_printing ? "any printing" : sn(e.card), e.finish ? fname(e.finish) : "", e.price !== null ? `${usd(e.price)} each` : "no price"].filter(Boolean).join(" · ")}</span>
-              <label class="check small"><input type="checkbox" checked={e.any_printing} onchange={(ev) => { const v = ev.currentTarget.checked; saveEntries(entries, (n) => { n[i]!.any_printing = v; }); }} />Any printing</label>
-            </div>
-            <div class="entry-controls">
-              <span class="owned-count" title="Owned of wanted">{have} / {e.quantity}</span>
-              <input type="number" min="1" step="1" value={e.quantity} aria-label="Copies of {e.card.name} wanted"
-                onchange={(ev) => { const q = parseInt(ev.currentTarget.value, 10); if (q >= 1) saveEntries(entries, (n) => { n[i]!.quantity = q; }); }} />
-              {#if have < e.quantity}
-                <button type="button" onclick={() => openAdd({ query: e.card.name, set: e.card.set })}>Add…</button>
-              {:else}
-                <span class="done">✓</span>
-              {/if}
-              <button type="button" aria-label="Remove {e.card.name} from the list" title="Remove from the list"
-                onclick={() => saveEntries(entries, (n) => { n[i] = null; }, `Removed ${e.card.name} from ${l.name}.`)}>✕</button>
-            </div>
-          </div>
-        {/each}
+    {#if l.entries}
+      <div class="one-list">
+        {#key app.game}<Filters q={params} {nav} kind="list" sets={one.sets} />{/key}
+        <div class="counts muted">
+          <span>{filtering ? `Matching: ${plural(one.entries.length, "card", "cards")} of ${l.entries}` : plural(l.entries, "card", "cards")}</span>
+          {#if filtering}<button type="button" class="link" onclick={clearFilters}>Clear filters</button>{/if}
+        </div>
+        <div class="selbar" class:ticked={selection.size > 0}>
+          <span class="count">{selection.size ? `${plural(selection.size, "card", "cards")} ticked` : "Click a cell to change it · tick cards to remove them together"}</span>
+          <button type="button" disabled={!one.entries.length} onclick={() => one!.entries.forEach((e) => selection.add(e.index))}>Select all</button>
+          <button type="button" disabled={!selection.size} onclick={() => selection.clear()}>Clear</button>
+          <button type="button" class="danger-text" disabled={!selection.size} onclick={removeTicked}>Remove…</button>
+        </div>
+        <ListTable entries={one.entries} sort={params.get("sort") || ""} dir={params.get("dir") || "asc"} {selection} onsort={sortBy} onedit={edit}
+          onopen={(e) => go("collection", { key: e.card.id })} onadd={(e) => openAdd({ query: e.card.name, set: e.any_printing ? "" : e.card.set })} />
       </div>
     {:else}
       <p class="muted">No cards yet. Add some from a card's page (Add to list…), from a set's missing cards, or with Paste a list…</p>
     {/if}
-  {:catch e}<p class="error">{e.message}</p>{/await}
+  {:else if !error}
+    <p class="muted">Loading…</p>
+  {/if}
 {/if}
 
 <style>
   .list-notes { white-space: pre-wrap; }
-  .list-entry label.small { font-size: 12px; color: var(--muted); }
-  /* Owned of wanted: amber until there are enough. */
-  .owned-count { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--amber); }
-  .list-entry.have .owned-count, .done { color: var(--green); }
-  .done { min-width: 3.4em; text-align: center; }
+  .one-list { display: flex; flex-direction: column; gap: 8px; }
+  .counts { font-size: 13px; display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+  .selbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; }
+  .selbar .count { flex: 1; min-width: 9em; font-size: 14px; }
+  .selbar.ticked { border-color: var(--blue); }
 </style>

@@ -2,7 +2,7 @@
      deleting all data. Changes are saved right away. -->
 <script lang="ts">
   import { api, app, loadFilters, loadLots, reload, saveSettings } from "../lib/app.svelte";
-  import { changeDataFolder, chooseDataFolder, dataFolder } from "../lib/datafolder";
+  import { changeDataFolder, chooseDataFolder, dataFolder, openDataFolder, openFolderLabel } from "../lib/datafolder";
   import { confirmDialog, openDialog } from "../lib/dialogs.svelte";
   import { choiceNames } from "../lib/format";
   import type { Settings } from "../lib/types";
@@ -73,7 +73,10 @@
   {#if !df}
     <p class="settings-path"><code>{d.dataDir || "(not saved)"}</code></p>
   {:else}
-    <p class="settings-path"><code>{df.path}</code>{#if df.isDefault}<span class="muted"> (the default)</span>{/if}</p>
+    <p class="settings-path">
+      <code>{df.path}</code>{#if df.isDefault}<span class="muted"> (the default)</span>{/if}
+      {#if df.canOpen}<button type="button" class="small" onclick={openDataFolder}>{openFolderLabel()}</button>{/if}
+    </p>
     {#if df.fixed}
       <p class="muted">Set by --data-dir or TCGBINDER_DATA_DIR when TCG Binder was started.</p>
     {:else if !phone}
@@ -109,6 +112,7 @@
   .settings select { min-width: 220px; }
   .settings label.check { padding-top: 0; }
   .hint { color: var(--muted); font-size: 13px; margin-top: 3px; }
+  .settings-path { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
   .settings-path code { overflow-wrap: anywhere; }
   .danger-zone { margin-top: 12px; }
   @media (max-width: 800px) {

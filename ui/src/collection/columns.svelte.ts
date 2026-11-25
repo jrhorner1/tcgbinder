@@ -23,7 +23,7 @@ const DEFAULTS: Column[] = [
   { key: "language", label: "Language", on: false },
   { key: "lot", label: "Purchase", on: true },
   { key: "paid", label: "Paid each", sort: "paid", on: true },
-  { key: "acquired", label: "Acquired", sort: "acquired", on: false },
+  { key: "acquired", label: "Acquired", sort: "acquired", on: true },
   { key: "tags", label: "Tags", sort: "tag", on: true },
   { key: "value", label: "Value", sort: "value", always: true, phone: true, on: true },
 ];

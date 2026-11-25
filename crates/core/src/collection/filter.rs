@@ -5,7 +5,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use super::tags::{same_tag, user_tags};
-use super::{Card, Condition};
+use super::{Card, Condition, Purchase};
 
 /// The "no filter" choice in filter menus.
 pub const FILTER_ANY: &str = "Any";
@@ -22,8 +22,11 @@ pub type CardMatch<'a> = Box<dyn Fn(&Card) -> bool + 'a>;
 #[derive(Default)]
 pub struct Query<'a> {
     /// Whitespace-separated terms; every term must match the name, set code, set name,
-    /// collector number, or a purchase's tags.
+    /// collector number, or a purchase's tags (and the rules text, with `rules_text`).
     pub text: String,
+    /// Whether `text`'s terms may also match the card's rules text (the search at the top
+    /// of the app; the collection's own filter box keeps to names and the like).
+    pub rules_text: bool,
     /// Set code (case-insensitive); "" or [`FILTER_ANY`] for all.
     pub set: String,
     pub rarity: String,
@@ -76,6 +79,26 @@ impl Query<'_> {
             && (!self.untagged || c.copies.each().any(|(_, _, p)| user_tags(&p.tags).next().is_none()))
     }
 
+    /// Whether one of a card's purchases is among the copies the query picks: its finish,
+    /// condition, acquired dates, price filters and tags (a tag filter keeps copies
+    /// carrying any of the tags). The card-wide filters (set, rarity, text…) aren't
+    /// looked at: [`Query::matcher`] decides which cards.
+    pub fn keeps_copy(&self, c: &Card, finish: &str, condition: Condition, p: &Purchase) -> bool {
+        let has = |want: &str| p.tags.iter().any(|t| same_tag(t, want));
+        let dated = !self.acquired_from.is_empty() || !self.acquired_to.is_empty();
+        (is_any(&self.finish) || finish.eq_ignore_ascii_case(&self.finish))
+            && (is_any(&self.condition) || condition == Condition::parse(&self.condition))
+            && (!dated
+                || !p.acquired_date.is_empty()
+                    && (self.acquired_from.is_empty() || p.acquired_date >= self.acquired_from)
+                    && (self.acquired_to.is_empty() || p.acquired_date <= self.acquired_to))
+            && (!self.no_price_paid || p.price_paid == 0.0)
+            && (!self.unpriced || c.market_price(finish).is_none())
+            && (self.tags.is_empty() || self.tags.iter().any(|t| has(t)))
+            && !self.tags_not.iter().any(|t| has(t))
+            && (!self.untagged || user_tags(&p.tags).next().is_none())
+    }
+
     /// Tells whether a card matches the query.
     pub fn matcher(&self) -> impl Fn(&Card) -> bool + '_ {
         let terms: Vec<String> = self.text.to_lowercase().split_whitespace().map(str::to_string).collect();
@@ -102,10 +125,12 @@ impl Query<'_> {
                 && (!self.unpriced || c.market_value().1 > 0)
                 && self.tags_match(c)
                 && self.matches.as_ref().is_none_or(|m| m(c))
-                // Each term in the name, set code, set name, number or a purchase's tags.
+                // Each term in the name, set code, set name, number or a purchase's tags,
+                // or (when asked) the rules text.
                 && terms.iter().all(|t| {
                     [&c.name, &c.set, &c.set_name, &c.collector_number].iter().any(|field| contains_fold(field, t))
                         || c.copies.each().any(|(_, _, p)| user_tags(&p.tags).any(|tag| contains_fold(tag, t)))
+                        || (self.rules_text && contains_fold(&c.rules_text, t))
                 })
         }
     }
@@ -489,6 +514,29 @@ mod tests {
         assert_eq!(q(&|q| q.card_type = "instant".into()), "Bolt,Shock");
         assert_eq!(q(&|q| q.tags = vec!["lot:lot1".into()]), "Zap");
         assert_eq!(q(&|q| q.text = "lot1".into()), "", "the lot's tag isn't searched");
+        cards[1].rules_text = "Draw a card, then discard a card.".into();
+        let q = |f: &dyn Fn(&mut Query)| {
+            let mut q = Query::default();
+            f(&mut q);
+            let m = q.matcher();
+            names(&cards.iter().filter(|c| m(c)).cloned().collect::<Vec<_>>()).join(",")
+        };
+        assert_eq!(q(&|q| q.text = "discard".into()), "", "rules text only when asked");
+        assert_eq!(
+            q(&|q| {
+                q.text = "DISCARD card".into();
+                q.rules_text = true;
+            }),
+            "Opal"
+        );
+        assert_eq!(
+            q(&|q| {
+                q.text = "opal draw".into();
+                q.rules_text = true;
+            }),
+            "Opal",
+            "a word in the name, another in the rules"
+        );
         assert_eq!(q(&|q| q.untagged = true), "Bolt,Opal,Zap", "Zap: a purchase whose only tag is a lot's is untagged");
         assert_eq!(q(&|q| q.price_min = Some(1.0)), "Bolt,Opal");
         assert_eq!(q(&|q| q.price_max = Some(1.0)), "Bolt,Zap", "unpriced Shock matches no bound");

@@ -10,6 +10,7 @@
   import Bars from "../components/Bars.svelte";
   import CardRows from "../components/CardRows.svelte";
   import DataNotices from "../components/DataNotices.svelte";
+  import LostLots from "../components/LostLots.svelte";
   import LineChart, { type Series } from "../components/LineChart.svelte";
   import Tile from "../components/Tile.svelte";
 
@@ -43,6 +44,7 @@
     .map((x) => ({ onclick: toSet(x.Code), label: `${x.Code} · ${x.Name}`, value: x.MarketValue, text: usd(x.MarketValue) }))}
   <h1>{o.name}</h1>
   {#if df}<DataNotices {df} cards={o.cards} />{/if}
+  <LostLots />
   {#if o.alerts?.length}
     <div class="card-box notice">
       <h2>Price alerts</h2>

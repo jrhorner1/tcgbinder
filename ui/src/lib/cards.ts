@@ -49,8 +49,9 @@ export async function addCard(c: CatalogCard, d: AddDetails) {
     card: c, quantity: d.quantity, finish: d.finish, condition: d.condition,
     price_paid: d.price ? parseFloat(d.price) : 0, acquired_date: d.date, lot: d.lot || "", tags: d.tags || [],
   });
-  // In a lot the price and date are the lot's, so those aren't remembered.
-  last = d.lot ? { ...addDefaults(), finish: d.finish, condition: d.condition } : { finish: d.finish, condition: d.condition, price: d.price, date: d.date, tags: d.tags };
+  // In a lot the price and date are the lot's, so those aren't remembered. The finish
+  // isn't either: the next card starts as the usual (nonfoil) one.
+  last = d.lot ? { ...addDefaults(), finish: "", condition: d.condition } : { finish: "", condition: d.condition, price: d.price, date: d.date, tags: d.tags };
   if ((d.tags || []).length) await loadFilters();
   return r as { key: string; newCards: number; alreadyOwned: number; lot?: unknown };
 }

@@ -6,6 +6,9 @@ import { plural } from "./format";
 
 export interface DataFolder {
   path: string; isDefault: boolean; defaultPath: string; fixed: boolean; firstRun: boolean; canPick: boolean; restartsItself: boolean;
+  /** The folder can be shown in the system's file browser (not on a phone, nor in a
+   *  web app reached from another computer). */
+  canOpen: boolean;
   conflicts: { game: string; name: string; kind: string; cards: number | null }[];
 }
 
@@ -30,6 +33,15 @@ export async function changeDataFolder(df: DataFolder, path: string) {
     else await askDialog("Restart TCG Binder", [`Your collection is now kept in ${r.path}.`, "Stop TCG Binder and start it again to use it. Until then, changes can't be saved."], [{ label: "OK", value: true, primary: true }], false);
   } catch (e) { failed(e); }
 }
+
+/** Shows the data folder in the system's file browser. */
+export async function openDataFolder() {
+  try { await api("POST", "/api/data-folder/open"); } catch (e) { failed(e); }
+}
+
+/** What the file browser is called here: "Show in Finder" on a Mac. */
+export const openFolderLabel = () =>
+  /Mac/.test(navigator.userAgent) ? "Show in Finder" : /Windows/.test(navigator.userAgent) ? "Show in Explorer" : "Open the folder";
 
 /** Shows the system's folder picker, then switches to the folder. */
 export async function chooseDataFolder(df: DataFolder) {

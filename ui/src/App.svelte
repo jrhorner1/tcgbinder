@@ -197,7 +197,10 @@
   .side-foot { margin-top: auto; font-size: 12px; padding: 0 6px; }
   .content { display: flex; flex-direction: column; min-width: 0; }
   .topbar {
-    display: flex; align-items: center; gap: 12px; padding: 10px 20px; position: sticky; top: 0; z-index: 5;
+    display: flex; align-items: center; gap: 12px; padding: 10px 20px; position: sticky; top: 0;
+    /* Above everything that sticks in the page (the table's headings), so the search's
+       results show over them. */
+    z-index: 20;
     background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line);
   }
   main { flex: 1; padding: 18px 20px 24px; width: 100%; max-width: 1440px; }

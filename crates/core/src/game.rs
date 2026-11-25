@@ -8,7 +8,7 @@ use anyhow::Result;
 use serde::Serialize;
 
 use crate::collection::Breakdown;
-use crate::collection::{Card, CatalogUpdate, SetInfo};
+use crate::collection::{Card, CatalogUpdate, ListLine, SetInfo};
 use crate::scan::Reading;
 use crate::sealed::SealedProduct;
 
@@ -31,6 +31,18 @@ pub trait Game: Send + Sync {
     /// One page of catalog search results for a name and/or set; `next_page` is the
     /// previous page's token.
     fn search(&self, text: &str, set: &str, next_page: &str) -> Result<SearchPage>;
+    /// One page of the cards whose rules text contains `text`, one result per card (its
+    /// newest printing), by name. A game without rules text to search finds nothing.
+    fn search_rules(&self, text: &str, next_page: &str) -> Result<SearchPage> {
+        let _ = (text, next_page);
+        Ok(SearchPage::default())
+    }
+    /// One catalog printing by its ID (a card's key), or None when there's no such
+    /// printing. A game that can't look one up finds none.
+    fn card(&self, id: &str) -> Result<Option<Card>> {
+        let _ = id;
+        Ok(None)
+    }
     /// Placeholder text for the Add page's name and set fields.
     fn search_hints(&self) -> (&'static str, &'static str);
     /// Fresh prices (and rules text) for the printings with these IDs.
@@ -62,6 +74,11 @@ pub trait Game: Send + Sync {
     /// Whether the game calls a card a basic land (a bundle's lands may cost nothing).
     fn is_basic_land(&self, _c: &Card) -> bool {
         false
+    }
+    /// Reads a pasted card list, one card per line, without looking anything up (for
+    /// matching it to cards already owned). None by default.
+    fn parse_list(&self, _text: &str) -> Vec<ListLine> {
+        Vec::new()
     }
     /// The rarity filter options, lowest first.
     fn rarities(&self) -> &'static [&'static str];

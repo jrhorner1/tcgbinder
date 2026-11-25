@@ -3,7 +3,7 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use tcgbinder_core::collection::{Card, Copies, CopyPick, LOT_PREFIX, Purchase, lot_tag, normalize_tags, round_cents};
+use tcgbinder_core::collection::{Card, Copies, CopyPick, LOT_PREFIX, ListMatch, Purchase, lot_tag, normalize_tags, round_cents};
 use tcgbinder_core::lots::{Lot, LotSplit};
 use tcgbinder_core::service::GameService;
 
@@ -158,7 +158,7 @@ impl Api {
             return Err(bad("choose at least one card"));
         }
         let picks: Vec<CopyPick> = req.cards.into_iter().map(|p| CopyPick { key: p.key, quantity: p.quantity }).collect();
-        let backup = g.store.backup("bulk-edit").map_err(internal)?;
+        let backup = g.backup("bulk-edit").map_err(internal)?;
         let date = lot.acquired_date.clone();
         let (moved, replaced) =
             g.store.tag_copies(&lot_tag(&lot.id), &picks, |p| p.acquired_date = date.clone()).map_err(|e| bad(e.to_string()))?;
@@ -169,6 +169,89 @@ impl Api {
         }
         tracing::info!(game = g.game.id(), lot = lot.name, moved, "cards put in lot");
         Ok(Reply::Json(json!({ "lot": summary(g, &lot), "moved": moved, "undo": undo(g, &backup) })))
+    }
+
+    /// Puts cards you already own into a lot from a pasted card list:
+    /// `{"list": "...", "apply": false}` matches each line to copies in no lot (copies in
+    /// a lot are never moved) and answers `lines` (what each line found, how many it's
+    /// short as `missing`, and `inLots`), `found` and `missing` (a list of the copies
+    /// not owned, to add as new cards). With `"apply": true` the copies found are moved
+    /// into the lot (after a backup) and the lot repriced; the answer adds `lot`,
+    /// `moved` and `undo`.
+    pub(crate) fn put_list_in_lot(&self, g: &GameService, id: &str, body: &[u8]) -> Result {
+        #[derive(Deserialize)]
+        struct Req {
+            list: String,
+            #[serde(default)]
+            apply: bool,
+        }
+        let lot = Self::find_lot(g, id)?;
+        let req: Req = decode(body)?;
+        let lines = g.game.parse_list(&req.list);
+        if lines.is_empty() {
+            return Err(bad("paste a list of cards, one per line (e.g. 4 Lightning Bolt)"));
+        }
+        let answer = |matches: &[ListMatch]| {
+            let missing: Vec<&str> = matches.iter().map(|m| m.missing.as_str()).filter(|m| !m.is_empty()).collect();
+            json!({
+                "lines": matches.iter().map(|m| json!({
+                    "line": m.line, "text": m.text, "name": m.name, "wanted": m.wanted, "found": m.found,
+                    "inLots": m.in_lots, "missing": m.missing,
+                })).collect::<Vec<_>>(),
+                "found": matches.iter().map(ListMatch::found_count).sum::<i64>(),
+                "missing": missing.join("\n"),
+            })
+        };
+        if !req.apply {
+            return Ok(Reply::Json(answer(&g.store.match_list(&lines, &lot.acquired_date))));
+        }
+        let backup = g.backup("bulk-edit").map_err(internal)?;
+        let date = lot.acquired_date.clone();
+        let (matches, moved) = g
+            .store
+            .put_list_in_lot(&lot_tag(&lot.id), &lines, &lot.acquired_date, |p| p.acquired_date = date.clone())
+            .map_err(|e| bad(e.to_string()))?;
+        g.reprice_lot(&lot).map_err(internal)?;
+        tracing::info!(game = g.game.id(), lot = lot.name, moved, "list put in lot");
+        let mut reply = answer(&matches);
+        reply["lot"] = summary(g, &lot);
+        reply["moved"] = json!(moved);
+        reply["undo"] = undo(g, &backup);
+        Ok(Reply::Json(reply))
+    }
+
+    /// Lots copies are marked as bought in that no longer exist: `{"lots": [{"id",
+    /// "cards", "copies", "paid", "first_date", "last_date", "names"}]}`.
+    pub(crate) fn lost_lots(&self, g: &GameService) -> Reply {
+        Reply::Json(json!({ "lots": g.lost_lots() }))
+    }
+
+    /// Settles a lost lot: `{"id", "action": "recover"}` makes its record again (returns
+    /// `lot`); `"release"` takes its copies out of it, keeping their prices (after a
+    /// backup; returns `freed` and `undo`).
+    pub(crate) fn settle_lost_lot(&self, g: &GameService, body: &[u8]) -> Result {
+        #[derive(Deserialize)]
+        struct Req {
+            id: String,
+            action: String,
+        }
+        let req: Req = decode(body)?;
+        if !g.lost_lots().iter().any(|l| l.id == req.id) {
+            return Err(not_found(format!("no copies are in a lost lot {:?}", req.id)));
+        }
+        match req.action.as_str() {
+            "recover" => {
+                let lot = g.recover_lot(&req.id).map_err(internal)?;
+                Ok(Reply::Json(json!({ "lot": summary(g, &lot) })))
+            }
+            "release" => {
+                let backup = g.backup("bulk-edit").map_err(internal)?;
+                let freed = g.store.untag_all(&lot_tag(&req.id)).map_err(internal)?;
+                tracing::info!(game = g.game.id(), lot = req.id, freed, "copies taken out of a lost lot");
+                Ok(Reply::Json(json!({ "freed": freed, "undo": undo(g, &backup) })))
+            }
+            _ => Err(bad("action must be recover or release")),
+        }
     }
 
     /// Takes a card out of a lot (`key=`): its copies stay in the collection at the
@@ -182,8 +265,8 @@ impl Api {
         Ok(Reply::Json(json!({ "lot": summary(g, &lot), "freed": freed })))
     }
 
-    /// Deletes a lot: `cards=keep` leaves its copies with their prices, `cards=remove`
-    /// deletes them (after a backup).
+    /// Deletes a lot, after a backup (so it can be undone): `cards=keep` leaves its
+    /// copies with their prices, `cards=remove` deletes them.
     pub(crate) fn delete_lot(&self, g: &GameService, id: &str, cards: &str) -> Result {
         let lot = Self::find_lot(g, id)?;
         let remove = match cards {
@@ -191,15 +274,12 @@ impl Api {
             "remove" => true,
             _ => return Err(bad("say what happens to the lot's cards: cards=keep or cards=remove")),
         };
-        let backup = if remove { Some(g.store.backup("bulk-delete").map_err(internal)?) } else { None };
+        // Backed up either way, so Undo brings the lot (and its cards' lot) back.
+        let backup = g.backup(if remove { "bulk-delete" } else { "lot-delete" }).map_err(internal)?;
         let tag = lot_tag(id);
         if remove { g.store.remove_tagged(&tag) } else { g.store.untag_all(&tag) }.map_err(internal)?;
         g.lots.remove(id).map_err(internal)?;
         tracing::info!(game = g.game.id(), lot = lot.name, remove, "lot deleted");
-        let mut answer = json!({ "deleted": lot.name });
-        if let Some(b) = backup {
-            answer["undo"] = undo(g, &b);
-        }
-        Ok(Reply::Json(answer))
+        Ok(Reply::Json(json!({ "deleted": lot.name, "undo": undo(g, &backup) })))
     }
 }

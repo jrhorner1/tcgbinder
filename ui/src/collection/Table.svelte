@@ -35,6 +35,11 @@
   $effect(() => { if (openAll) for (const c of cards) opened.add(c.key); });
 
   const shownRows = (c: Card) => { const rs = rowsOf(c); return shows ? rs.filter(shows) : rs; };
+  // A card with one group of copies has nothing to open: its own row is that group.
+  const isOpen = (c: Card) => opened.has(c.key) && shownRows(c).length > 1;
+  // The cards listed: with filters that pick copies (a finish, a tag…), a card whose
+  // copies were all changed out of them drops out of the list.
+  const matching = $derived.by(() => { void splits.version; return shows ? cards.filter((c) => shownRows(c).length > 0) : cards; });
 
   // ---- Drawing only the rows in view ----
   const CARD_H = 40, COPY_H = 34, OVERSCAN = 600;
@@ -44,22 +49,22 @@
   // Each card's top, from the heights of the cards before it.
   const tops = $derived.by(() => {
     void splits.version;
-    const out = new Array<number>(cards.length + 1);
+    const out = new Array<number>(matching.length + 1);
     let y = 0;
-    cards.forEach((c, i) => { out[i] = y; y += CARD_H + (opened.has(c.key) ? shownRows(c).length * COPY_H : 0); });
-    out[cards.length] = y;
+    matching.forEach((c, i) => { out[i] = y; y += CARD_H + (isOpen(c) ? shownRows(c).length * COPY_H : 0); });
+    out[matching.length] = y;
     return out;
   });
-  const first = $derived.by(() => { let lo = 0, hi = cards.length; const y = scrollTop - OVERSCAN; while (lo < hi) { const m = (lo + hi) >> 1; if (tops[m + 1] <= y) lo = m + 1; else hi = m; } return lo; });
-  const last = $derived.by(() => { let i = first; const y = scrollTop + viewH + OVERSCAN; while (i < cards.length && tops[i] < y) i++; return i; });
-  const visible = $derived(cards.slice(first, last));
+  const first = $derived.by(() => { let lo = 0, hi = matching.length; const y = scrollTop - OVERSCAN; while (lo < hi) { const m = (lo + hi) >> 1; if (tops[m + 1] <= y) lo = m + 1; else hi = m; } return lo; });
+  const last = $derived.by(() => { let i = first; const y = scrollTop + viewH + OVERSCAN; while (i < matching.length && tops[i] < y) i++; return i; });
+  const visible = $derived(matching.slice(first, last));
   const width = $derived(4 + columns.filter((c) => c.on && c.key !== "set").length + (shown("set") ? 1 : 0));
 
   // ---- Totals of what the filters show ----
   const totals = $derived.by(() => {
     void splits.version;
     let copies = 0, value = 0;
-    for (const c of cards) for (const r of shownRows(c)) { copies += r.quantity; value += r.market * r.quantity; }
+    for (const c of matching) for (const r of shownRows(c)) { copies += r.quantity; value += r.market * r.quantity; }
     return { copies, value };
   });
 
@@ -99,7 +104,12 @@
         const copies = edits.reduce((n, e) => n + rowsOf(e.card).filter((r) => r.id in e.changed).reduce((m, r) => m + r.quantity, 0), 0);
         await saveEdits(edits, `Saved: ${label} on ${said(edits, copies)}.`, replace);
       },
-      split: (row) => split(card, row),
+      split: (row) => { split(card, row); opened.add(card.key); }, // show both groups
+      async merge(row, into) {
+        const { finish, condition, price_paid, acquired_date, lot, tags } = into;
+        await saveEdits([{ card, changed: { [row.id]: { finish, condition, price_paid, acquired_date, lot, tags: [...tags] } } }],
+          `Merged ${plural(row.quantity, "copy", "copies")} of ${card.name} into the group of ${into.quantity}.`, replace);
+      },
       async sell(row) {
         const sold = await openDialog<boolean>(SellDialog, { card, row });
         if (!sold) return;
@@ -130,10 +140,10 @@
     if (target) { e.preventDefault(); target.focus(); }
   }
 
-  const allTicked = $derived(cards.length > 0 && cards.every((c) => selection.has(c.key)));
+  const allTicked = $derived(matching.length > 0 && matching.every((c) => selection.has(c.key)));
   function tickAll() {
-    if (allTicked) for (const c of cards) selection.delete(c.key);
-    else for (const c of cards) selection.add(c.key);
+    if (allTicked) for (const c of matching) selection.delete(c.key);
+    else for (const c of matching) selection.add(c.key);
   }
 
   /** Scrolls the table back to the top (the floating button). */
@@ -177,18 +187,18 @@
       {#if tops[first] > 0}<tr class="spacer" aria-hidden="true"><td colspan={width} style:height="{tops[first]}px"></td></tr>{/if}
       {#each visible as card (card.key)}
         {@const rows = shownRows(card)}
-        <CardRow {card} {rows} hidden={card.copy_count - rows.reduce((n, r) => n + r.quantity, 0)} open={opened.has(card.key)} selected={selection.has(card.key)}
+        <CardRow {card} {rows} hidden={card.copy_count - rows.reduce((n, r) => n + r.quantity, 0)} open={isOpen(card)} selected={selection.has(card.key)}
           ontoggle={() => (opened.has(card.key) ? opened.delete(card.key) : opened.add(card.key))}
           onselect={() => (selection.has(card.key) ? selection.delete(card.key) : selection.add(card.key))}
           act={actions(card)} />
       {/each}
-      {#if tops[cards.length] - tops[last] > 0}<tr class="spacer" aria-hidden="true"><td colspan={width} style:height="{tops[cards.length] - tops[last]}px"></td></tr>{/if}
-      {#if !cards.length}<tr><td colspan={width} class="muted empty">No cards match.</td></tr>{/if}
+      {#if tops[matching.length] - tops[last] > 0}<tr class="spacer" aria-hidden="true"><td colspan={width} style:height="{tops[matching.length] - tops[last]}px"></td></tr>{/if}
+      {#if !matching.length}<tr><td colspan={width} class="muted empty">No cards match.</td></tr>{/if}
     </tbody>
     <tfoot>
       <tr>
         <td class="c-tick"></td>
-        <td class="c-name stick">{plural(cards.length, "card", "cards")}</td>
+        <td class="c-name stick">{plural(matching.length, "card", "cards")}</td>
         {#if shown("set")}<td class="c-set"></td>{/if}
         {#if shown("qty")}<td class="c-qty r num">{totals.copies.toLocaleString()}</td>{/if}
         {#each columns.filter((c) => c.on && !["set", "qty", "value"].includes(c.key)) as c (c.key)}<td class="c-{c.key}"></td>{/each}

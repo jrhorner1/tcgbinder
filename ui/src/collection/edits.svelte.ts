@@ -120,6 +120,9 @@ export interface RowActions {
    *  function of each row's old value. */
   edit: (row: Row | null, field: keyof Fields, value: unknown, label: string) => void;
   split: (row: Row) => void;
+  /** Make `row`'s copies like `into`'s (finish, condition, price, date, lot, tags), so
+   *  the two groups become one. */
+  merge: (row: Row, into: Row) => void;
   sell: (row: Row) => void;
   remove: (row: Row) => void;
   filter: (name: "tags" | "lot", value: string) => void;

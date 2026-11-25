@@ -11,6 +11,66 @@ fn fake_reader(data: &[u8]) -> anyhow::Result<Reading> {
 }
 
 #[test]
+fn rules_text_is_searched() {
+    let f = fixture();
+    // The catalog: rules=1 finds cards by their rules text, one result per card.
+    let found = get(&f.api, "/api/games/mtg/search?text=3%20damage&rules=1");
+    assert_eq!(found["cards"].as_array().unwrap().len(), 1);
+    assert_eq!(found["cards"][0]["name"], "Lightning Bolt");
+    assert!(get(&f.api, "/api/games/mtg/search?text=draw%20a%20card&rules=1")["cards"].as_array().unwrap().is_empty());
+    let calls = f._scryfall.calls.lock().unwrap().clone();
+    assert!(calls.iter().any(|c| c.contains("unique=cards") && c.contains("order=name")), "{calls:?}");
+
+    // The collection: the search at the top finds a card by its rules text; the
+    // collection list's own filter doesn't.
+    let card = get(&f.api, "/api/games/mtg/search?text=bolt")["cards"][0].clone();
+    call(&f.api, "POST", "/api/games/mtg/cards", Some(json!({"card": card, "quantity": 1, "finish": "nonfoil", "condition": "NM"})));
+    let all = get(&f.api, "/api/search?q=any%20target");
+    assert_eq!(all["games"][0]["Total"], 1);
+    assert_eq!(all["games"][0]["Cards"][0]["name"], "Lightning Bolt");
+    assert_eq!(get(&f.api, "/api/games/mtg/cards?q=any%20target")["matched"], 0);
+
+    // Cards named with the words come before cards that only mention them.
+    let mut opt = f.svc.store.get(OPT).unwrap();
+    opt.rules_text = "Scry 1. Draw a card. Then lightning strikes.".into();
+    f.svc.store.save_card(OPT, opt).unwrap();
+    let names: Vec<String> = get(&f.api, "/api/search?q=lightning")["games"][0]["Cards"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(names, ["Lightning Bolt", "Opt"]);
+}
+
+#[test]
+fn a_catalog_card_by_id() {
+    let f = fixture();
+    // A printing you don't own: the card, its details and its catalog link.
+    let d = get(&f.api, "/api/games/mtg/catalog?id=aaaaaaaa-0000-4000-8000-000000000101");
+    assert_eq!(d["card"]["name"], "Lightning Bolt");
+    assert_eq!(d["card"]["key"], "aaaaaaaa-0000-4000-8000-000000000101");
+    assert!(d["details"].is_array());
+    assert!(d["others"].as_array().unwrap().is_empty());
+    // One you do own is found the same way (its key is its catalog ID).
+    assert_eq!(get(&f.api, &format!("/api/games/mtg/catalog?id={SHOCK}"))["card"]["name"], "Shock");
+    // Not in the catalog, or not an ID at all: 404.
+    assert_eq!(call(&f.api, "GET", "/api/games/mtg/catalog?id=aaaaaaaa-0000-4000-8000-000000000999", None).0, 404);
+    assert_eq!(call(&f.api, "GET", "/api/games/mtg/catalog?id=shock", None).0, 404);
+}
+
+#[test]
+fn the_catalog_sets() {
+    let f = fixture();
+    let cache = tempfile::tempdir().unwrap();
+    f.svc.game.open(cache.path()).unwrap(); // the set list is cached there
+    let sets = get(&f.api, "/api/games/mtg/catalog/sets");
+    let first = &sets["sets"][0];
+    assert_eq!((first["code"].as_str(), first["name"].as_str()), (Some("m19"), Some("Core Set 2019")));
+    assert!(first["released"].is_string());
+}
+
+#[test]
 fn search_and_add() {
     let f = fixture();
     let page = get(&f.api, "/api/games/mtg/search?text=bolt");

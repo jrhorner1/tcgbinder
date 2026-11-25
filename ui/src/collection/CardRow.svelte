@@ -28,14 +28,21 @@
 
   const finishes = $derived((card.finishes.length ? card.finishes : filters().finishes).map((f) => [f, fname(f)] as [string, string]));
   const conditions = $derived(filters().conditions.map((c) => [c, c] as [string, string]));
-  const lots = $derived([["", "—"], ...app.lots.map((l) => [l.id, `📦 ${l.name}`])] as [string, string][]);
+  // A lot that no longer exists still names its copies' lot, so the cell can show it.
+  const lots = $derived([["", "—"], ...app.lots.map((l) => [l.id, `📦 ${l.name}`]),
+    ...[...new Set(rows.map((r) => r.lot))].filter((id) => id && !app.lots.some((l) => l.id === id)).map((id) => [id, "📦 a deleted lot"])] as [string, string][]);
   const copies = $derived(rows.reduce((n, r) => n + r.quantity, 0));
   const value = $derived(rows.reduce((n, r) => n + r.market * r.quantity, 0));
   const priced = $derived(rows.some((r) => r.market > 0));
   // A card with one group of copies needs no opening: its row is that group.
   const single = $derived(rows.length === 1 ? rows[0] : null);
   const tagsOf = (rs: Row[]) => [...new Map(rs.flatMap((r) => r.tags).map((t) => [t.toLowerCase(), t])).values()].sort((a, b) => a.localeCompare(b));
-  const lotName = (id: string) => app.lots.find((l) => l.id === id)?.name || "a lot";
+  const lotName = (id: string) => app.lots.find((l) => l.id === id)?.name || "a deleted lot";
+  // The groups a group can merge into: the card's other groups in the same lot (or in
+  // none), so merging never moves copies into or out of a lot.
+  const mergeInto = (r: Row) => rows.filter((o) => o.id !== r.id && o.lot === r.lot);
+  const described = (r: Row) => [plural(r.quantity, "copy", "copies"), fname(r.finish), r.condition, r.price_paid ? `${usd(r.price_paid)} each` : "no price",
+    r.acquired_date || "no date", ...r.tags].join(" · ");
 </script>
 
 {#snippet copyCells(rs: Row[], row: Row | null)}
@@ -89,6 +96,13 @@
   <td class="c-acts">
     {#if one}
       {#if one.quantity > 1}<button type="button" class="small" title="Move one copy to a group of its own; again, to move another into that group" onclick={() => act.split(one)}>Split</button>{/if}
+      {#if row && mergeInto(row).length}
+        <select class="merge small" aria-label="Merge these copies into another group" title="Merge into another group: these copies take its finish, condition, price, date and tags"
+          onchange={(e) => { const into = mergeInto(row).find((o) => o.id === e.currentTarget.value); e.currentTarget.value = ""; if (into) act.merge(row, into); }}>
+          <option value="">Merge into…</option>
+          {#each mergeInto(row) as o (o.id)}<option value={o.id}>{described(o)}</option>{/each}
+        </select>
+      {/if}
       <button type="button" class="small ghost" onclick={() => act.sell(one)}>Sell…</button>
       <button type="button" class="small ghost danger-text" aria-label="Delete these copies" title="Delete these copies" onclick={() => act.remove(one)}>✕</button>
     {/if}
@@ -100,7 +114,7 @@
   <td class="c-name stick">
     <div class="namecell">
       <button type="button" class="caret" aria-label={open ? "Hide the copies" : "Show the copies"} aria-expanded={open} onclick={ontoggle}
-        style:visibility={rows.length > 1 || open ? "visible" : "hidden"}>{open ? "▾" : "▸"}</button>
+        style:visibility={rows.length > 1 ? "visible" : "hidden"}>{open ? "▾" : "▸"}</button>
       <Thumb card={card} size={22} />
       <button type="button" class="name" title="The card's page: printing, price watch, selling" onclick={act.open}>{card.name}</button>
       {#if rows.length > 1}<span class="muted small">{rows.length} groups</span>{/if}
@@ -121,3 +135,7 @@
     </tr>
   {/each}
 {/if}
+
+<style>
+  .merge { width: 7.5em; padding: 2px 4px; font-size: 12px; }
+</style>

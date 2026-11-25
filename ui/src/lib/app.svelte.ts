@@ -78,6 +78,7 @@ export async function undoChange(undo: UndoAction) {
     const r = await api("POST", gameAPI("/backups/restore"), { name: undo.backup, ifRevision: undo.revision });
     status(`Undone: the collection is back to ${plural(r.cards, "unique card", "unique cards")}.`);
     await loadFilters();
+    await loadLots();
     reload();
   } catch (e) { failed(e); }
 }
@@ -156,6 +157,6 @@ export async function exportCollection(format: "json" | "csv" | "report" = "json
   const what = { json: "the collection", csv: "the CSV", report: "the valuation report" }[format];
   try {
     const r = await api("POST", gameAPI(`/export?${qs}`));
-    status(`Saved ${what} to ${r.path}`);
+    if (!r.cancelled) status(`Saved ${what} to ${r.path}`);
   } catch (e) { failed(e); }
 }

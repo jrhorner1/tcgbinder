@@ -17,7 +17,7 @@ use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
 use tcgbinder_core::collection::Breakdown;
-use tcgbinder_core::collection::{Card, CatalogUpdate, Purchase, SetInfo};
+use tcgbinder_core::collection::{Card, CatalogUpdate, ListLine, Purchase, SetInfo};
 use tcgbinder_core::dates;
 use tcgbinder_core::game::{self, DailyPriceMap, Filter, Game, ImportReport, PriceHistorySource, Progress, Row, SearchPage};
 use tcgbinder_core::sealed::SealedProduct;
@@ -197,6 +197,23 @@ impl Game for Magic {
         Ok(SearchPage { cards: page.cards.iter().map(from_scryfall).collect(), total: page.total, next_page: page.next_page })
     }
 
+    /// A printing by its Scryfall ID, through /cards/collection (as price refreshes are).
+    fn card(&self, id: &str) -> Result<Option<Card>> {
+        if !scryfall::is_uuid(id) {
+            return Ok(None);
+        }
+        let ident = serde_json::Map::from_iter([("id".to_string(), Value::from(id))]);
+        let resp = self.scryfall.fetch_collection(&[ident]).context("card lookup failed")?;
+        Ok(resp.data.first().map(from_scryfall))
+    }
+
+    /// Cards whose Oracle text contains `text` as a phrase, one per card, by name.
+    fn search_rules(&self, text: &str, next_page: &str) -> Result<SearchPage> {
+        let q = scryfall::build_rules_query(text)?;
+        let page = self.scryfall.search_unique_cards(&q, next_page)?;
+        Ok(SearchPage { cards: page.cards.iter().map(from_scryfall).collect(), total: page.total, next_page: page.next_page })
+    }
+
     /// Scryfall's name suggestions, from 2 characters typed.
     fn autocomplete(&self, text: &str) -> Result<Vec<String>> {
         let text = text.trim();
@@ -340,6 +357,22 @@ impl Game for Magic {
 
     fn is_basic_land(&self, c: &Card) -> bool {
         c.type_line.contains("Basic Land")
+    }
+
+    fn parse_list(&self, text: &str) -> Vec<ListLine> {
+        importer::parse_decklist(text)
+            .rows
+            .into_iter()
+            .map(|r| ListLine {
+                line: r.line,
+                text: r.text,
+                name: importer::front_face(&r.name).to_string(),
+                set: r.set_code,
+                number: r.number,
+                quantity: r.quantity,
+                finish: r.finish,
+            })
+            .collect()
     }
 
     fn rarities(&self) -> &'static [&'static str] {

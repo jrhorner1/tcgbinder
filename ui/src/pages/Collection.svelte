@@ -19,6 +19,7 @@
   import CardPage from "../card/CardPage.svelte";
   import Filters from "../collection/Filters.svelte";
   import LotPanel from "../collection/LotPanel.svelte";
+  import LostLots from "../components/LostLots.svelte";
   import SetPanel from "../collection/SetPanel.svelte";
   import Table from "../collection/Table.svelte";
   import { columns, toggle } from "../collection/columns.svelte";
@@ -72,15 +73,24 @@
   };
 
   // Which of a card's rows the filters show: a lot's filter shows the copies bought in
-  // it, a tag's the copies carrying it, and so on (null when no such filter is set).
+  // it, a tag's the copies carrying it, a finish's the copies in it, and so on (null
+  // when no such filter is set). The server's export keeps the same copies
+  // (`Query::keeps_copy`).
   const shows = $derived.by((): ((r: Row) => boolean) | null => {
     const tags = (params.get("tags") || "").split(",").map((t) => t.trim()).filter(Boolean);
     const not = (params.get("tags_not") || "").split(",").map((t) => t.trim()).filter(Boolean);
     const lot = params.get("lot") || "", untagged = params.get("untagged") === "1";
-    if (!lot && !tags.length && !not.length && !untagged) return null;
+    const any = (k: string) => { const v = params.get(k) || ""; return v && v !== "any" ? v : ""; };
+    const finish = any("finish").toLowerCase(), condition = any("condition").toUpperCase();
+    const from = params.get("acquired_from") || "", to = params.get("acquired_to") || "";
+    const unpaid = params.get("no_price_paid") === "1", unpriced = params.get("unpriced") === "1";
+    if (!lot && !tags.length && !not.length && !untagged && !finish && !condition && !from && !to && !unpaid && !unpriced) return null;
     return (r) => {
       const has = (t: string) => r.tags.some((x) => sameTag(x, t));
-      return (!lot || (lot === "none" ? !r.lot : r.lot === lot)) && (!tags.length || tags.some(has)) && !not.some(has) && (!untagged || !r.tags.length);
+      return (!lot || (lot === "none" ? !r.lot : r.lot === lot)) && (!tags.length || tags.some(has)) && !not.some(has) && (!untagged || !r.tags.length)
+        && (!finish || r.finish.toLowerCase() === finish) && (!condition || r.condition.toUpperCase() === condition)
+        && (!(from || to) || (!!r.acquired_date && (!from || r.acquired_date >= from) && (!to || r.acquired_date <= to)))
+        && (!unpaid || !r.price_paid) && (!unpriced || !r.market);
     };
   });
 
@@ -133,6 +143,7 @@
 {:else}
   <datalist id="tag-names">{#each app.filters?.tags || [] as t}<option value={t}></option>{/each}</datalist>
 
+  <LostLots />
   {#each banners as l (l.id)}
     <div class="card-box notice lot-banner">
       <div class="grow">
@@ -210,9 +221,10 @@
   /* An unfinished lot: keep entering its cards from here. */
   .lot-banner { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
   .lot-banner .grow { flex: 1; min-width: 220px; }
-  /* The selection bar sticks under the top bar as the page scrolls. */
+  /* The selection bar sticks under the top bar as the page scrolls, above the table's
+     sticky heading (z-index 5), so the Columns… menu opens over the table. */
   .selbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px;
-    position: sticky; top: var(--topbar-h, 58px); z-index: 4; box-shadow: 0 6px 12px -8px rgb(0 0 0 / 50%); }
+    position: sticky; top: var(--topbar-h, 58px); z-index: 6; box-shadow: 0 6px 12px -8px rgb(0 0 0 / 50%); }
   .selbar .count { flex: 1; min-width: 9em; font-size: 14px; }
   .selbar.ticked { border-color: var(--blue); }
   /* Back to the top of the collection, once the list is scrolled. */

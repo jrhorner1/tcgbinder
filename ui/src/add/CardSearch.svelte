@@ -1,12 +1,17 @@
-<!-- The Add dialog's catalog search: results, each with how many, finish, condition
-     and Add. The text stays as cards are added, so the next copy is a click away. -->
+<!-- The Add dialog's catalog search, by name and optionally set: results, each with
+     how many, finish, condition and Add. After an Add the text is selected, so typing
+     searches for the next card. -->
 <script lang="ts" module>
+  import { api, failed, filters, gameAPI } from "../lib/app.svelte";
   export interface Picked { quantity: number; finish: string; condition: string }
+  interface CatalogSet { code: string; name: string; released: string }
+  // The catalog's sets, loaded once for the set menu.
+  let catalogSets: Promise<CatalogSet[]> | null = null;
+  const loadSets = () => (catalogSets ??= api<{ sets: CatalogSet[] }>("GET", gameAPI("/catalog/sets")).then((r) => r.sets, () => { catalogSets = null; return []; }));
 </script>
 
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, failed, filters, gameAPI } from "../lib/app.svelte";
   import { addDefaults } from "../lib/cards";
   import { fname, sn, title, usd } from "../lib/format";
   import type { CatalogCard } from "../lib/types";
@@ -21,7 +26,14 @@
   } = $props();
 
   let text = $state(query);
-  let setAsked = set; // the set asked for, until the search text changes
+  // The set menu: a set code, or a set's name as typed (matched to its code).
+  let setText = $state(set.toUpperCase());
+  let sets = $state<CatalogSet[]>([]);
+  const setCode = $derived.by(() => {
+    const t = setText.trim().toLowerCase();
+    if (!t) return "";
+    return sets.find((s) => s.code === t || s.name.toLowerCase() === t)?.code || t;
+  });
   let cards = $state<{ card: CatalogCard; owned: number; qty: number; finish: string; condition: string; busy: boolean }[]>([]);
   let next = $state("");
   let error = $state("");
@@ -48,7 +60,7 @@
       const words = q.split(/\s+/);
       const last = words.at(-1)!;
       const looksLikeSet = words.length > 1 && /^[a-z0-9]{3,5}$/i.test(last) && (/\d/.test(last) || last === last.toUpperCase());
-      const code = setAsked || (looksLikeSet ? words.pop()! : "");
+      const code = setCode || (looksLikeSet ? words.pop()! : "");
       const p = new URLSearchParams({ text: words.join(" "), set: code });
       if (more && next) p.set("next", next);
       const r = await api<{ cards: CatalogCard[]; owned: number[]; next: string }>("GET", gameAPI(`/search?${p}`));
@@ -63,15 +75,21 @@
 
   export const focus = () => input?.focus();
   onMount(() => {
+    loadSets().then((s) => (sets = s));
     if (found) { cards = toRows(found.cards, found.owned); searched = true; } else if (query.trim()) run();
     input.focus();
   });
 </script>
 
 <div class="add-search">
-  <input bind:this={input} type="search" placeholder="Card name, or a name and set code" aria-label="Search for a card" autocomplete="off" bind:value={text}
-    oninput={() => { setAsked = ""; clearTimeout(timer); if (text.trim().length >= 3) timer = setTimeout(() => run(), 400); }}
-    onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); clearTimeout(timer); run(); } }} />
+  <div class="search-row">
+    <input bind:this={input} class="name" type="search" placeholder="Card name, or a name and set code" aria-label="Search for a card" autocomplete="off" bind:value={text}
+      oninput={() => { clearTimeout(timer); if (text.trim().length >= 3) timer = setTimeout(() => run(), 400); }}
+      onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); clearTimeout(timer); run(); } }} />
+    <input class="set" type="search" list="add-sets" placeholder="Any set" aria-label="Set" autocomplete="off" bind:value={setText}
+      onchange={() => { if (text.trim()) run(); }} />
+    <datalist id="add-sets">{#each sets as s (s.code)}<option value={s.code.toUpperCase()}>{s.name}</option>{/each}</datalist>
+  </div>
   <div class="add-results">
     {#if error}<p class="error">{error}</p>{/if}
     {#each cards as r (r.card.id)}
@@ -88,7 +106,15 @@
           <select aria-label="Condition" bind:value={r.condition}>{#each filters().conditions as c}<option value={c}>{c}</option>{/each}</select>
           <button type="button" class="primary" disabled={r.busy} onclick={async () => {
             r.busy = true;
-            try { await onadd(r.card, { quantity: Math.max(1, Math.round(r.qty) || 1), finish: r.finish, condition: r.condition }); r.qty = 1; } catch (e) { failed(e); }
+            const quantity = Math.max(1, Math.round(r.qty) || 1);
+            try {
+              await onadd(r.card, { quantity, finish: r.finish, condition: r.condition });
+              r.owned += quantity;
+              r.qty = 1;
+              // Ready for the next card: typing replaces the search.
+              input.focus();
+              input.select();
+            } catch (e) { failed(e); }
             r.busy = false;
           }}>Add</button>
         </div>
@@ -101,7 +127,9 @@
 </div>
 
 <style>
-  .add-search > input { width: 100%; }
+  .search-row { display: flex; gap: 8px; }
+  .search-row .name { flex: 1; min-width: 0; }
+  .search-row .set { width: 11em; }
   .add-results { margin-top: 8px; }
   .add-result { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 6px 2px; border-bottom: 1px solid var(--line); }
   .add-result .text { display: flex; flex-direction: column; min-width: 0; }

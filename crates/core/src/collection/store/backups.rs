@@ -1,6 +1,8 @@
 //! Backups of the collection file: taken before an import, a bulk edit or delete, a
-//! restore, a merge, a move or a tag rename or delete, kept in `backups/` beside it,
-//! listed, and restored.
+//! restore, a merge, a move, a tag rename or delete or a lot deleted, kept in
+//! `backups/` beside it, listed, and restored. A backup may carry more than the
+//! collection (the game's lots, see `GameService::backup`): the extra keys are kept in
+//! the file and ignored here.
 
 use std::fs;
 use std::path::PathBuf;
@@ -15,7 +17,7 @@ pub const BACKUPS_KEPT: usize = 10;
 
 /// Why a backup was taken, as the last part of its file name.
 pub const BACKUP_REASONS: &[&str] =
-    &["import", "bulk-edit", "bulk-delete", "restore", "merge", "move", "tag-rename", "tag-delete", "delete-all"];
+    &["import", "bulk-edit", "bulk-delete", "restore", "merge", "move", "tag-rename", "tag-delete", "delete-all", "lot-delete"];
 
 /// A backup of the collection file, as listed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -30,6 +32,8 @@ pub struct BackupInfo {
     pub cards: usize,
     /// Its size in bytes.
     pub size: u64,
+    /// Lots in it; None for a backup taken before lots were kept in backups.
+    pub lots: Option<usize>,
 }
 
 /// Reads a backup's name: `collection-YYYYMMDD-HHMMSS-<reason>.json`, possibly with
@@ -55,8 +59,15 @@ impl Store {
 
     /// Copies the collection file to the backups folder as
     /// `collection-YYYYMMDD-HHMMSS-<reason>.json` and keeps the [`BACKUPS_KEPT`] newest.
-    /// Returns the backup's name.
+    /// Returns the backup's name. (`GameService::backup` adds the game's lots.)
     pub fn backup(&self, reason: &str) -> Result<String> {
+        let bytes = fs::read(self.file_path()).context("reading the collection to back it up")?;
+        self.backup_with(reason, &bytes)
+    }
+
+    /// Saves `bytes` (the collection file, perhaps with more in it) as a backup, as
+    /// [`Store::backup`] does.
+    pub fn backup_with(&self, reason: &str, bytes: &[u8]) -> Result<String> {
         if !BACKUP_REASONS.contains(&reason) {
             bail!("unknown backup reason {reason:?}");
         }
@@ -76,8 +87,7 @@ impl Store {
             None => format!("{prefix}{reason}.json"),
             Some(seq) => format!("{prefix}{}-{reason}.json", seq + 1),
         };
-        let bytes = fs::read(self.file_path()).context("reading the collection to back it up")?;
-        crate::jsonfile::write_atomic(&dir.join(&name), "backup_", &bytes).context("saving a backup")?;
+        crate::jsonfile::write_atomic(&dir.join(&name), "backup_", bytes).context("saving a backup")?;
         let mut names = self.backup_names()?;
         while names.len() > BACKUPS_KEPT {
             let old = names.remove(0);
@@ -122,8 +132,10 @@ impl Store {
             let Some((date, _, reason)) = parse_backup_name(&name) else { continue };
             let path = dir.join(&name);
             let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-            let cards = fs::read(&path).ok().and_then(|b| serde_json::from_slice::<StoreData>(&b).ok()).map_or(0, |d| d.cards.len());
-            out.push(BackupInfo { name, date, reason, cards, size });
+            let bytes = fs::read(&path).unwrap_or_default();
+            let cards = serde_json::from_slice::<StoreData>(&bytes).map_or(0, |d| d.cards.len());
+            let lots = serde_json::from_slice::<serde_json::Value>(&bytes).ok().and_then(|v| v.get("lots")?.as_array().map(Vec::len));
+            out.push(BackupInfo { name, date, reason, cards, size, lots });
         }
         Ok(out)
     }
@@ -132,21 +144,33 @@ impl Store {
     /// (reason `restore`). `name` must be one of the listed backups. Returns the name
     /// of the backup taken first.
     pub fn restore(&self, name: &str) -> Result<String> {
+        let bytes = self.backup_bytes(name)?;
+        self.restore_from(&bytes, || self.backup("restore"))
+    }
+
+    /// A backup's file, by its name (one of the listed backups).
+    pub fn backup_bytes(&self, name: &str) -> Result<Vec<u8>> {
         if !self.backup_names()?.iter().any(|n| n == name) {
             bail!("there is no backup named {name:?}");
         }
-        let bytes = fs::read(self.backup_dir().join(name)).context("reading the backup")?;
-        let restored: StoreData = serde_json::from_slice(&bytes).context("the backup is damaged")?;
+        fs::read(self.backup_dir().join(name)).context("reading the backup")
+    }
+
+    /// Replaces the collection's cards with a backup file's, once it has been read and
+    /// checked and `before` has backed up the current collection. Returns `before`'s
+    /// answer.
+    pub fn restore_from(&self, bytes: &[u8], before: impl FnOnce() -> Result<String>) -> Result<String> {
+        let restored: StoreData = serde_json::from_slice(bytes).context("the backup is damaged")?;
         let game = self.file.read(|d| d.game.clone());
         if !restored.game.is_empty() && restored.game != game {
             bail!("that backup is a {:?} collection, not {game:?}", restored.game);
         }
-        let before = self.backup("restore")?;
+        let before = before()?;
         self.file.mutate(|d| {
             d.cards = restored.cards;
             Ok(())
         })?;
-        tracing::info!(backup = name, "collection restored");
+        tracing::info!("collection restored");
         Ok(before)
     }
 }

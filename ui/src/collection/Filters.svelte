@@ -1,22 +1,32 @@
 <!-- The collection's filters: the search, the main menus, More filters, and a chip for
      each filter in use that removes it. They live in the address (#/collection?set=…),
-     so Back and bookmarks keep them. -->
+     so Back and bookmarks keep them. A list (kind "list") gets the filters that apply
+     to a card on a list: no lot, condition, dates or tags, and Owned instead. -->
 <script lang="ts">
   import { app, filters } from "../lib/app.svelte";
   import { choiceNames, fname, languageName, plural, title, usd } from "../lib/format";
   import { sameTag, tagHue } from "../lib/tags";
   import type { TagTotal } from "../lib/types";
 
-  let { q, nav, tagTotals }: {
+  let { q, nav, tagTotals = [], kind = "collection", sets = null }: {
     q: URLSearchParams;
     /** Changes the filters: `mutate` edits a copy of the address's parameters. */
     nav: (mutate: (p: URLSearchParams) => void, replace?: boolean) => void;
-    tagTotals: TagTotal[];
+    tagTotals?: TagTotal[];
+    kind?: "collection" | "list";
+    /** The sets the Set menu offers, when not the collection's (a list's own). */
+    sets?: { Code: string; Label: string }[] | null;
   } = $props();
 
-  const LIST_KEYS = ["key", "sort", "dir"];
-  const MORE_KEYS = ["condition", "language", "card_type", "price_min", "price_max", "acquired_from", "acquired_to", "min_copies", "no_price_paid", "unpriced", "tags", "tags_not", "untagged"];
-  const FLAGS: [string, string][] = [["no_price_paid", "No price paid"], ["unpriced", "No market price"], ["untagged", "Untagged"]];
+  const list = $derived(kind === "list");
+  const LIST_KEYS = ["key", "sort", "dir", "id"];
+  const MORE_KEYS = $derived(list ? ["language", "card_type", "price_min", "price_max", "unpriced"]
+    : ["condition", "language", "card_type", "price_min", "price_max", "acquired_from", "acquired_to", "min_copies", "no_price_paid", "unpriced", "tags", "tags_not", "untagged"]);
+  const FLAGS = $derived<[string, string][]>(list ? [["unpriced", "No market price"]] : [["no_price_paid", "No price paid"], ["unpriced", "No market price"], ["untagged", "Untagged"]]);
+  const FIELDS = $derived<[string, string, string, string][]>([["card_type", "Type", "text", "e.g. creature"],
+    ...(list ? [] : [["min_copies", "At least", "number", "copies"]] as [string, string, string, string][]),
+    ["price_min", "Price from", "number", "$"], ["price_max", "Price to", "number", "$"],
+    ...(list ? [] : [["acquired_from", "Acquired from", "date", ""], ["acquired_to", "Acquired to", "date", ""]] as [string, string, string, string][])]);
 
   const f = $derived(filters());
   // The game's first filter (Magic's Color) stays in view; the rest go in More filters.
@@ -48,6 +58,7 @@
 
   function chipLabel(k: string, v: string) {
     const flag = FLAGS.find(([name]) => name === k);
+    if (k === "owned") return v === "missing" ? "Missing" : "Owned";
     if (flag) return flag[1];
     switch (k) {
       case "q": return `“${v}”`;
@@ -90,13 +101,15 @@
 {/snippet}
 
 <div class="filters">
-  <input type="search" placeholder="Filter by name, set, number or tag" aria-label="Filter the collection" bind:value={typed} oninput={search} />
+  <input type="search" placeholder={list ? "Filter by name, set or number" : "Filter by name, set, number or tag"} aria-label={list ? "Filter the list" : "Filter the collection"} bind:value={typed} oninput={search} />
   <div class="menus">
-    <span class="set-menu">{@render menu("set", "Set", f.sets.map((s) => ({ value: s.Code, label: s.Label })))}</span>
+    <span class="set-menu">{@render menu("set", "Set", (sets || f.sets).map((s) => ({ value: s.Code, label: s.Label })))}</span>
     {#if firstFilter}{@render menu("f." + firstFilter.Name, firstFilter.Name, firstFilter.Options.map((o) => ({ value: o, label: o })))}{/if}
     {@render menu("rarity", "Rarity", f.rarities.map((r) => ({ value: r, label: title(r) })))}
     {@render menu("finish", "Finish", f.finishes.map((x) => ({ value: x, label: fname(x) })))}
-    {#if app.lots.length}
+    {#if list}
+      {@render menu("owned", "Owned", [{ value: "missing", label: "Missing" }, { value: "complete", label: "Owned" }])}
+    {:else if app.lots.length}
       {@render menu("lot", "Bought in", [{ value: "none", label: "No lot" }, ...app.lots.map((l) => ({ value: l.id, label: `📦 ${l.name}` }))])}
     {/if}
     <button type="button" class="more-toggle" class:on={active > 0} aria-expanded={moreOpen} onclick={() => (moreOpen = !moreOpen)}>
@@ -108,12 +121,11 @@
     <div class="more">
       <div class="menus">
         {#each otherFilters as x}{@render menu("f." + x.Name, x.Name, x.Options.map((o) => ({ value: o, label: `${x.Name}: ${o}` })))}{/each}
-        {@render menu("condition", "Condition", f.conditions.map((c) => ({ value: c, label: choiceNames.default_condition[c] || c })))}
+        {#if !list}{@render menu("condition", "Condition", f.conditions.map((c) => ({ value: c, label: choiceNames.default_condition[c] || c })))}{/if}
         {#if f.languages.length}{@render menu("language", "Language", f.languages.map((l) => ({ value: l.code, label: l.name })))}{/if}
       </div>
       <div class="more-fields">
-        {#each [["card_type", "Type", "text", "e.g. creature"], ["min_copies", "At least", "number", "copies"], ["price_min", "Price from", "number", "$"],
-          ["price_max", "Price to", "number", "$"], ["acquired_from", "Acquired from", "date", ""], ["acquired_to", "Acquired to", "date", ""]] as [name, label, type, hint]}
+        {#each FIELDS as [name, label, type, hint]}
           <label>{label}<input class:on={!!q.get(name)} {type} placeholder={hint} value={q.get(name) || ""} step={name.startsWith("price") ? "0.01" : undefined}
             onchange={(e) => set(name, e.currentTarget.value.trim())} /></label>
         {/each}
@@ -148,7 +160,7 @@
           <label class="check"><input type="checkbox" checked={q.get(name) === "1"} onchange={(e) => set(name, e.currentTarget.checked ? "1" : "")} />{label}</label>
         {/each}
       </div>
-      <p class="note">Price is one copy's market price. Acquired matches any purchase in the range.</p>
+      <p class="note">Price is one copy's market price.{list ? "" : " Acquired matches any purchase in the range."}</p>
     </div>
   {/if}
 

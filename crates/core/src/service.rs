@@ -10,11 +10,11 @@ use std::time::Duration;
 use anyhow::{Result, anyhow, bail};
 
 use crate::collection::Purchase;
-use crate::collection::{Card, PriceHistory, SetInfo, Store};
+use crate::collection::{Card, LostLot, PriceHistory, SetInfo, Store};
 use crate::collection::{lot_tag, same_tags, user_tags};
 use crate::game::{Game, ImportReport};
 use crate::lists::{List, ListEntry};
-use crate::lots::{Lot, LotCopy, LotPrices, LotSplit, lot_prices};
+use crate::lots::{Lot, LotCopy, LotCount, LotPrices, LotSplit, lot_prices};
 use crate::records::{DataFile, Records};
 use crate::sales::{CardRef, Sale};
 use crate::sealed::SealedItem;
@@ -111,6 +111,70 @@ impl GameService {
     }
 
     /// A lot's copies, for working out its prices.
+    /// The collection file with the game's lots added (`"lots"`): what a backup and a
+    /// JSON export hold, so restoring or importing one brings its lots back too.
+    pub fn collection_with_lots(&self) -> Result<Vec<u8>> {
+        let bytes = std::fs::read(self.store.file_path()).map_err(|e| anyhow!("reading the collection: {e}"))?;
+        let mut file: serde_json::Value = serde_json::from_slice(&bytes)?;
+        let Some(map) = file.as_object_mut() else { bail!("the collection file isn't a JSON object") };
+        map.insert("lots".into(), serde_json::to_value(self.lots.read(<[Lot]>::to_vec))?);
+        Ok(serde_json::to_vec_pretty(&file)?)
+    }
+
+    /// Backs up the collection and its lots (see [`Store::backup`]).
+    pub fn backup(&self, reason: &str) -> Result<String> {
+        self.store.backup_with(reason, &self.collection_with_lots()?)
+    }
+
+    /// Restores a backup: its cards, and its lots when it has them (backups taken
+    /// before lots were kept in them leave the lots as they are). The collection and
+    /// lots are backed up first (reason `restore`); returns that backup's name.
+    pub fn restore(&self, name: &str) -> Result<String> {
+        let bytes = self.store.backup_bytes(name)?;
+        let lots = lots_in_file(&bytes);
+        let before = self.store.restore_from(&bytes, || self.backup("restore"))?;
+        if let Some(lots) = lots {
+            self.lots.update_all(|all| {
+                *all = lots;
+                Ok(())
+            })?;
+        }
+        tracing::info!(game = self.game.id(), backup = name, "backup restored");
+        Ok(before)
+    }
+
+    /// Lots the collection's copies are marked as bought in that have no record (see
+    /// [`Store::lost_lots`]).
+    pub fn lost_lots(&self) -> Vec<LostLot> {
+        self.store.lost_lots(|id| self.lots.get(id).is_some())
+    }
+
+    /// Makes a record again for a lost lot, from its copies: named "Recovered lot" with
+    /// their earliest date, paid what they were costed at, finished and split by value.
+    /// The copies keep their prices until the lot is changed.
+    pub fn recover_lot(&self, id: &str) -> Result<Lot> {
+        let Some(lost) = self.lost_lots().into_iter().find(|l| l.id == id) else { bail!("no copies are in a lost lot {id:?}") };
+        let date = lost.first_date.clone();
+        let lot = Lot {
+            id: lost.id,
+            name: if date.is_empty() { "Recovered lot".into() } else { format!("Recovered lot ({date})") },
+            acquired_date: date,
+            total_paid: lost.paid,
+            count: LotCount::AsEntered,
+            split: LotSplit::ByValue,
+            open: false,
+            created: chrono::Local::now().to_rfc3339(),
+            ..Lot::default()
+        };
+        lot.validate()?;
+        self.lots.update_all(|all| {
+            all.push(lot.clone());
+            Ok(())
+        })?;
+        tracing::info!(game = self.game.id(), lot = lot.id, "lost lot recovered");
+        Ok(lot)
+    }
+
     pub fn lot_copies(&self, lot: &Lot) -> Vec<LotCopy> {
         self.store.lot_copies(&lot.id, |c| self.game.is_basic_land(c))
     }
@@ -290,7 +354,7 @@ impl GameService {
     /// first (reason `delete-all`, so it can be restored) and the backups stay; without
     /// it, the backups are deleted too. Returns the backup's name, if one was taken.
     pub fn delete_all(&self, keep_backup: bool) -> Result<Option<String>> {
-        let backup = if keep_backup && !self.store.is_empty() { Some(self.store.backup("delete-all")?) } else { None };
+        let backup = if keep_backup && !self.store.is_empty() { Some(self.backup("delete-all")?) } else { None };
         self.store.clear()?;
         self.lots.clear()?;
         self.sales.clear()?;
@@ -441,4 +505,13 @@ impl GameService {
             })
             .ok();
     }
+}
+
+/// The lots a backup or collection file carries (`"lots"`), or None when it has none.
+pub fn lots_in_file(bytes: &[u8]) -> Option<Vec<Lot>> {
+    #[derive(serde::Deserialize)]
+    struct File {
+        lots: Option<Vec<Lot>>,
+    }
+    serde_json::from_slice::<File>(bytes).ok().and_then(|f| f.lots)
 }

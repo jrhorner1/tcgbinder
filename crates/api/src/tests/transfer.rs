@@ -56,6 +56,27 @@ fn export_import_round_trip() {
     assert_eq!(status, 200);
     assert!(is_app_file(&std::fs::read(saved["path"].as_str().unwrap()).unwrap()));
     assert_eq!(get(&api, "/api/info")["saveExports"], true);
+
+    // The desktop asks where to save: the Save dialog starts in the export folder with
+    // the file's name, and saves where chosen; cancelling saves nothing.
+    let chosen = out.path().join("my export.csv");
+    let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (to, seen) = (chosen.clone(), asked.clone());
+    let api = Api::new("TCG Binder", "test", Client::Desktop, Arc::new(SettingsStore::memory()), vec![f.svc.clone()])
+        .with_export_dir(out.path().join("Downloads"))
+        .with_save_chooser(Arc::new(move |dir, name| {
+            seen.lock().unwrap().push((dir.to_path_buf(), name.to_string()));
+            name.ends_with(".csv").then(|| to.clone())
+        }));
+    let (status, saved) = call(&api, "POST", "/api/games/mtg/export?format=csv", None);
+    assert_eq!((status, saved["path"].as_str()), (200, chosen.to_str()));
+    assert!(std::fs::read_to_string(&chosen).unwrap().starts_with("Name,"));
+    let (dir, name) = asked.lock().unwrap()[0].clone();
+    assert_eq!(dir, out.path().join("Downloads"));
+    assert!(name.starts_with("mtg-collection-") && name.ends_with(".csv"), "{name}");
+    let (status, v) = call(&api, "POST", "/api/games/mtg/export?format=json", None);
+    assert_eq!((status, v["cancelled"].as_bool()), (200, Some(true)));
+    assert!(!out.path().join("Downloads").exists(), "nothing saved, no folder made");
 }
 
 #[test]
@@ -280,4 +301,27 @@ fn jobs_report_progress() {
     let jobs = seen.into_inner();
     assert_eq!(jobs["jobs"][0], json!({ "name": "import", "done": 3, "total": 10, "message": "Matching cards" }));
     assert_eq!(get(&f.api, "/api/games/mtg/jobs")["jobs"].as_array().unwrap().len(), 0, "gone once finished");
+}
+
+/// A filtered CSV export holds only the copies the filters pick, as the table shows
+/// them, not every copy of each card matched.
+#[test]
+fn a_filtered_export_keeps_the_filtered_copies() {
+    let f = fixture();
+    let (_, lot) = call(&f.api, "POST", "/api/games/mtg/lots", Some(json!({ "name": "Box", "total_paid": 1.0, "split": "even" })));
+    let id = lot["id"].as_str().unwrap();
+    call(&f.api, "POST", &format!("/api/games/mtg/lots/cards?id={id}"), Some(json!({"cards": [{"key": SHOCK, "quantity": 1}]})));
+    let rows = |path: &str| -> Vec<(String, String)> {
+        let (_, body) = download(&f.api, path);
+        // The fixture's fields have no commas or quotes, so a plain split reads them.
+        let mut lines = body.lines().map(|l| l.split(',').map(str::to_string).collect::<Vec<_>>());
+        let h = lines.next().unwrap();
+        let (name, qty) = (h.iter().position(|c| c == "Name").unwrap(), h.iter().position(|c| c == "Quantity").unwrap());
+        lines.map(|x| (x[name].clone(), x[qty].clone())).collect()
+    };
+    let s = |v: &[(&str, &str)]| v.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect::<Vec<_>>();
+    assert_eq!(rows(&format!("/api/games/mtg/export?format=csv&lot={id}")), s(&[("Shock", "1")]), "only the copy in the lot");
+    assert_eq!(rows("/api/games/mtg/export?format=csv&lot=none"), s(&[("Opt", "1"), ("Shock", "1")]), "only the copies in no lot");
+    assert_eq!(rows("/api/games/mtg/export?format=csv&finish=foil"), s(&[("Opt", "1")]));
+    assert_eq!(rows("/api/games/mtg/export?format=csv"), s(&[("Opt", "1"), ("Shock", "1"), ("Shock", "1")]), "unfiltered: every copy");
 }

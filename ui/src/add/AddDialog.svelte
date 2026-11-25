@@ -3,6 +3,7 @@
      was added. -->
 <script lang="ts">
   import { api, failed, gameAPI, loadLots, status, whileRunning } from "../lib/app.svelte";
+  import { askDialog } from "../lib/dialogs.svelte";
   import { addCard, addDefaults, gameInfo } from "../lib/cards";
   import { fname, plural, sn, today, usd, usd4 } from "../lib/format";
   import { finishLot, lotProgress } from "../lib/lots";
@@ -11,8 +12,14 @@
   import ImportPreview, { type Preview } from "../components/ImportPreview.svelte";
   import TagEditor from "../components/TagEditor.svelte";
   import CardSearch, { type Picked } from "./CardSearch.svelte";
+  import OwnedListPreview, { type OwnedMatch } from "./OwnedListPreview.svelte";
 
-  let { lot = null, query = "", set = "", done }: { lot?: Lot | null; query?: string; set?: string; done: (changed: boolean | null) => void } = $props();
+  let { lot = null, query = "", set = "", card = null, done }: {
+    lot?: Lot | null; query?: string; set?: string;
+    /** One printing to offer, instead of searching (a card's page). */
+    card?: CatalogCard | null;
+    done: (changed: boolean | null) => void;
+  } = $props();
 
   // The standard contents the lot form's small buttons fill in: packs × cards per
   // pack, other cards (a promo, a toolkit's extra cards) and basic lands.
@@ -37,6 +44,7 @@
   let date = $state(d.date || "");
   let tags = $state<string[]>(d.tags || []);
   let tagEditor = $state<ReturnType<typeof TagEditor>>();
+  let search = $state<ReturnType<typeof CardSearch>>();
   const said = (c: CatalogCard, a: Picked) => `${a.quantity}× ${c.name} (${sn(c)}, ${fname(a.finish)}, ${a.condition})`;
 
   async function addOne(c: CatalogCard, a: Picked) {
@@ -56,8 +64,16 @@
   let pasting = $state(false);
   let pasted = $state("");
   let preview = $state<Preview | null>(null);
+  // Entering a lot, the list can be cards already in the collection, moved into the lot.
+  let owned = $state(false);
+  let ownedMatch = $state<OwnedMatch | null>(null);
   async function previewPaste() {
     if (!pasted.trim()) { status("Paste a list first."); return; }
+    preview = null; ownedMatch = null; previewDone = false;
+    if (owned && current) {
+      try { ownedMatch = await whileRunning(api<OwnedMatch>("POST", gameAPI(`/lots/list?id=${encodeURIComponent(current.id)}`), { list: pasted })); } catch (e) { failed(e); }
+      return;
+    }
     try { preview = await whileRunning(api<Preview>("POST", gameAPI("/import?preview=1"), new Blob([pasted], { type: "text/plain" }))); } catch (e) { failed(e); }
   }
 
@@ -67,12 +83,14 @@
   let bought = $state(today());
   let packs = $state<number | null>(null), per = $state<number | null>(null), extra = $state<number | null>(null), lands = $state<number | null>(null);
   let split = $state<"by_value" | "even">("by_value");
+  // Whether the basic lands take a share of the cost (usually they come free).
+  let share = $state(false);
   let preset = $state("");
   let lotError = $state("");
   const n = (x: number | null) => Math.max(0, Math.round(x || 0));
-  const cardCount = $derived(n(packs) * (n(per) || 14) + n(extra));
+  const cardCount = $derived(n(packs) * (n(per) || 14) + n(extra) + (share ? n(lands) : 0));
   function fill(p: (typeof PRESETS)[number]) {
-    packs = p.packs; per = p.per; extra = p.extra; lands = p.lands;
+    packs = p.packs; per = p.per; extra = p.extra; lands = p.lands; share = false;
     if (!name.trim()) name = p.label;
     preset = p.label;
     lotError = "";
@@ -82,7 +100,7 @@
     if (!name.trim()) { lotError = "Give it a name."; return; }
     if (cardCount < 1) { lotError = "Say what's in it: packs or other cards."; return; }
     const count = n(packs) || n(lands)
-      ? { kind: "bundle", packs: n(packs), cards_per_pack: n(per) || 14, extra_cards: n(extra), lands: n(lands), lands_share_cost: false }
+      ? { kind: "bundle", packs: n(packs), cards_per_pack: n(per) || 14, extra_cards: n(extra), lands: n(lands), lands_share_cost: share && n(lands) > 0 }
       : { kind: "known", cards: n(extra) };
     try {
       current = await api<Lot>("POST", gameAPI("/lots"), { name: name.trim(), total_paid: parseFloat(total) || 0, acquired_date: bought, count, split });
@@ -91,12 +109,24 @@
       mode = "entering";
     } catch (e) { lotError = e instanceof Error ? e.message : String(e); }
   }
+  // A pasted list that was previewed but not yet put in the lot.
+  let previewDone = $state(false);
+  const waiting = $derived(ownedMatch?.found || (preview && !previewDone ? preview.copies : 0));
   async function finish() {
-    if (current && (await finishLot(current))) { changed = true; close(); }
+    if (!current) return;
+    if (waiting) {
+      const go = await askDialog("Your list isn't in the lot yet", [
+        `${plural(waiting, "card", "cards")} from your pasted list ${waiting === 1 ? "hasn't" : "haven't"} been put in ${current.name}: the list was only previewed.`,
+        "Go back and press the button under the preview to put them in, or finish without them.",
+      ], [{ label: "Finish without them", value: "finish" }, { label: "Go back", value: "back", primary: true }], false);
+      if (go !== "finish") return;
+    }
+    if (await finishLot(current)) { changed = true; close(); }
   }
 </script>
 
-<dialog class="add-dialog" {@attach (el: HTMLDialogElement) => { el.showModal(); }} onclose={close}>
+<!-- Opening the dialog focuses its first button; the search takes the focus back. -->
+<dialog class="add-dialog" {@attach (el: HTMLDialogElement) => { el.showModal(); search?.focus(); }} onclose={close}>
   <div class="dlg">
     <header>
       <div class="addhead">
@@ -128,7 +158,8 @@
             <input type="number" min="0" step="1" placeholder="14" aria-label="Cards per pack" bind:value={per} /><span>+</span>
             <input type="number" min="0" step="1" placeholder="0" aria-label="Other cards" bind:value={extra} /><span>other cards +</span>
             <input type="number" min="0" step="1" placeholder="0" aria-label="Basic lands" bind:value={lands} /><span>basic lands</span>
-            <span class="muted small">= {plural(cardCount, "card", "cards")}{n(lands) ? `, and ${n(lands)} basic lands that don't share the cost` : ""}</span>
+            {#if n(lands)}<label class="check share"><input type="checkbox" bind:checked={share} /> Lands share the cost</label>{/if}
+            <span class="muted small">= {plural(cardCount, "card", "cards")}{n(lands) ? (share ? ", basic lands included" : `, and ${n(lands)} basic lands that don't share the cost`) : ""}</span>
           </div>
           <label for="lot-split">Split the cost</label>
           <select id="lot-split" bind:value={split}><option value="by_value">By each card's market value</option><option value="even">Evenly</option></select>
@@ -149,20 +180,31 @@
             <span class="label">Tags</span><TagEditor bind:this={tagEditor} bind:tags label="Tags on the cards added" />
           </div>
         {/if}
-        <CardSearch {query} {set} onadd={addOne} />
+        <CardSearch bind:this={search} {query} {set} found={card ? { cards: [card], owned: [0] } : null} onadd={addOne} />
         <p class="add-links">
           <button type="button" class="link" onclick={() => (pasting = !pasting)}>Paste a list…</button>
           {#if mode === "card" && gameInfo().Scan}<button type="button" class="link" onclick={() => { close(); go("scan"); }}>Scan a card…</button>{/if}
         </p>
         {#if pasting}
           <div class="paste">
-            <p class="muted small">One card per line: a count, the name, and optionally the set and collector number. Add *F* for foil.</p>
+            <p class="muted small">One card per line: a count, the name, and optionally the set and collector number. Add *F* (or F after the set) for foil.</p>
+            {#if mode === "entering" && current}
+              <div class="paste-kind" role="radiogroup" aria-label="What the list is">
+                <label class="check"><input type="radio" name="paste-kind" value={false} bind:group={owned} onchange={() => (ownedMatch = null)} />New cards, added to the lot</label>
+                <label class="check"><input type="radio" name="paste-kind" value={true} bind:group={owned} onchange={() => (preview = null)} />Cards already in my collection, moved into the lot (copies in another lot stay there)</label>
+              </div>
+            {/if}
             <textarea rows="6" placeholder={"4 Lightning Bolt\n1 Sol Ring (C21) 263\n2 Shock [M19] *F*"} aria-label="Card list" bind:value={pasted}></textarea>
-            <div class="buttons"><button type="button" onclick={previewPaste}>Preview</button></div>
+            <div class="buttons"><button type="button" onclick={previewPaste}>{owned && mode === "entering" ? "Find them in my collection" : "Preview"}</button></div>
+            {#if ownedMatch && current}
+              <OwnedListPreview match={ownedMatch} list={pasted} lot={current} cancel={() => (ownedMatch = null)}
+                done={(l, moved) => { changed = true; current = l; ownedMatch = null; added = [`${plural(moved, "card", "cards")} you own, moved in from a list`, ...added]; }}
+                addMissing={(rest) => { pasted = rest; owned = false; ownedMatch = null; previewPaste(); }} />
+            {/if}
             {#if preview}
               <ImportPreview {preview} fileName={mode === "entering" && current ? `pasted list for ${current.name}` : "pasted list"}
                 lot={mode === "entering" ? current : null} cancel={() => (preview = null)}
-                done={(r) => { changed = true; if (r.lot) current = r.lot; }} />
+                done={(r) => { changed = true; previewDone = true; if (r.lot) current = r.lot; }} />
             {/if}
           </div>
         {/if}
@@ -205,7 +247,8 @@
   /* What's in a lot reads as one line: "9 packs × 14 + 1 other cards + 40 basic lands". */
   .contents { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .form .contents input { width: 4.5em; flex: none; }
-  .contents .small { flex-basis: 100%; }
+  .contents .small, .contents .share { flex-basis: 100%; }
+  .paste-kind { display: grid; gap: 4px; margin: 6px 0 8px; font-size: 14px; }
   .small { font-size: 13px; }
   @media (max-width: 800px) { .label { text-align: left; } }
 </style>

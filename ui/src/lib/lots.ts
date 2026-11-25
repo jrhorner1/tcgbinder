@@ -20,7 +20,11 @@ export function lotCountText(l: Lot) {
 /** Finishes a lot: for a value split it first shows what each card will be costed at;
  *  for a short, evenly split lot it asks which count to divide by. True if finished. */
 export async function finishLot(lot: Lot): Promise<boolean> {
-  if (lot.split === "by_value") {
+  if (!lot.copies) {
+    const ok = await askDialog("Finish an empty lot?", [`No cards are in ${lot.name} yet, so there's nothing to price.`, "Finish it anyway?"],
+      [{ label: "Finish", value: true, primary: true }]);
+    if (!ok) return false;
+  } else if (lot.split === "by_value") {
     const pct = lot.marketValue > 0 ? Math.round((lot.total_paid / lot.marketValue) * 1000) / 10 : null;
     const ok = await askDialog("Finish the lot", [`Paid ${usd(lot.total_paid)} for cards worth ${usd(lot.marketValue)} now.`,
       pct !== null ? `Each card will be costed at ${pct}% of its market price (prices from earlier days are refreshed first).` : "None of its cards has a market price, so the total will be split evenly."],

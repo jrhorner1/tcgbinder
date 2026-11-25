@@ -91,3 +91,48 @@ fn missing_lists_cross_off_cards_once_owned() {
     call(&f.api, "POST", "/api/games/mtg/cards", Some(json!({ "card": catalog("two", 2.0), "quantity": 1, "finish": "nonfoil" })));
     assert_eq!(get(&f.api, &format!("/api/games/mtg/lists?id={id}"))["entries"].as_array().unwrap().len(), 1);
 }
+
+/// One list's entries filter and sort like the collection's cards, and edits name
+/// entries by their place in the list, so a filtered view never drops the others.
+#[test]
+fn a_list_filtered_sorted_and_edited() {
+    let f = fixture();
+    let (_, deck) = call(&f.api, "POST", "/api/games/mtg/lists", Some(json!({"name": "Burn"})));
+    let id = deck["id"].as_str().unwrap().to_string();
+    let path = |p: &str| format!("/api/games/mtg/lists{p}?id={id}");
+    let shock = get(&f.api, &format!("/api/games/mtg/card?key={SHOCK}"))["card"].clone();
+    call(&f.api, "POST", &path("/entries"), Some(json!({"card": shock, "quantity": 2})));
+    call(&f.api, "POST", &path("/entries"), Some(json!({"card": catalog("aaaaaaaa-0000-4000-8000-000000000900", 5.0), "quantity": 3})));
+    let names = |q: &str| -> Vec<String> {
+        get(&f.api, &format!("/api/games/mtg/lists?id={id}{q}"))["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["card"]["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let card9 = "Card aaaaaaaa-0000-4000-8000-000000000900";
+    assert_eq!(names(""), ["Shock", card9], "the list's own order");
+    assert_eq!(names("&owned=missing"), [card9], "Shock's 2 are owned");
+    assert_eq!(names("&owned=complete"), ["Shock"]);
+    assert_eq!(names("&set=tst"), [card9]);
+    assert_eq!(names("&q=shock"), ["Shock"]);
+    assert_eq!(names("&price_min=1"), [card9]);
+    assert_eq!(names("&sort=value&dir=desc"), [card9, "Shock"]);
+    assert_eq!(names("&sort=name"), [card9, "Shock"]);
+    let one = get(&f.api, &format!("/api/games/mtg/lists?id={id}&set=tst"));
+    assert_eq!(one["list"]["cards"], 5, "totals are the whole list's");
+    let sets: Vec<&str> = one["sets"].as_array().unwrap().iter().map(|s| s["Code"].as_str().unwrap()).collect();
+    assert_eq!(sets, ["TST", "M19"], "by set name (the made-up TST has none)");
+    assert_eq!(call(&f.api, "GET", &format!("/api/games/mtg/lists?id={id}&owned=some"), None).0, 400);
+
+    // Edits by index: the second entry's quantity, then the first removed.
+    let (status, t) = call(&f.api, "PUT", &path("/entries"), Some(json!({"changes": [{"index": 1, "quantity": 1, "finish": "Foil"}]})));
+    assert_eq!((status, t["cards"].as_i64()), (200, Some(3)), "{t}");
+    let (_, t) = call(&f.api, "PUT", &path("/entries"), Some(json!({"changes": [{"index": 0, "remove": true}]})));
+    assert_eq!(t["cards"], 1);
+    let left = &get(&f.api, &format!("/api/games/mtg/lists?id={id}"))["entries"][0];
+    assert_eq!((left["card"]["name"].as_str(), left["finish"].as_str()), (Some(card9), Some("foil")));
+    assert_eq!(call(&f.api, "PUT", &path("/entries"), Some(json!({"changes": [{"index": 5, "quantity": 1}]}))).0, 400);
+    assert_eq!(call(&f.api, "PUT", &path("/entries"), Some(json!({"changes": [{"index": 0, "quantity": 0}]}))).0, 400);
+}

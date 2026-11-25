@@ -16,9 +16,11 @@ use crate::jsonfile::JsonFile;
 
 mod backups;
 mod bulk;
+mod lot_list;
 mod tagging;
 
-pub use tagging::{CopyPick, TagEdit};
+pub use lot_list::{ListFound, ListLine, ListMatch};
+pub use tagging::{CopyPick, LostLot, TagEdit};
 
 /// One game's collection, persisted as a JSON file. Each game has its own. The file
 /// may also be changed by another device through a synced folder: every change first
