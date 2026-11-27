@@ -151,7 +151,7 @@ impl Api {
         if !g.store.backups().map_err(internal)?.iter().any(|b| b.name == req.name) {
             return Err(not_found(format!("there is no backup named {:?}", req.name)));
         }
-        let backup = g.store.restore(&req.name).map_err(internal)?;
+        let backup = g.restore(&req.name).map_err(internal)?;
         Ok(Reply::Json(json!({ "cards": g.store.len(), "undo": undo(g, &backup) })))
     }
 
@@ -223,6 +223,7 @@ impl Api {
         let mut preview = pending.preview;
         if let Some(lot) = &lot {
             lots::put_in_lot(&mut preview.cards, lot);
+            preview.lots.clear(); // the cards join this lot instead of the file's
         }
         tag_every_purchase(&mut preview.cards, &tags).map_err(|e| bad(format!("{e:#}")))?;
         self.job(g, "import", |r| {
@@ -244,16 +245,16 @@ impl Api {
         let stem = format!("{}-collection-{}", g.game.id(), dates::today_string());
         match params.get("format").map_or("json", |f| f.as_str()) {
             "json" => {
-                let data = std::fs::read(g.store.file_path()).map_err(|e| internal(e.into()))?;
+                let data = g.collection_with_lots().map_err(internal)?;
                 Ok((format!("{stem}.json"), "application/json", data))
             }
             "csv" => {
-                let (cards, _, _) = self.filtered_cards(g, params)?;
+                let (cards, _, _) = self.filtered_cards(g, params, true)?;
                 let data = write_csv(&cards, g.game.catalog_id_label()).map_err(internal)?;
                 Ok((format!("{stem}.csv"), "text/csv; charset=utf-8", data))
             }
             "report" => {
-                let (cards, _, _) = self.filtered_cards(g, params)?;
+                let (cards, _, _) = self.filtered_cards(g, params, true)?;
                 let filtered = params.keys().any(|k| !matches!(k.as_str(), "format" | "sort" | "dir"));
                 let html = report::valuation(g, &cards, filtered);
                 Ok((format!("{}-valuation-{}.html", g.game.id(), dates::today_string()), "text/html; charset=utf-8", html.into_bytes()))
@@ -268,12 +269,23 @@ impl Api {
         Ok(Reply::File { name, content_type, data })
     }
 
-    /// Saves an export (see `export_file`) to the export folder.
+    /// Saves an export (see `export_file`): where the person chooses, when the app can
+    /// ask (answering `{"cancelled": true}` if they don't choose), else in the export
+    /// folder.
     pub(crate) fn save_export(&self, g: &GameService, params: &HashMap<String, String>) -> Result {
         let dir = self.export_dir.as_ref().ok_or_else(|| not_found("this app downloads exports instead (GET)"))?;
         let (name, _, data) = self.export_file(g, params)?;
-        let path = dir.join(name);
-        std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&path, data)).map_err(|e| internal(e.into()))?;
+        let path = match &self.choose_save {
+            Some(choose) => match choose(dir, &name) {
+                Some(p) => p,
+                None => return Ok(Reply::Json(json!({ "cancelled": true }))),
+            },
+            None => {
+                std::fs::create_dir_all(dir).map_err(|e| internal(e.into()))?;
+                dir.join(name)
+            }
+        };
+        std::fs::write(&path, data).map_err(|e| internal(anyhow::Error::from(e).context(format!("saving {}", path.display()))))?;
         tracing::info!(game = g.game.id(), path = %path.display(), "collection exported");
         Ok(Reply::Json(json!({ "path": path.display().to_string() })))
     }

@@ -56,6 +56,17 @@ pub fn build_plain_query(text: &str, set_code: &str) -> Result<String> {
     })
 }
 
+/// A search for cards whose rules (Oracle) text contains `text` as a phrase:
+/// `o:"draw a card"`. Quotes in the text are dropped, so it stays one phrase.
+pub fn build_rules_query(text: &str) -> Result<String> {
+    let text = text.replace('"', " ");
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if text.is_empty() {
+        bail!("enter some rules text to search for");
+    }
+    Ok(format!("o:\"{text}\""))
+}
+
 fn is_set_code_input(s: &str) -> bool {
     (2..=8).contains(&s.chars().count()) && s.chars().all(char::is_alphanumeric)
 }
@@ -70,6 +81,11 @@ impl Client {
     /// error.
     pub fn search_cards(&self, query: &str, next_page: &str) -> Result<SearchPage> {
         self.search(&encode(&[("q", query), ("unique", "prints"), ("order", "released"), ("dir", "desc")]), next_page)
+    }
+
+    /// Runs a search returning one result per card (its newest printing), by name.
+    pub fn search_unique_cards(&self, query: &str, next_page: &str) -> Result<SearchPage> {
+        self.search(&encode(&[("q", query), ("unique", "cards"), ("order", "name")]), next_page)
     }
 
     /// Card names starting like `text` (Scryfall's /cards/autocomplete: up to 20).
@@ -140,5 +156,8 @@ mod tests {
         assert!(build_search_query("", "").is_err());
         assert!(build_search_query("x", "m-19").is_err());
         assert!(build_search_query("x", "a").is_err());
+        assert_eq!(build_rules_query("  draw a   card ").unwrap(), "o:\"draw a card\"");
+        assert_eq!(build_rules_query("say \"hi\"").unwrap(), "o:\"say hi\"");
+        assert!(build_rules_query(" \" ").is_err());
     }
 }

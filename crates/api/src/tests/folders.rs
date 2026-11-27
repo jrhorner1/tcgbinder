@@ -141,3 +141,25 @@ fn delete_all_data() {
     assert_eq!((f.svc.store.len(), v["backups"].as_object().unwrap().len()), (0, 0));
     assert!(f.svc.store.backups().unwrap().is_empty());
 }
+
+#[test]
+fn open_the_data_folder() {
+    let f = folder_fixture(false);
+    // Without a file browser to open it in (the iPhone, a web app reached from
+    // elsewhere): not offered, and a request is refused.
+    assert_eq!(get(&f.api, "/api/data-folder")["canOpen"], false);
+    assert_eq!(call(&f.api, "POST", "/api/data-folder/open", None).0, 501);
+
+    // With one: the data folder, and only it, is opened.
+    let opened = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = opened.clone();
+    let FolderFixture { api, local, .. } = f;
+    let api = api.with_folder_opener(Arc::new(move |p| {
+        seen.lock().unwrap().push(p.to_path_buf());
+        Ok(())
+    }));
+    assert_eq!(get(&api, "/api/data-folder")["canOpen"], true);
+    let (status, body) = call(&api, "POST", "/api/data-folder/open", Some(json!({ "path": "/etc" })));
+    assert_eq!((status, body["opened"].as_bool()), (200, Some(true)));
+    assert_eq!(*opened.lock().unwrap(), [local]);
+}

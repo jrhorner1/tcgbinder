@@ -46,44 +46,54 @@ as soon as the import finishes.
 
 ## Collection
 
-- **Browse:** every card is a line: its picture, name, set, number and rarity, the
-  lots its copies came from, how many copies you have and what they're worth. Under
-  it, its copies are listed in groups (copies that are the same in every way: finish,
-  condition, price paid, date, lot and tags), each with its actions on the same row:
-  - **− / +** takes a copy away or adds one; taking the last one away removes the
-    group. The finish and condition menus change the group.
-  - The price paid each, the date and what one copy is worth; a 📦 badge names the
-    lot the copies came from (click it to see that lot's cards, keeping the other
-    filters); tag chips (click a tag's
-    name to add it to the filters, so clicking two tags shows the cards with both;
-    its **×** takes the tag off) and **+ tag** to
-    add one.
-  - **Put in lot…** (or **Move…** for copies already in a lot) puts the group in a
-    lot, or takes it out: in a lot, copies take its date and their share of its
-    price, and the lot is repriced.
-  - **Sell…** records a sale of some of the group's copies right there (see Selling
-    cards).
+- **Browse:** the collection is a table, like a spreadsheet: a row per card, with its
+  picture, name, set and number, how many copies you have, their finish, condition,
+  the purchase (lot) they came from, the price paid for each, tags, and what they're
+  worth. A card whose copies differ (two conditions, say) has a ▸: open it to see a
+  row for each group of copies (copies alike in every way: finish, condition, price
+  paid, date, lot and tags). **Columns…** chooses which columns show (Language is
+  off at first). The table scrolls within itself, so its headings and
+  the Name column stay in view, and it stays quick however many cards you have.
+- **Changing cards:** every cell but Name, Set and Value changes right where it is:
+  click it (or Tab to it), change it, and it's saved. ↑ and ↓ move to the same cell
+  in the row above or below.
+  - On a copy's row, the change is to that group of copies. On a card's row, it's to
+    all its copies the filters show: a cell reads *Mixed* when they differ, and
+    choosing a value makes them all the same. Quantity changes on a card's row only
+    when it has one group.
+  - **Purchase** puts the copies in a lot, or takes them out (—): in a lot, copies
+    take its date and their share of its price, so Paid each and Acquired can't be
+    changed there.
+  - **Tags:** type a tag and press Enter to add it; Backspace in the empty box takes
+    off the last one, and × takes off any. Click a tag's name to add it to the
+    filters, so clicking two tags shows the cards with both. On a card's row, a faded
+    tag is on only some of its copies.
   - **Split** moves one copy into a group of its own, to tag it or change its
-    condition apart from the rest. Pressing it again moves another copy into that
+    condition apart from the rest; the card's rows open so you see both groups.
+    Pressing it again moves another copy into that
     same group. Once the new group is changed, it's kept apart, and the next split
     starts another group. A split that's never changed goes back with the others
     when the app is reopened, since identical copies are kept together.
-  - **Delete** removes the group's copies, after asking.
+  - **Merge into…** (on a group's row, when the card has another group in the same
+    lot, or in no lot) joins the group to the one you choose: its copies take that
+    group's finish, condition, price paid, date and tags, and the two become one.
+  - **Sell…** records a sale of some of the group's copies (see Selling cards), and
+    **✕** deletes the group's copies, after asking.
 
-  Every change is saved straight away. A card's name, picture or **Details…** opens
-  its page, for changing its printing, watching its price, or editing it in full.
-  More cards load by themselves as you scroll toward the end of the list.
-- **Sort:** the **Sort** menu above the list orders by name, set (release date, then
+  The status line says what changed, with **Undo**. A card's name opens its page, for
+  changing its printing, watching its price or adding it to a list.
+- **Sort:** click a column's heading (Name, Set, Qty, Paid each, Acquired, Tags,
+  Value) to sort by it, and again to turn the order around. The **Sort** menu has
+  every order: name, set (release date, then
   collector number), number, price of one copy, value of every copy, gain or loss
   (cards with no price paid last), price paid, quantity, acquired date (the earliest
-  purchase; undated cards last), release date, or rarity. The arrow beside it turns
-  the order around. Choosing a sort starts with the most first, except for name and
+  purchase; undated cards last), release date, rarity, or tag. Choosing a sort starts with the most first, except for name and
   number. Until you choose one, the list follows **Settings → Card order**.
 - **Filter:** filter the list by name, set, collector number or tag, and by set,
   color, rarity, finish and **Bought in** (a lot, or **No lot** for copies bought on
   their own). With **Bought in** or a tag chosen (or a tag excluded, or **Untagged**),
   each card shows only its copies that match (bought that way, carrying the tag), and
-  the counts and value count only those; a note under a card says how many of its
+  the table's totals count only those; "+N" beside a card's name says how many of its
   other copies are hidden. **More filters** adds color identity, mana value, condition (any copy in
   it), language, type ("creature" matches every type line with it), price of one copy
   (from and to), acquired date (any purchase in the range), a minimum number of
@@ -105,10 +115,14 @@ as soon as the import finishes.
     "Core Set 2019 Missing" to start with, and makes a list with one of each missing
     card, then opens it.
 
-A card's page replaces the list, with a **Back** button, which returns to the list.
-On a phone each group of copies takes three lines: the quantity, finish and
-condition; the price, lot and tags; and the actions. In the desktop and iPhone apps, **View on Scryfall** and other links
-to websites open in your browser.
+A card's page replaces the list; **← Collection** returns to it. A printing you don't
+own (opened from the catalog in the search at the top) has the same page without your
+copies: its picture, rules text, details and prices, **Watch price…**, **Add to
+list…**, the printings of it you do own, and **Add to collection…**, which opens the
+Add dialog on that printing and then shows the card as yours. On a phone the table
+shows each card's name, quantity and value; tap a name for its page, where every
+column is. In the desktop and iPhone apps, **View on Scryfall** and other links to
+websites open in your browser.
 
 ### Editing a card
 
@@ -118,14 +132,13 @@ the price paid for each, the date acquired, and its tags. For example, two near-
 copies bought for $0.10 and $0.12 are two purchases, so price paid and value over
 time stay exact.
 
-- **Your Copies** on the card's page lists one row per purchase: finish, condition,
-  quantity, price paid (each) and acquired date, with **Add tags** beneath. **Add
-  purchase** adds a row; ✕ removes one. Setting every quantity to 0 removes the card
-  when you save.
+- **Your Copies** on the card's page is the collection's table for just this card,
+  with a row for each group of copies, changed the same way. **+ Add copies…** opens
+  the Add dialog on this card.
   - The finish menu lists only the finishes that printing comes in ("Normal",
     "Foil", "Etched").
-  - Purchases with the same finish, condition, price, date and tags are combined;
-    different tags keep them apart.
+  - Copies with the same finish, condition, price, date, lot and tags are one group;
+    a difference in any keeps them apart.
 - **Language** is shown on every card. It belongs to the printing, so to change it,
   use **Change printing…**.
 - **Change printing…** moves every copy to another printing of the same card (for
@@ -136,26 +149,22 @@ time stay exact.
 - **Raw data** shows the card exactly as stored, as JSON.
 - **Delete** removes every copy, after asking.
 
-### Bulk edit
+### Changing many cards at once
 
-Every card in the collection list has a tick box:
-1. Narrow the list with the search box and the **Set**, **Color**, **Rarity** and
-   **Finish** filters.
-2. Tick cards one by one, or **Select all N** to tick everything the filters
-   show. Ticks stay while you change filters, so you can build up a selection from
-   several searches; the bar above the list (it stays in view as you scroll) says how many are ticked and how many
-   the filters hide. **Clear** unticks everything.
-3. **Bulk edit…** opens the changes for the ticked cards: condition, finish, price
-   paid or acquired date for every copy, tags (**Add tags**, **Remove tags**, or **Remove all tags**; see Tags),
-   or delete them. You can still untick cards
-   there. Finish changes skip printings that don't come in that finish, and copies
-   that end up identical join one purchase.
+Every card in the collection table has a tick box:
+1. Narrow the list with the search box and the filters.
+2. Tick cards one by one, or **Select all N** to tick everything the filters show.
+   Ticks stay while you change filters, so you can build up a selection from several
+   searches; the bar above the table (it stays in view as you scroll) says how many
+   are ticked and how many the filters hide. **Clear** unticks everything.
+3. Change a cell on any ticked card's row: the change is made to every ticked card
+   (to the copies the filters show). Condition, finish, purchase, price paid, date
+   and tags all work this way. **Delete…** deletes the ticked cards.
 
-The ticks clear once the changes are applied. The status line then offers **Undo**,
-which puts the collection back as it was, as long as nothing else has changed it
-since; otherwise use **Tools → Restore a backup…**. Imports offer Undo the same way.
-
-**Tools → Bulk edit…** opens the same dialog.
+The status line then offers **Undo**, which puts the cards back as they were. For a
+delete, Undo restores the backup taken first, as long as nothing else has changed the
+collection since; otherwise use **Tools → Restore a backup…**. Imports offer Undo the
+same way.
 
 ### Tags
 
@@ -165,18 +174,16 @@ to a purchase, so four copies of a card in a deck and two in a binder can be tag
 differently. There is no list of tags to keep: the tags that exist are the ones on
 your cards, and a tag disappears when it is removed from its last card.
 
-- **Adding tags:** on a card's page, **Add tags** on a purchase opens a tag box. Type
-  a tag and press Enter (or type a comma or semicolon); Backspace in the empty box
-  removes the last one, and × removes any. Tags you already use are suggested. A tag
+- **Adding tags:** in the collection's Tags column (or a card's page), type a tag and
+  press Enter; Backspace in the empty box removes the last one, and × removes any. Tags you already use are suggested. A tag
   can be up to 40 characters, without commas or semicolons, and can't start with
   `lot:` (the app keeps lots that way), and a purchase can have up to 20. Tags ignore case: "Binder A" and "binder a" are one tag, kept in the
-  spelling first used. To tag some copies of a purchase apart from the rest,
-  **Split** moves one copy to a row of its own; set the quantities, change its tags,
-  and save. The Add page has a tag box too, and keeps its tags for the next card, so
-  a stack going to one place is tagged once. **Bulk edit** adds or removes tags on
-  many cards at once.
-- **In the list:** each card shows up to three of its tags (and "+N" for more);
-  click one to show the cards with that tag. **More filters → Tags** lists every tag
+  spelling first used. To tag some copies apart from the rest, **Split** moves
+  one copy to a group of its own; then tag that group. The Add page has a tag box too, and keeps its tags for the next card, so
+  a stack going to one place is tagged once. Tick cards to add or take off a tag on
+  many at once.
+- **In the table:** the Tags column shows each card's tags; click one to show the
+  cards with that tag. **More filters → Tags** lists every tag
   with its number of cards: click a tag to show cards with it, again to show cards
   without it (struck through), a third time to clear it. With two or more chosen,
   choose **All of these** or **Any of these**. **Untagged** shows cards with a copy
@@ -198,12 +205,16 @@ your cards, and a tag disappears when it is removed from its last card.
 
 **Add…** in the sidebar (on a phone, the **Add** tab) opens the Add dialog, ready to
 add a card. Set the price paid each, the date and any tags once at the top; they're
-used for every card you add until you change them. Then search the catalog by name,
-or a name and set code ("Shock M19"; a set code is the last word, with a digit or in
-capitals). Every printing is listed, with what it's worth and how many you own; set
-the quantity, finish and condition on a printing's row and press **Add**. The search
-stays, so the next copy is one click away, and what you've added is listed under
-**Added just now**. **Done** closes the dialog and shows the collection.
+used for every card you add until you change them. Then search the catalog by name
+(the search box is ready to type in when the dialog opens). To keep to one set, choose
+it in the set box beside the search (type its code or name), or put the set code after
+the name ("Shock M19"; a set code is the last word, with a digit or in capitals).
+Every printing is listed, with what it's worth and how many you own; set the quantity,
+finish and condition on a printing's row and press **Add**. The condition stays for
+the next card, while the finish goes back to normal. After **Add** the search text is
+selected, so you can type the next card's name straight away or add another printing
+from the same results. What you've added is listed under **Added just now**. **Done**
+closes the dialog and shows the collection.
 
 - **Searching:** a name is searched as a phrase, so "sol ring" finds Sol Ring and not
   every card with "sol" and "ring" somewhere in its name. If the phrase finds
@@ -214,11 +225,12 @@ stays, so the next copy is one click away, and what you've added is listed under
 - **Paste a list…** takes a card list, one card per line, as decklists from
   Moxfield, Archidekt or MTG Arena write them: `4 Lightning Bolt`,
   `4x Lightning Bolt`, `4 Lightning Bolt (M11) 149`, `4 Lightning Bolt [M11] 149`, with
-  `*F*` or `(foil)` at the end for foil. Headings such as "Sideboard" and comments
+  `*F*` or `(foil)` at the end for foil (after a set, a plain `F` works too, as in
+  `2 Shock [M19] F`; `E` or `*E*` for etched). Headings such as "Sideboard" and comments
   (`//`, `#`) are skipped. It shows the same preview as an import before anything is
   saved. Import accepts such a list as a file too.
 - **From the search at the top:** a catalog card's **Add…** opens the dialog on that
-  printing.
+  card, from a name or a rules-text match.
 - **Missing cards:** on a set's missing cards page, **Add…** beside a card adds it
   without leaving the page.
 
@@ -234,7 +246,8 @@ title; the **×** beside it goes back to adding a card. The form starts blank:
 - **Name, total paid and date bought.** Every card in the lot gets the date.
 - **What's in it:** packs × cards per pack (14 if left blank), other cards (a promo,
   a toolkit's cards, or the count of a bulk lot), and basic lands. Basic lands don't
-  take a share of the cost.
+  take a share of the cost unless you tick **Lands share the cost** (it's also on the
+  lot's **Edit**).
 - **Split the cost:**
   - **By each card's market value** (the default): a card worth more costs more. If
     the lot's cards are worth $80 and it cost $55, each card is costed at 68.75% of
@@ -260,11 +273,27 @@ lot), **Finish**, **Reprice at today's prices** (finished value-split lots), **E
 (changing the total, count, date or split reprices the cards) and **Delete** (keep
 the cards with their prices, or delete them too).
 
-- **Cards you already own** can join a lot: **Put in lot…** on a group of copies in
-  the collection, or tick cards and use **Bulk edit → Put in a lot** to put every
-  copy of them in. Either way the copies take the lot's date and their share of its
-  price (the lot is repriced), and copies that were in another lot leave it.
-- **Taking copies out:** **Move…** on a group, then **No lot**. The copies keep the
+- **Cards you already own** can join a lot: choose it in the **Purchase** column, on a
+  group of copies or a card's row (or on a ticked card's row, to put every ticked
+  card's copies in). The copies take the lot's date and their share of its price (the
+  lot is repriced), and copies that were in another lot leave it.
+- **A list of cards you already own** (a product's contents list, such as a deck
+  builder's toolkit's): while entering the lot, choose **Paste a list…**, then **Cards
+  already in my collection**, and **Find them in my collection**. Each line is matched
+  to copies in no lot: copies already in a lot are never moved, so one list can't take
+  cards from another lot. A line with a set code (and number) takes that printing; a
+  line with only a name takes the printings released by the lot's date first. The
+  preview shows what each line found and what's short, before anything moves; **Put …
+  in** moves them, and **Add the cards not found as new…** imports the rest into the
+  lot as new cards.
+- **A lot that no longer exists:** copies can still be marked as bought in a lot
+  whose record is gone (restoring a backup taken before the lot was deleted brings
+  them back like that). Their **Purchase** cell says "a deleted lot", and Home and the
+  collection show a notice for each such lot: **Recreate the lot** makes it again
+  from those copies, finished, as "Recovered lot" (rename it and set its total with
+  **Edit**), and **Take them out of the lot** leaves them in no lot at the prices they
+  have.
+- **Taking copies out:** choose **—** in the **Purchase** column. The copies keep the
   price and date the lot gave them, and the lot's other cards are repriced. Deleting
   a lot's copies reprices it too.
 
@@ -322,10 +351,15 @@ cost at market price, and what the whole list is worth.
 - **Paste a list…** on a list's page adds a decklist as Moxfield, Archidekt or MTG
   Arena export it. A line with a set (and number) wants that printing; a line with
   just a name counts any printing as owned.
-- Each entry says how many you own of how many you want. With **Any printing**
-  ticked, every printing with the card's name counts; otherwise only that printing
-  (and, for a foil entry, only foil copies). Change the number wanted in place, or
-  remove an entry with ✕. **Add…** on a missing entry opens the add form.
+- A list's cards are a table like the collection's, with the collection's filters
+  where they apply to a card on a list (name, set, color, rarity, finish, language,
+  type, price), plus **Owned** (missing or owned). Click a heading to sort by it.
+  Each row says how many you own of how many you want; change **Wanted**, **Finish**
+  or **Any printing** in place. With **Any printing** ticked, every printing with the
+  card's name counts; otherwise only that printing (and, for a foil entry, only foil
+  copies). ✕ removes an entry, and ticking rows then **Remove…** removes several;
+  both offer **Undo** (removed entries come back at the end of the list). **Add…**
+  on a missing entry opens the add form.
 - **Rename**, **Notes**, **Export** (the list as decklist text, which Paste a list
   reads back) and **Delete** (the cards in your collection stay).
 
@@ -400,13 +434,22 @@ card in view. Scanning can't tell foil from non-foil, so set the finish yourself
 
 ## Search
 
-The search box at the top of every page searches as you type: **In your collection**
-lists your cards that match (click one to open it; **Show all N** opens the collection
-filtered to the search), and **In the catalog** lists matching printings from
-Scryfall, each with **Add…**, which opens the Add dialog on it. Press **/** anywhere
-to jump to the box, and Escape to close the results. Enter shows the full search page:
-your whole collection across every game, the first 200 matches per game, with **Search
-the catalog** to add a card that isn't there.
+The search box at the top of every page searches as you type, by names and by rules
+text:
+- **In your collection** lists your cards whose name, set, number, tags or rules text
+  has every word you typed. Cards named with the words come first; a card found only
+  by its rules text says "in its rules text". Click one to open it; **Show all N**
+  opens the full search page.
+- **In the catalog** lists printings from Scryfall whose names match, then, under
+  **Rules text mentions it**, cards whose rules text has the words as a phrase ("draw
+  a card"), one per card. Click one to open its page; **Add…** beside it opens the Add
+  dialog on that printing.
+
+Press **/** anywhere to jump to the box, and Escape to close the results. Clearing the
+box on the search page goes back to the page you searched from. Enter shows the full
+search page: your whole collection across every game, the first 200 matches per game,
+with **Search the catalog** to add a card that isn't there. (The collection's own
+filter box searches names, sets, numbers and tags, not rules text.)
 
 ## Tools
 
@@ -416,25 +459,28 @@ The Tools page works on the selected game:
   exported from this app.
   Cards you already own gain the imported purchases. See **Importing** below.
 - **Export…:** asks which kind of file, then saves the whole collection. The desktop
-  app saves it to your Downloads folder; the iPhone app saves it to its folder in the
-  Files app; the web app downloads it.
-  - **Collection file:** the collection exactly, which Import accepts. Use it for
-    backups and moving to another device.
+  app asks where to save it (starting in your Downloads folder); the iPhone app saves
+  it to its folder in the Files app; the web app downloads it.
+  - **Collection file:** the collection exactly, with its lots, which Import accepts.
+    Use it for backups and moving to another device: importing it adds the lots its
+    cards were bought in, unless you already have them.
   - **CSV:** every card for spreadsheets and other collection apps, one row per
     purchase: name, set code and name, collector number, language,
     finish, condition, quantity, price paid, acquired date, tags, rarity, market
     price and Scryfall ID. Other apps can match the cards on the Scryfall ID, or on
     set code and collector number. Import reads it back.
 - **Export…** under the collection list's filters exports just the cards the list
-  shows, in its order, as CSV or as a valuation report (a page listing the cards by
+  shows, in its order, and just the copies it shows (filtered to foil, only the foil
+  copies), as CSV or as a valuation report (a page listing the cards by
   set with their value, to print or save as a PDF).
 - **Tags…:** every tag, with Rename and Delete (see Tags).
-- **Restore a backup…:** a copy of the collection is saved before every import,
-  bulk edit, bulk delete, restore, tag rename and tag delete, and when deleting all
-  data if you choose to keep one; the last 10 are
-  kept. The list shows when
-  each was taken, before what, and how many unique cards it holds. Restoring one
-  replaces the collection (the current one is backed up first, so you can go back).
+- **Restore a backup…:** a copy of the collection and its lots is saved before every
+  import, bulk edit, bulk delete, restore, tag rename, tag delete and deleted lot,
+  and when deleting all data if you choose to keep one; the last 10 are kept. The
+  list shows when each was taken, before what, and how many unique cards and lots it
+  holds. Restoring one replaces the collection and the lots (the current ones are
+  backed up first, so you can go back). A backup marked "no lots" was taken before
+  backups kept lots: restoring it leaves your lots as they are.
 - **Refresh prices now** and **Load/Update price history**, with when each last ran.
 
 ## Importing
@@ -486,8 +532,8 @@ defaults**.
 everything with it: lots, sales, lists, the watchlist, sealed product and price
 history, for every game. Your settings stay. It asks first: type **delete** to
 confirm. **Keep a backup of the collection** (ticked at first) backs the collection up
-before deleting, so **Tools → Restore a backup…** can bring it back; lots, sales,
-lists, the watchlist and sealed product aren't in the backup. Unticked, the backups
+before deleting, so **Tools → Restore a backup…** can bring it back with its lots;
+sales, lists, the watchlist and sealed product aren't in the backup. Unticked, the backups
 are deleted too, and nothing can be brought back.
 
 ## Where your data lives
@@ -508,6 +554,11 @@ By default the data folder is the app's own folder:
 
 The app's folder always holds this device's `settings.json`, the log file
 `tcgbinder.log` and caches.
+
+**Settings → Data** shows where the data folder is, with **Show in Finder** (on
+Windows **Show in Explorer**) to open it in your file browser. The desktop app has the
+button, and so does the web app when it runs on the same computer as the browser (the
+default); the iPhone app, and a web app reached from another device, don't.
 
 ### Choosing another folder
 

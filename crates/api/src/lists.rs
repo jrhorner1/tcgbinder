@@ -5,7 +5,9 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use tcgbinder_core::collection::{Card, round_cents};
+use std::cmp::Ordering;
+
+use tcgbinder_core::collection::{Card, compare_collector_number, is_any, round_cents, set_options};
 use tcgbinder_core::lists::{List, ListEntry};
 use tcgbinder_core::service::GameService;
 
@@ -106,25 +108,163 @@ impl Api {
         Reply::Json(json!(g.lists.all().iter().map(|l| totals(g, l, &collection)).collect::<Vec<_>>()))
     }
 
-    /// One list: its totals and entries (`index`, `card`, `quantity`, `any_printing`,
-    /// `finish`, `owned`, `price`).
+    /// One list: its totals (of the whole list), the `sets` its entries are from, and
+    /// the entries the filters match (`index` — its place in the list, which edits name
+    /// it by —, `card`, `quantity`, `any_printing`, `finish`, `owned`, `price`), sorted.
+    /// The filters are the collection's that apply to a card on a list: `q` (name, set
+    /// or number), `set`, `rarity`, `finish` (wanted in it, or in any finish the card
+    /// comes in), `language`, `card_type`, `price_min`/`price_max` (one copy's price),
+    /// `unpriced`, the game's `f.<name>` filters, and `owned=missing|complete`. `sort`:
+    /// `name`, `set`, `qty`, `owned`, `price`, `value` or `rarity` (`dir=desc` reverses);
+    /// none keeps the list's order.
     pub(crate) fn list(&self, g: &GameService, params: &HashMap<String, String>) -> Result {
         let collection = g.store.cards();
         drop_owned(g, &collection);
         let list = Self::find_list(g, params)?;
         let order = g.game.finishes();
-        let entries: Vec<Value> = list
+        let get = |k: &str| params.get(k).map_or("", |v| v.trim());
+        let number = |k: &str| -> Result<Option<f64>> {
+            match get(k) {
+                "" => Ok(None),
+                v => v
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|n| n.is_finite() && *n >= 0.0)
+                    .map(Some)
+                    .ok_or_else(|| bad(format!("{k} must be a number, such as 2.50"))),
+            }
+        };
+        let (price_min, price_max) = (number("price_min")?, number("price_max")?);
+        let owned_filter = match get("owned") {
+            "" | "any" => None,
+            "missing" => Some(false),
+            "complete" => Some(true),
+            _ => return Err(bad("owned must be missing or complete")),
+        };
+        let terms: Vec<String> = get("q").to_lowercase().split_whitespace().map(str::to_string).collect();
+        let card_type = get("card_type").to_lowercase();
+        let filters = g.game.filters();
+        struct Shown<'a> {
+            index: usize,
+            entry: &'a ListEntry,
+            owned: i64,
+            price: Option<f64>,
+        }
+        let mut shown: Vec<Shown> = list
             .entries
             .iter()
             .enumerate()
-            .map(|(i, e)| {
+            .map(|(index, entry)| Shown { index, entry, owned: entry.owned(&collection), price: entry.price(order) })
+            .filter(|s| {
+                let (e, c) = (s.entry, &s.entry.card);
+                let finish = get("finish");
+                (is_any(get("set")) || c.set.eq_ignore_ascii_case(get("set")))
+                    && (is_any(get("rarity")) || c.rarity.eq_ignore_ascii_case(get("rarity")))
+                    && (is_any(get("language")) || c.language.eq_ignore_ascii_case(get("language")))
+                    && (is_any(finish)
+                        || if e.finish.is_empty() {
+                            c.finishes.iter().any(|f| f.eq_ignore_ascii_case(finish))
+                        } else {
+                            e.finish.eq_ignore_ascii_case(finish)
+                        })
+                    && (card_type.is_empty() || c.type_line.to_lowercase().contains(&card_type))
+                    && (price_min.is_none() && price_max.is_none()
+                        || s.price.is_some_and(|p| price_min.is_none_or(|m| p >= m) && price_max.is_none_or(|m| p <= m)))
+                    && (get("unpriced") != "1" || s.price.is_none())
+                    && owned_filter.is_none_or(|want| (s.owned >= e.quantity) == want)
+                    && filters.iter().all(|f| params.get(&format!("f.{}", f.name)).is_none_or(|opt| is_any(opt) || (f.matches)(c, opt)))
+                    && terms.iter().all(|t| {
+                        [&c.name, &c.set, &c.set_name, &c.collector_number].iter().any(|field| field.to_lowercase().contains(t.as_str()))
+                    })
+            })
+            .collect();
+        let rarity = |r: &str| g.game.rarities().iter().position(|x| x.eq_ignore_ascii_case(r)).unwrap_or(usize::MAX);
+        let by_name = |a: &Shown, b: &Shown| a.entry.card.name.to_lowercase().cmp(&b.entry.card.name.to_lowercase());
+        let money = |a: Option<f64>, b: Option<f64>| a.unwrap_or(-1.0).partial_cmp(&b.unwrap_or(-1.0)).unwrap_or(Ordering::Equal);
+        let sort = get("sort");
+        if !matches!(sort, "" | "name" | "set" | "qty" | "owned" | "price" | "value" | "rarity") {
+            return Err(bad("sort must be name, set, qty, owned, price, value or rarity"));
+        }
+        if !sort.is_empty() {
+            let value = |s: &Shown| s.price.map(|p| p * s.entry.quantity as f64);
+            let desc = get("dir") == "desc";
+            shown.sort_by(|a, b| {
+                let (x, y) = (&a.entry.card, &b.entry.card);
+                let o = match sort {
+                    "set" => x.set.cmp(&y.set).then_with(|| compare_collector_number(&x.collector_number, &y.collector_number)),
+                    "qty" => a.entry.quantity.cmp(&b.entry.quantity),
+                    "owned" => a.owned.min(a.entry.quantity).cmp(&b.owned.min(b.entry.quantity)),
+                    "price" => money(a.price, b.price),
+                    "value" => money(value(a), value(b)),
+                    "rarity" => rarity(&x.rarity).cmp(&rarity(&y.rarity)),
+                    _ => Ordering::Equal,
+                }
+                .then_with(|| by_name(a, b));
+                if desc { o.reverse() } else { o }
+            });
+        }
+        let entries: Vec<Value> = shown
+            .iter()
+            .map(|s| {
+                let e = s.entry;
                 json!({
-                    "index": i, "card": view(&e.card), "quantity": e.quantity, "any_printing": e.any_printing, "finish": e.finish,
-                    "owned": e.owned(&collection), "price": e.price(order),
+                    "index": s.index, "card": view(&e.card), "quantity": e.quantity, "any_printing": e.any_printing, "finish": e.finish,
+                    "owned": s.owned, "price": s.price,
                 })
             })
             .collect();
-        Ok(Reply::Json(json!({ "list": totals(g, &list, &collection), "entries": entries })))
+        let cards: Vec<Card> = list.entries.iter().map(|e| e.card.clone()).collect();
+        let sets: Vec<Value> = set_options(&cards).into_iter().map(|o| json!({ "Code": o.code, "Label": o.label })).collect();
+        Ok(Reply::Json(json!({ "list": totals(g, &list, &collection), "sets": sets, "entries": entries })))
+    }
+
+    /// Changes entries by their `index` in the list (as `GET` gives it), in one save:
+    /// `{"changes": [{"index", "quantity", "any_printing", "finish", "remove"}]}`, each
+    /// field optional. Returns the list's totals.
+    pub(crate) fn update_list_entries(&self, g: &GameService, params: &HashMap<String, String>, body: &[u8]) -> Result {
+        #[derive(Deserialize)]
+        struct Change {
+            index: usize,
+            quantity: Option<i64>,
+            any_printing: Option<bool>,
+            finish: Option<String>,
+            #[serde(default)]
+            remove: bool,
+        }
+        #[derive(Deserialize)]
+        struct Req {
+            changes: Vec<Change>,
+        }
+        let list = Self::find_list(g, params)?;
+        let req: Req = decode(body)?;
+        let mut entries: Vec<Option<ListEntry>> = list.entries.iter().cloned().map(Some).collect();
+        for c in req.changes {
+            let Some(Some(e)) = entries.get_mut(c.index) else { return Err(bad(format!("the list has no entry {}", c.index))) };
+            if c.remove {
+                entries[c.index] = None;
+                continue;
+            }
+            if let Some(q) = c.quantity {
+                if q < 1 {
+                    return Err(bad("a quantity must be at least 1"));
+                }
+                e.quantity = q;
+            }
+            if let Some(any) = c.any_printing {
+                e.any_printing = any;
+            }
+            if let Some(f) = c.finish {
+                e.finish = f.trim().to_lowercase();
+            }
+        }
+        let list = g
+            .lists
+            .update(&list.id, |l| {
+                l.entries = entries.into_iter().flatten().collect();
+                Ok(l.clone())
+            })
+            .map_err(|e| bad(e.to_string()))?;
+        Ok(Reply::Json(totals(g, &list, &g.store.cards())))
     }
 
     /// Creates a list: `{"name", "notes", "remove_owned"}`.

@@ -28,6 +28,13 @@ pub use transfer::{JobProgress, Reporter};
 /// windows themselves).
 pub type OpenUrl = Arc<dyn Fn(&str) -> anyhow::Result<()> + Send + Sync>;
 
+/// Opens a folder in the system's file browser (Finder, Explorer).
+/// Shows the system's Save dialog, starting in a folder with a file name filled in, and
+/// returns the path chosen, `None` if cancelled.
+pub type ChooseSave = Arc<dyn Fn(&std::path::Path, &str) -> Option<PathBuf> + Send + Sync>;
+
+pub type OpenFolder = Arc<dyn Fn(&std::path::Path) -> anyhow::Result<()> + Send + Sync>;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -103,12 +110,15 @@ pub struct Api {
     read_image: Option<ReadImage>,
     /// Where exports are saved, for apps that can't download files.
     export_dir: Option<PathBuf>,
+    /// Asks where to save an export (the system's Save dialog), starting in `export_dir`.
+    choose_save: Option<ChooseSave>,
     /// Game ID → the import preview waiting to be committed (at most one per game).
     previews: Mutex<HashMap<String, PendingImport>>,
     folders: Option<Folders>,
     pick_folder: Option<PickFolder>,
     restart: Option<Restart>,
     open_url: Option<OpenUrl>,
+    open_folder: Option<OpenFolder>,
     /// The data folder was changed: until the app restarts, nothing may be saved.
     switched: AtomicBool,
 }
@@ -155,10 +165,18 @@ enum Reply {
 
 type Result<T = Reply> = std::result::Result<T, Error>;
 
-/// The UI's files.
+/// The UI's files: ui/dist, as `npm run build` makes it (see ui/package.json). Debug
+/// builds read them from disk, so a rebuilt UI shows on reload; release builds carry
+/// them inside. Without a built UI the app still builds, and says how to build it.
 #[derive(rust_embed::RustEmbed)]
-#[folder = "../../ui/"]
+#[folder = "../../ui/dist/"]
+#[allow_missing = true]
 struct Ui;
+
+/// The page shown when the UI hasn't been built.
+const UI_NOT_BUILT: &str = "<!doctype html><meta charset=utf-8><title>TCG Binder</title>\
+<p>The user interface hasn't been built. In the repository's <code>ui</code> folder, run \
+<code>npm ci</code> and then <code>npm run build</code>, and reload this page.</p>";
 
 /// The request's query parameters (the first value of each).
 fn query_params(req: &Request) -> HashMap<String, String> {
@@ -186,11 +204,13 @@ impl Api {
             busy: Mutex::default(),
             read_image: None,
             export_dir: None,
+            choose_save: None,
             previews: Mutex::default(),
             folders: None,
             pick_folder: None,
             restart: None,
             open_url: None,
+            open_folder: None,
             switched: AtomicBool::new(false),
         }
     }
@@ -204,6 +224,12 @@ impl Api {
     /// Saves exports to `dir` (POST .../export) for apps that can't download files.
     pub fn with_export_dir(mut self, dir: PathBuf) -> Api {
         self.export_dir = Some(dir);
+        self
+    }
+
+    /// Asks where to save each export (with `with_export_dir`'s folder to start in).
+    pub fn with_save_chooser(mut self, choose: ChooseSave) -> Api {
+        self.choose_save = Some(choose);
         self
     }
 
@@ -253,6 +279,7 @@ impl Api {
             ("GET", ["data-folder"]) => self.data_folder(),
             ("POST", ["data-folder"]) => self.change_data_folder(body),
             ("POST", ["data-folder", "pick"]) => self.pick_data_folder(),
+            ("POST", ["data-folder", "open"]) => self.open_data_folder(),
             ("POST", ["data-folder", "inspect"]) => self.inspect_data_folder(body),
             ("POST", ["data", "delete-all"]) => self.delete_all_data(body),
             // settings.rs
@@ -281,6 +308,8 @@ impl Api {
                     ("POST", ["bulk"]) => self.bulk_edit(g, body),
                     // catalog.rs
                     ("GET", ["search"]) => self.search(g, &q),
+                    ("GET", ["catalog"]) => self.catalog_card(g, q.get("id").map_or("", String::as_str)),
+                    ("GET", ["catalog", "sets"]) => self.catalog_sets(g),
                     ("GET", ["autocomplete"]) => {
                         let names = g.game.autocomplete(q.get("q").map_or("", String::as_str)).map_err(upstream)?;
                         Ok(Reply::Json(json!({ "names": names })))
@@ -301,6 +330,9 @@ impl Api {
                         None => Ok(self.list_lots(g)),
                     },
                     ("POST", ["lots"]) => self.create_lot(g, body),
+                    ("GET", ["lots", "lost"]) => Ok(self.lost_lots(g)),
+                    ("POST", ["lots", "lost"]) => self.settle_lost_lot(g, body),
+                    ("POST", ["lots", "list"]) => self.put_list_in_lot(g, q.get("id").map_or("", String::as_str), body),
                     ("POST", ["lots", "cards"]) => self.put_cards_in_lot(g, q.get("id").map_or("", String::as_str), body),
                     ("DELETE", ["lots", "cards"]) => self.remove_card_from_lot(g, q.get("id").map_or("", String::as_str), key),
                     ("PUT", ["lots"]) => self.update_lot(g, q.get("id").map_or("", String::as_str), body),
@@ -316,6 +348,7 @@ impl Api {
                     ("PUT", ["lists"]) => self.update_list(g, &q, body),
                     ("DELETE", ["lists"]) => self.delete_list(g, &q),
                     ("POST", ["lists", "entries"]) => self.add_list_entry(g, &q, body),
+                    ("PUT", ["lists", "entries"]) => self.update_list_entries(g, &q, body),
                     ("GET", ["lists", "export"]) => self.export_list(g, &q),
                     ("POST", ["lists", "import"]) => self.import_list(g, &q, body),
                     // watchlist.rs
@@ -390,6 +423,11 @@ fn static_file(path: &str) -> Response {
             .header(header::CONTENT_TYPE, mime_guess::from_path(name).first_or_octet_stream().as_ref())
             .header(header::CACHE_CONTROL, "no-cache")
             .body(f.data.into_owned())
+            .unwrap(),
+        None if name == "index.html" => http::Response::builder()
+            .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+            .header(header::CACHE_CONTROL, "no-cache")
+            .body(UI_NOT_BUILT.as_bytes().to_vec())
             .unwrap(),
         None => http::Response::builder().status(StatusCode::NOT_FOUND).body(b"not found".to_vec()).unwrap(),
     }

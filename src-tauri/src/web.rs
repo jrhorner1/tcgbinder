@@ -28,7 +28,12 @@ pub fn serve(opts: &Options, listen: &str, open_browser: bool) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let api = Arc::new(app.api(Client::Web, None));
+    let api = app.api(Client::Web, None);
+    // On this computer only (the default), the browser is here too, so Settings can show
+    // the data folder in its file browser.
+    let local_only = listen.parse::<std::net::SocketAddr>().is_ok_and(|a| a.ip().is_loopback()) || listen.starts_with("localhost:");
+    let api = if local_only { api.with_folder_opener(Arc::new(open_folder)) } else { api };
+    let api = Arc::new(api);
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(r) => r,
         Err(e) => {
@@ -97,6 +102,19 @@ async fn handle(State((api, loopback)): State<(Arc<Api>, bool)>, req: Request) -
 
 fn into_axum(resp: tcgbinder_api::Response) -> Response {
     resp.map(Body::from)
+}
+
+/// Shows `path` (a folder) in the system's file browser.
+fn open_folder(path: &std::path::Path) -> anyhow::Result<()> {
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(windows) {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(program).arg(path).spawn()?;
+    Ok(())
 }
 
 /// Opens `url` in the default browser.

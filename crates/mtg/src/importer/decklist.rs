@@ -30,6 +30,8 @@ const HEADINGS: &[&str] = &[
 static COUNT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d+)\s*[xX]?\s+(.+)$").unwrap());
 /// A foil or etched marker at the end: "*F*", "*E*", "(foil)", "(etched)".
 static FINISH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\s*(\*f\*|\*e\*|\(foil\)|\(etched\))$").unwrap());
+/// A bare finish word after the set (and number): "[M19] F", "(M11) 149 foil".
+static BARE_FINISH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(.*[\)\]](?:\s+[A-Za-z0-9★†-]+)?)\s+(f|e|foil|etched)$").unwrap());
 /// "(M11) 149" or "(M11)" at the end.
 static PAREN_SET: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s*\(([A-Za-z0-9]{2,8})\)(?:\s+([A-Za-z0-9★†-]+))?$").unwrap());
 /// "[M11] 149" or "[M11]" at the end.
@@ -67,6 +69,10 @@ pub fn parse_decklist(text: &str) -> ParsedCsv {
         if let Some(m) = FINISH.find(&rest) {
             finish = if m.as_str().to_lowercase().contains('e') && !m.as_str().to_lowercase().contains("foil") { "etched" } else { "foil" };
             rest.truncate(m.start());
+        } else if let Some(c) = BARE_FINISH.captures(&rest) {
+            // Only after a set, so a name ending in "E" or "F" stays whole.
+            finish = if c[2].to_lowercase().starts_with('e') { "etched" } else { "foil" };
+            rest = c[1].to_string();
         }
         let (mut set_code, mut number) = (String::new(), String::new());
         if let Some(c) = PAREN_SET.captures(&rest) {
@@ -122,6 +128,16 @@ mod tests {
         assert_eq!(one("1 Lightning Bolt (2X2) 117 *E*"), bolt(1, "2x2", "117", "etched"));
         assert_eq!(one("Lightning Bolt"), bolt(1, "", "", "nonfoil"));
         assert_eq!(one("5 Plains [M19] 261"), (5, "Plains".to_string(), "m19".to_string(), "261".to_string(), "nonfoil".to_string()));
+        assert_eq!(one("2 Lightning Bolt [M11] F"), bolt(2, "m11", "", "foil"));
+        assert_eq!(one("2 Lightning Bolt (M11) 149 F"), bolt(2, "m11", "149", "foil"));
+        assert_eq!(one("1 Lightning Bolt (2X2) 117 e"), bolt(1, "2x2", "117", "etched"));
+        assert_eq!(one("1 Lightning Bolt [M11] foil"), bolt(1, "m11", "", "foil"));
+        assert_eq!(one("1 Lightning Bolt (M11) 149"), bolt(1, "m11", "149", "nonfoil"), "a number alone isn't a finish");
+        assert_eq!(
+            one("1 Lightning Bolt F"),
+            (1, "Lightning Bolt F".into(), "".into(), "".into(), "nonfoil".into()),
+            "no set: part of the name"
+        );
         assert_eq!(one("1 Fire // Ice (MH2) 290"), (1, "Fire // Ice".into(), "mh2".into(), "290".into(), "nonfoil".into()));
     }
 

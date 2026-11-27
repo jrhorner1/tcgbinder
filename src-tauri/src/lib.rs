@@ -296,14 +296,39 @@ fn alert_notifier(app: tauri::AppHandle) -> tcgbinder_core::service::AlertHook {
     })
 }
 
-/// The desktop app's folder picker and restart, for Settings → Data.
+/// The desktop app's folder picker, opening the data folder and restart (for Settings →
+/// Data), and the Save dialog for exports.
 #[cfg(desktop)]
 fn desktop_hooks(api: Api, app: tauri::AppHandle) -> Api {
     use tauri_plugin_dialog::DialogExt;
+    use tauri_plugin_opener::OpenerExt;
     let picker = app.clone();
+    let opener = app.clone();
+    let saver = app.clone();
     api.with_folder_picker(Arc::new(move || {
         let chosen = picker.dialog().file().set_title("Choose a folder for your collection").blocking_pick_folder()?;
         chosen.into_path().ok()
+    }))
+    .with_folder_opener(Arc::new(move |path| {
+        opener.opener().open_path(path.to_string_lossy(), None::<&str>).map_err(|e| anyhow::anyhow!("{e}"))
+    }))
+    .with_save_chooser(Arc::new(move |dir, name| {
+        let ext = std::path::Path::new(name).extension().and_then(|e| e.to_str()).unwrap_or("").to_string();
+        let kind = match ext.as_str() {
+            "csv" => "CSV",
+            "html" => "Web page",
+            _ => "TCG Binder collection",
+        };
+        saver
+            .dialog()
+            .file()
+            .set_title("Save the export")
+            .set_directory(dir)
+            .set_file_name(name)
+            .add_filter(kind, &[&ext])
+            .blocking_save_file()?
+            .into_path()
+            .ok()
     }))
     .with_restart(Arc::new(move || app.restart()))
 }

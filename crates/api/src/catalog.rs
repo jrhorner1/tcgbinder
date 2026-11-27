@@ -1,7 +1,7 @@
 //! The game's catalog: searching it to add cards, and scanning a card from a photo.
 
-use crate::views::views;
-use crate::{Api, Error, Reply, Result, bad, upstream};
+use crate::views::{view, views};
+use crate::{Api, Error, Reply, Result, bad, not_found, upstream};
 use http::StatusCode;
 use serde_json::json;
 use std::collections::HashMap;
@@ -17,9 +17,36 @@ fn owned(g: &GameService, cards: &[Card]) -> Vec<i64> {
 impl Api {
     pub(crate) fn search(&self, g: &GameService, params: &HashMap<String, String>) -> Result {
         let get = |k: &str| params.get(k).map_or("", String::as_str);
-        let page = g.game.search(get("text"), get("set"), get("next")).map_err(upstream)?;
+        // rules=1 searches the rules text instead of names, one result per card.
+        let page = if get("rules") == "1" {
+            g.game.search_rules(get("text"), get("next"))
+        } else {
+            g.game.search(get("text"), get("set"), get("next"))
+        }
+        .map_err(upstream)?;
         // Cards already owned say so.
         Ok(Reply::Json(json!({ "cards": views(&page.cards), "owned": owned(g, &page.cards), "total": page.total, "next": page.next_page })))
+    }
+
+    /// A catalog printing you may not own, by its ID (a card's key): the card, the
+    /// game's details about it, its catalog link, and the other printings you own.
+    pub(crate) fn catalog_card(&self, g: &GameService, id: &str) -> Result {
+        let c = g.game.card(id).map_err(upstream)?.ok_or_else(|| not_found("no such card in the catalog"))?;
+        let mut others = g.store.cards_where(|o| o.name == c.name && o.id != c.id);
+        others.sort_by(|a, b| b.released_at.cmp(&a.released_at));
+        let (label, url) = g.game.card_link(&c).unwrap_or_default();
+        Ok(Reply::Json(json!({
+            "card": view(&c), "details": g.game.details(&c), "link": { "label": label, "url": url }, "others": views(&others),
+        })))
+    }
+
+    /// Every set in the catalog, newest first: what the Add dialog's set menu offers.
+    pub(crate) fn catalog_sets(&self, g: &GameService) -> Result {
+        let sets = g.sets().map_err(upstream)?;
+        let mut all: Vec<_> = sets.values().collect();
+        all.sort_by(|a, b| b.released_at.cmp(&a.released_at).then_with(|| a.name.cmp(&b.name)));
+        let all: Vec<_> = all.iter().map(|s| json!({ "code": s.code, "name": s.name, "released": s.released_at })).collect();
+        Ok(Reply::Json(json!({ "sets": all })))
     }
 
     pub(crate) fn scanning(&self, g: &GameService) -> bool {

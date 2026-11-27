@@ -67,6 +67,13 @@ impl Api {
         self
     }
 
+    /// Turns on "Open in Finder" (or Explorer): showing the data folder in the system's
+    /// file browser. Only where that runs on the computer the app's window is on.
+    pub fn with_folder_opener(mut self, open: crate::OpenFolder) -> Api {
+        self.open_folder = Some(open);
+        self
+    }
+
     /// Lets the app restart itself after the data folder changes.
     pub fn with_restart(mut self, restart: Restart) -> Api {
         self.restart = Some(restart);
@@ -98,7 +105,7 @@ impl Api {
         Ok(Reply::Json(json!({
             "path": f.data.display().to_string(), "isDefault": f.data == f.local, "fixed": f.fixed,
             "defaultPath": f.local.display().to_string(), "firstRun": f.first_run, "conflicts": conflicts,
-            "canPick": self.pick_folder.is_some(), "restartsItself": self.restart.is_some(),
+            "canPick": self.pick_folder.is_some(), "canOpen": self.open_folder.is_some(), "restartsItself": self.restart.is_some(),
         })))
     }
 
@@ -109,6 +116,19 @@ impl Api {
             message: "there is no folder picker here; type the folder's path instead".into(),
         })?;
         Ok(Reply::Json(json!({ "path": pick().map(|p| p.display().to_string()) })))
+    }
+
+    /// Shows the data folder in the system's file browser. Only the data folder: the
+    /// request names no path, so nothing else can be opened this way.
+    pub(crate) fn open_data_folder(&self) -> Result {
+        let f = self.folders()?;
+        let open = self
+            .open_folder
+            .as_ref()
+            .ok_or_else(|| Error { status: StatusCode::NOT_IMPLEMENTED, message: "the data folder can't be opened from here".into() })?;
+        open(&f.data).map_err(|e| crate::internal(e.context("opening the data folder")))?;
+        tracing::info!("data folder opened in the file browser");
+        Ok(Reply::Json(json!({ "opened": true })))
     }
 
     /// What a folder holds.
@@ -144,7 +164,7 @@ impl Api {
         let target = datafolder::check_target(&f.data, &target).map_err(|e| bad(e.to_string()))?;
         if mode == Mode::Move {
             for g in &self.games {
-                g.store.backup("move").map_err(internal)?;
+                g.backup("move").map_err(internal)?;
             }
         }
         datafolder::transfer(&f.data, &target, &self.game_ids(), mode).map_err(|e| bad(format!("{e:#}")))?;
@@ -187,7 +207,7 @@ impl Api {
         if !game.is_empty() && game != g.game.id() {
             return Err(bad(format!("{} is a {game:?} collection", req.name)));
         }
-        let backup = g.store.backup("merge").map_err(internal)?;
+        let backup = g.backup("merge").map_err(internal)?;
         let changed = g.store.merge_copy(cards).map_err(internal)?;
         std::fs::remove_file(&path).map_err(|e| internal(e.into()))?;
         tracing::info!(game = g.game.id(), copy = req.name, changed, "conflict copy merged");

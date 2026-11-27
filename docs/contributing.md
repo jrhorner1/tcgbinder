@@ -9,8 +9,8 @@ JSON API, see [web-api.md](web-api.md).
 
 ## 1. Run it
 
-You need Rust (install it with [rustup](https://rustup.rs)) and Node.js (any recent
-version; it only checks the UI's JavaScript). On Linux, also Tauri's
+You need Rust (install it with [rustup](https://rustup.rs)) and Node.js (a recent
+version, to build the UI). On Linux, also Tauri's
 [system libraries](https://tauri.app/start/prerequisites/).
 
 Work against a **scratch folder**: an empty folder that holds a throwaway collection,
@@ -21,6 +21,10 @@ folder for the run keeps those apart too.
 
 ```bash
 mkdir -p /tmp/tcgb/data /tmp/tcgb/home && echo '{"auto_price_history":false}' > /tmp/tcgb/data/settings.json
+```
+
+```bash
+(cd ui && npm ci && npm run build)
 ```
 
 ```bash
@@ -44,7 +48,7 @@ Run the tests:
 cargo test --workspace
 ```
 
-Run the checks CI runs (formatting, the linter, the UI's JavaScript):
+Run the checks CI runs (formatting, the linter, the UI's types):
 
 ```bash
 cargo fmt --all --check
@@ -55,19 +59,26 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
 ```bash
-node scripts/check-ui.mjs
+(cd ui && npm run check)
 ```
 
 `cargo fmt --all` (without `--check`) formats the code for you.
 
-Debug builds read the `ui/` folder from disk, so after changing the UI you only need
-to reload the page. After changing Rust code, stop the app, build it again and start
-it again.
+Working on the UI, run Vite beside the app: it reloads the page as you save a file and
+passes `/api` on to the app (started as above, on port 8080 by default):
+
+```bash
+(cd ui && npm run dev)
+```
+
+and open <http://localhost:5173>. (Debug builds also read `ui/dist` from disk, so
+after `npm run build` a reload of the app shows the new UI.) After changing Rust code,
+stop the app, build it again and start it again.
 
 ## 2. The words
 
-The code uses the same words as the screens. Each has a Rust type (or a JavaScript
-function) that holds it.
+The code uses the same words as the screens. Each has a Rust type (or a TypeScript
+type) that holds it.
 
 - **Game:** a trading card game. Magic is the only one so far. A game supplies the
   catalog, prices and import (`core::game::Game`; Magic's is `mtg::Magic`). Each game
@@ -110,17 +121,18 @@ function) that holds it.
 
 | Folder or file | What it is for | Open it when |
 |---|---|---|
-| `ui/index.html`, `ui/app.css` | The page's frame (sidebar, tab bar) and all styling | You change the layout, a colour, the sidebar |
-| `ui/js/main.js` | Start-up and the router (`route`): which page draws for which address | You add a page |
-| `ui/js/state.js` | The shared `state` object | You need something every page can see |
-| `ui/js/nav.js` | `go()` to change page, `route` to redraw | Rarely |
-| `ui/js/dom.js` | `h()` and `fill()` to build elements, the status line, dialogs | You need a new kind of dialog |
-| `ui/js/api.js` | `api()` and `gameAPI()` to call the server, undo, jobs, loading filters and lots | You call the API in a new way |
-| `ui/js/format.js` | Money, plurals, dates, names of finishes and settings choices | You format something new |
-| `ui/js/charts.js` | The line chart, bar rows and number tiles | You change a chart |
-| `ui/js/cards.js` | Pieces several pages share: card rows, tags, the add-a-card form, add to a list, watch | A change shows on more than one page |
-| `ui/js/pages/*.js` | One page each (home, collection, card, bulk, scan, search, lists, watchlist, sealed, earnings, tags, stats, tools, settings), plus `add.js` (the Add dialog: a card, or a pack, bundle or lot), `copies.js` (the collection's line items and their rows of copies), `missing.js` (a set's missing cards, and a list of them) and `lots.js` (a lot's panel, editing and finishing a lot) | You change what one page shows or does |
-| `scripts/check-ui.mjs` | Checks the UI's JavaScript | It fails in CI |
+| `ui/src/app.css` | The shared styles only: colours, buttons and fields, and the few pieces many pages use (`.card-box`, `.tiles`, `.form`, `.list`, `.rows`, `.list-entry`, tag chips, dialogs). Everything else is styled in its own component's `<style>`; the collection table's rows and cells share `ui/src/collection/table.css` | You change a colour, or something every page shows |
+| `ui/src/App.svelte` | Start-up, the frame (sidebar, search, tab bar), which page shows for which address | You add a page |
+| `ui/src/lib/app.svelte.ts` | `app` (the shared state), `api()` and `gameAPI()` to call the server, the status line and Undo, long jobs, settings | You call the API in a new way, or need something every page can see |
+| `ui/src/lib/router.svelte.ts` | `route` (the address) and `go()` to change page | Rarely |
+| `ui/src/lib/dialogs.svelte.ts` | `openDialog`, `askDialog`, `confirmDialog`, `askName` | You need a new kind of dialog |
+| `ui/src/lib/types.ts` | What the API sends: `Card`, `Purchase`, `Lot` and the rest | The API sends a new field the UI uses |
+| `ui/src/lib/format.ts`, `tags.ts`, `cards.ts`, `lots.ts` | Money, plurals, dates and names; tag rules; adding a card; finishing a lot | You format something new |
+| `ui/src/components/` | Pieces several pages use: `Modal` (every dialog's frame), `Tile`, `Bars`, `LineChart`, `TagEditor`, `ImportPreview`, `GlobalSearch` | A change shows on more than one page |
+| `ui/src/pages/` | One page each: Home, Collection, Search, Lists, Missing (a set's missing cards), Tools, Import, Backups, Tags, Stats, Sealed, Watchlist, Settings, Scan | You change what one page shows or does |
+| `ui/src/collection/` | The collection table: `Table.svelte`, `CardRow.svelte`, the cells, `Filters.svelte`, the lot and set panels, and `edits.svelte.ts` (the rows of copies, Split, saving and Undo) | You change the table or how it saves |
+| `ui/src/card/` | A card's page (`CardPage.svelte`), its printings, watching its price, adding it to a list | You change a card's page |
+| `ui/src/add/` | The Add dialog: a card, or a pack, bundle or lot and then its cards | You change adding cards |
 | `crates/api/src/lib.rs` | The `Api` type, `handle` and `route` (every endpoint, grouped by file) | You add an endpoint |
 | `crates/api/src/*.rs` | Handlers for each part of the API: `home`, `collection`, `catalog`, `tags`, `transfer` (import, export, backups, jobs), `settings`, `lots`, `lists`, `sales`, `watchlist`, `sealed`, `folders`, `report` (the printable valuation); `views.rs` shapes cards in answers | You change what an endpoint does |
 | `crates/api/src/tests/` | API tests: `mod.rs` sets up an `Api` with a fake Scryfall; one file per feature | You add or change an endpoint |
@@ -145,17 +157,19 @@ function) that holds it.
 
 ## 4. How a click becomes a saved change
 
-Here is what happens when you change a purchase's quantity on a card's page and
-press **Save changes**.
+Here is what happens when you change a group of copies' condition in the collection
+table.
 
-1. **The page.** `renderCard` in `ui/js/pages/card.js` draws the card's purchases as
-   rows of inputs. Its `save` function reads every row (finish, condition, quantity,
-   price paid, date, lot, tags) into a `purchases` list. (The collection's rows,
-   in `ui/js/pages/copies.js`, save the same way: `purchasesOf` builds the list.)
-2. **The request.** `save` calls
+1. **The page.** In the collection table (`ui/src/collection/`), each copy cell is a
+   small component (`ChoiceCell`, `TextCell`, `TagsCell`). Changing one calls the
+   row's `edit` action, which `Table.svelte` provides: it works out which groups of
+   copies change (one group on a copy's row; every group shown on a card's row; every
+   ticked card's when several are ticked) and calls `saveEdits` in `edits.svelte.ts`.
+2. **The request.** `saveEdits` builds each card's whole list of purchases
+   (`purchasesOf`) with the change applied, and calls
    `api("PUT", gameAPI("/card?key=<printing ID>"), { purchases })`. `api()` in
-   `ui/js/api.js` sends it with the `X-TCGBinder-Client` header, which every change
-   needs.
+   `ui/src/lib/app.svelte.ts` sends it with the `X-TCGBinder-Client` header, which
+   every change needs.
 3. **The route.** On the desktop and iPhone the request goes through the `tcgb://`
    scheme; with `--web` through HTTP. Either way it reaches `Api::handle` in
    `crates/api/src/lib.rs`, which calls `route`. `route` matches `("PUT", ["card"])`
@@ -169,8 +183,10 @@ press **Save changes**.
    any change another device made to `collection.json`, applies this change, and
    writes the file atomically (a temporary file, renamed over the old one). The change
    is on disk before the answer goes back.
-7. **The answer.** `update_card` answers `{"key", "merged", "deleted"}`; `save` shows
-   "Saved Shock" with `status()` and redraws the card.
+7. **The answer.** `update_card` answers `{"key", "merged", "deleted"}`. `saveEdits`
+   fetches the card as saved (`GET /card`), the table shows it in place of the old
+   one, and the status line says what changed, with Undo (which puts the purchases
+   back as they were).
 
 ## 5. Recipes
 
@@ -198,11 +214,11 @@ Follow the `acquired_date` field.
    `crates/core/src/collection/csv_export.rs`; `Row`, `Field`, `HEADER_ALIASES` and
    `parse_csv` in `crates/mtg/src/importer/formats.rs`; and the `Purchase` built in
    `crates/mtg/src/lib.rs` (`Magic::import`).
-7. The UI: in `ui/js/pages/copies.js`, the row's display (`rowEl`), the signature
-   that groups copies (`sig`) and the purchases saved (`purchasesOf`); in
-   `ui/js/pages/card.js`, an input in `renderCard`'s purchase rows and the field in
-   `save`'s `purchases.push(...)`; and the Add dialog's card fields
-   (`ui/js/pages/add.js`) and the sell requests if they need it.
+7. The UI: the field in `Purchase` (`ui/src/lib/types.ts`); in
+   `ui/src/collection/edits.svelte.ts`, `Fields`, the signature that groups copies
+   (`sig`) and the purchases saved (`purchasesOf`); a column in `columns.svelte.ts`
+   and its cell in `CardRow.svelte` (a `ChoiceCell` or `TextCell`); and the Add
+   dialog (`ui/src/add/`) and selling (`SellDialog.svelte`) if they need it.
 8. Docs: the purchase fields in `docs/web-api.md`, and `docs/user-guide.md`.
 9. Tests: a core test like `copies::tests` (what is stored), and an API test like
    `edit_and_delete_card` in `crates/api/src/tests/collection.rs`.
@@ -217,8 +233,8 @@ Follow the `condition` filter.
    `Query { ... }` it builds). A bad value is a `bad(...)` error (a 400).
 3. If the filter offers choices, send them from `Api::filters` in
    `crates/api/src/home.rs` (as `conditions` is).
-4. `ui/js/pages/collection.js`: add the parameter's name to `MORE_KEYS`, a control in
-   `moreFilters`, and its label in `filterChip`.
+4. `ui/src/collection/Filters.svelte`: add the parameter's name to `MORE_KEYS`, a
+   control in the More filters panel, and its label in `chipLabel`.
 5. Docs: `GET /cards` in `docs/web-api.md`, and the Collection section of
    `docs/user-guide.md`.
 6. Tests: a case in `more_filters` in `filter.rs`, and an API case in
@@ -230,8 +246,9 @@ Follow `SortKey::Rarity`.
 
 1. `crates/core/src/collection/filter.rs`: add a variant to `SortKey`, its name in
    `SortKey::ALL`, and its comparison in `sort_cards`.
-2. `ui/js/pages/collection.js`: add it to `SORTS` (its menu label), and to
-   `ASCENDING_FIRST` if it should start A to Z rather than largest first.
+2. `ui/src/pages/Collection.svelte`: add it to `SORTS` (its menu label), and to
+   `ASCENDING_FIRST` if it should start A to Z rather than largest first. If a column
+   should sort by it, give the column its `sort` in `ui/src/collection/columns.svelte.ts`.
 3. Docs: the `sort` list under `GET /cards` in `docs/web-api.md`.
 4. Tests: the `cases` list in `every_sort_key_both_ways` in `filter.rs`, which must
    name every key.
@@ -245,12 +262,14 @@ Follow `default_condition` (a choice) or `confirm_delete` (on or off).
    to `fields_mut` (its array grows by one), so bad values are refused and reset.
    `PUT /api/settings` (`put_settings` in `crates/api/src/settings.rs`) then saves it
    with no change there.
-2. `ui/js/format.js`: for a choice, the label of each value in `choiceNames`.
-3. `ui/js/pages/settings.js`: a `row(...)` with a `menu(...)` or `check(...)` in
-   `viewSettings`.
-4. Where it takes effect: read `state.settings.<name>` in the UI (as `ask` in
-   `ui/js/dom.js` reads `confirm_delete`), or `self.settings.get().<name>` in an API
-   handler. A display setting is applied in `applySettings` (`ui/js/dom.js`).
+2. `ui/src/lib/types.ts`: the field in `Settings`. For a choice,
+   `ui/src/lib/format.ts`: the label of each value in `choiceNames`.
+3. `ui/src/pages/Settings.svelte`: a label and a `menu(...)` or `check(...)` in its
+   section.
+4. Where it takes effect: read `app.settings.<name>` in the UI (as `ask` in
+   `ui/src/lib/dialogs.svelte.ts` reads `confirm_delete`), or
+   `self.settings.get().<name>` in an API handler. A display setting is applied in
+   `applySettings` (`ui/src/lib/app.svelte.ts`).
 5. Docs: the Settings section of `docs/user-guide.md`.
 6. Tests: `partial_changes` and `bad_values_and_files` in `settings.rs`, and
    `settings_api` in `crates/api/src/tests/settings.rs`.
@@ -275,23 +294,22 @@ Follow `GET /api/games/{game}/tags`.
 
 Follow the Tags page.
 
-1. Make `ui/js/pages/<page>.js`. Start it with a comment of two or three lines saying
-   what the page is for. Export `async function view<Page>(params)`, which fills
-   `$("#main")` with `fill(...)` and `h(...)`. Import what it uses from the shared
-   files (`../dom.js`, `../api.js`, and so on).
-2. `ui/js/main.js`: import the view and add a line to `route`'s chain:
-   `else if (view === "<page>") await view<Page>(qs || "");`. If the page belongs
-   under Tools, add its name to the `active` list in `route` so Tools stays
-   highlighted.
-3. A way to reach it: a link with `data-view="<page>"` in the sidebar in
-   `ui/index.html`, or a `toolRow` in `viewTools` (`ui/js/pages/tools.js`).
-4. Run `node scripts/check-ui.mjs`, then look at the page at a desktop width and a
-   phone width.
+1. Make `ui/src/pages/<Page>.svelte`. Start it with a comment of two or three lines
+   saying what the page is for. Load its data in a `$derived` promise that reads
+   `app.reloads` (so it loads again after a change elsewhere), and show it with
+   `{#await}`, as `Tags.svelte` does. If it needs the address's parameters, take
+   `params` as a prop.
+2. `ui/src/App.svelte`: import it and add it to `PAGES` under its address. If it
+   belongs under Tools, add it to `UNDER` so Tools stays highlighted.
+3. A way to reach it: a link in `NAV` in `App.svelte` (the sidebar), or a `ToolRow` on
+   the Tools page (`ui/src/pages/Tools.svelte`).
+4. Run `npm run check` in `ui/`, then look at the page at a desktop width and a phone
+   width.
 
-Pages import from the shared files. A page may import a dialog or panel another
-page owns (the collection uses the Add dialog from `pages/add.js`), but never another page's
-view: only `main.js` imports those. If two pages need the same small function, it
-belongs in a shared file.
+Pages use the shared files (`lib/`) and components (`components/`). A page may open
+a dialog another part owns (the collection opens the Add dialog with `openAdd` from
+`add/add.ts`), but pages don't import each other. If two pages need the same small
+function, it belongs in `lib/`.
 
 ### Add a kind of record with its own file
 
@@ -310,8 +328,8 @@ Follow sealed product (`crates/core/src/sealed.rs`).
 3. `crates/core/src/datadir.rs`: add its `FILE` to `DATA_FILES`, so moving the data
    folder takes it along and its conflict copies are found.
 4. `crates/api/src/folders.rs`: add it to `copy_kind` and `merge_record_copy`, so a
-   conflict copy can be merged. In `ui/js/pages/settings.js`, `dataNotices` has the
-   words for each kind of conflict copy.
+   conflict copy can be merged. In `ui/src/components/DataNotices.svelte`, `ABOUT`
+   has the words for each kind of conflict copy.
 5. The API (a new `crates/api/src/<thing>.rs`, see "Add an API endpoint") and a page
    (see "Add a page to the UI").
 6. Docs: the data files in `docs/architecture.md`, and `docs/web-api.md`.
@@ -331,13 +349,14 @@ Follow Dragon Shield.
    export and made-up rows (never real collection data).
 3. Docs: the list of apps in `docs/user-guide.md` (Import), the README, the importer's
    module comment (`crates/mtg/src/importer/mod.rs`) and the Import page's text
-   (`viewImport` in `ui/js/pages/tools.js`).
+   (`ui/src/pages/Import.svelte`).
 
 ## 6. Rules that aren't obvious
 
-- **UI text goes through `h()` and `fill()`, never `innerHTML`.** Card names, lot names
-  and tags come from other apps' files and from Scryfall. Inserted as text, they
-  can't add markup or scripts to the page.
+- **UI text goes in as text, never `{@html}`.** Card names, lot names and tags come
+  from other apps' files and from Scryfall. Svelte puts `{name}` in as text, so they
+  can't add markup or scripts to the page. (`Icon.svelte`'s fixed drawings are the
+  only `{@html}`.)
 - **Stored formats may change freely until the first public release.** Until then
   there are no users, so a changed file format needs no migration code: start from an
   empty data folder and import again. After the first release, every change to a
@@ -379,7 +398,7 @@ cargo test --workspace --locked
 ```
 
 ```bash
-node scripts/check-ui.mjs
+(cd ui && npm run check && npm run build)
 ```
 
 If you changed the UI, look at what you changed in the browser at a desktop width and
@@ -387,5 +406,5 @@ at a phone width (the browser's developer tools can show a phone-sized window), 
 check the browser's console shows no errors.
 
 CI (`.github/workflows/ci.yml`) runs the same checks on every pull request: the
-formatting check, clippy, the UI check, the tests on Linux, macOS and Windows, a
+formatting check, clippy, the UI's check and build, the tests on Linux, macOS and Windows, a
 build of the app, and a check that the iPhone app compiles.

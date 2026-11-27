@@ -66,7 +66,8 @@ impl FakeServer {
 }
 
 /// A fake Scryfall for tests of the whole app: /cards/search answers "bolt" with five
-/// printings in pages of three (anything else matches nothing, as a 404), "e:<set>"
+/// printings in pages of three (anything else matches nothing, as a 404), `o:"<text>"`
+/// (rules text, one result per card) with Lightning Bolt when its text has it, "e:<set>"
 /// lists that set's cards (Lightning Bolt 1, Opt 60, Shock 156), and "oracleid:..."
 /// (every printing of a card) is treated as Lightning Bolt. /cards/collection finds
 /// those three by set code and collector number, in any set, and by ID or name alone
@@ -134,6 +135,25 @@ pub fn search_server() -> (crate::scryfall::Client, FakeServer) {
             return Reply::not_found();
         }
         let mut q = req.query.get("q").cloned().unwrap_or_default();
+        if let Some(text) = q.strip_prefix("o:\"").and_then(|t| t.strip_suffix('"')) {
+            const RULES: &str = "Lightning Bolt deals 3 damage to any target.";
+            if req.query.get("unique").map(String::as_str) != Some("cards") || !RULES.to_lowercase().contains(&text.to_lowercase()) {
+                return Reply::not_found();
+            }
+            let card = Card {
+                id: "a25-0".into(),
+                name: "Lightning Bolt".into(),
+                set: "a25".into(),
+                set_name: "A25 Edition".into(),
+                collector_number: "141".into(),
+                rarity: "uncommon".into(),
+                type_line: "Instant".into(),
+                oracle_text: RULES.into(),
+                finishes: vec!["nonfoil".into()],
+                ..Default::default()
+            };
+            return Reply::json(&SearchResponse { total_cards: 1, data: vec![card], ..Default::default() });
+        }
         if let Some(code) = q.strip_prefix("e:") {
             let data = set_cards(code);
             return Reply::json(&SearchResponse { total_cards: data.len(), data, ..Default::default() });

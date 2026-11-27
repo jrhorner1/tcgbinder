@@ -227,3 +227,159 @@ fn editing_a_card_reprices_its_lots() {
     assert_eq!(call(&f.api, "DELETE", &format!("/api/games/mtg/card?key={OPT}"), None).0, 200);
     assert_eq!(get(&f.api, "/api/games/mtg/lots")[0]["entered"].as_i64(), Some(0));
 }
+
+#[test]
+fn a_list_of_owned_cards_into_a_lot() {
+    let f = fixture();
+    let new_lot = |name: &str| {
+        let (status, lot) = call(
+            &f.api,
+            "POST",
+            "/api/games/mtg/lots",
+            Some(
+                json!({"name": name, "total_paid": 20, "acquired_date": "2018-08-01", "count": {"kind": "known", "cards": 125}, "split": "even"}),
+            ),
+        );
+        assert_eq!(status, 200, "{lot}");
+        lot["id"].as_str().unwrap().to_string()
+    };
+    // One of the two Shocks is in another lot already.
+    let other = new_lot("Other box");
+    let (status, _) =
+        call(&f.api, "POST", &format!("/api/games/mtg/lots/cards?id={other}"), Some(json!({"cards": [{"key": SHOCK, "quantity": 1}]})));
+    assert_eq!(status, 200);
+
+    let toolkit = new_lot("Deck builder's toolkit");
+    let path = format!("/api/games/mtg/lots/list?id={toolkit}");
+    let list = "Deck\n2 Shock\n1 Opt *F*\n1 Opt\n3 Lightning Bolt (M19) 1\n";
+    let (status, v) = call(&f.api, "POST", &path, Some(json!({ "list": list })));
+    assert_eq!(status, 200, "{v}");
+    let lines = v["lines"].as_array().unwrap();
+    assert_eq!(lines.len(), 4, "the heading is skipped");
+    let found = |i: usize| lines[i]["found"].as_array().unwrap().iter().map(|x| x["quantity"].as_i64().unwrap()).sum::<i64>();
+    assert_eq!(
+        (found(0), lines[0]["inLots"].as_i64(), lines[0]["missing"].as_str()),
+        (1, Some(1), Some("1 Shock")),
+        "the lot's Shock is left"
+    );
+    assert_eq!(found(1), 1, "the foil Opt");
+    assert_eq!((found(2), lines[2]["missing"].as_str()), (0, Some("1 Opt")), "no nonfoil Opt is owned");
+    assert_eq!(lines[3]["missing"], "3 Lightning Bolt (M19) 1");
+    assert_eq!((v["found"].as_i64(), v["missing"].as_str()), (Some(2), Some("1 Shock\n1 Opt\n3 Lightning Bolt (M19) 1")));
+    assert_eq!(get(&f.api, &format!("/api/games/mtg/lots?id={toolkit}"))["lot"]["copies"], 0, "a preview changes nothing");
+
+    let (status, v) = call(&f.api, "POST", &path, Some(json!({ "list": list, "apply": true })));
+    assert_eq!(status, 200, "{v}");
+    assert_eq!((v["moved"].as_i64(), v["lot"]["copies"].as_i64()), (Some(2), Some(2)));
+    assert!(v["undo"]["backup"].as_str().is_some());
+    assert_eq!(lot_purchases(&f, SHOCK, &json!(other)).iter().map(|p| p.2).sum::<i64>(), 1, "still in the other lot");
+    assert_eq!(lot_purchases(&f, SHOCK, &json!(toolkit)), [(0.16, "2018-08-01".to_string(), 1)], "$20 / 125, at the lot's date");
+    // Again: everything owned is in a lot now, so nothing moves.
+    let (_, v) = call(&f.api, "POST", &path, Some(json!({ "list": list, "apply": true })));
+    assert_eq!((v["moved"].as_i64(), v["found"].as_i64()), (Some(0), Some(0)));
+
+    assert_eq!(call(&f.api, "POST", &path, Some(json!({ "list": "\n// nothing\n" }))).0, 400);
+    assert_eq!(call(&f.api, "POST", "/api/games/mtg/lots/list?id=nope", Some(json!({ "list": "1 Shock" }))).0, 404);
+}
+
+#[test]
+fn backups_and_collection_files_keep_lots() {
+    let f = fixture();
+    let (_, lot) = call(
+        &f.api,
+        "POST",
+        "/api/games/mtg/lots",
+        Some(
+            json!({"name": "Toolkit", "total_paid": 4, "acquired_date": "2018-08-01", "count": {"kind": "known", "cards": 2}, "split": "even"}),
+        ),
+    );
+    let id = lot["id"].as_str().unwrap().to_string();
+    call(&f.api, "POST", &format!("/api/games/mtg/lots/cards?id={id}"), Some(json!({"cards": [{"key": SHOCK}]})));
+
+    // The JSON export carries the lot.
+    let file = f.api.handle(&request("GET", "/api/games/mtg/export?format=json", Vec::new())).body().clone();
+    let exported: Value = serde_json::from_slice(&file).unwrap();
+    assert_eq!(exported["lots"][0]["name"], "Toolkit");
+
+    // Deleting the lot (keeping its cards) can be undone: the lot and the cards' lot come back.
+    let (status, v) = call(&f.api, "DELETE", &format!("/api/games/mtg/lots?id={id}&cards=keep"), None);
+    assert_eq!(status, 200, "{v}");
+    assert!(f.svc.lots.get(&id).is_none());
+    let backups = get(&f.api, "/api/games/mtg/backups");
+    assert_eq!((backups[0]["reason"].as_str(), backups[0]["lots"].as_i64()), (Some("lot-delete"), Some(1)));
+    let (status, r) = call(&f.api, "POST", "/api/games/mtg/backups/restore", Some(json!({ "name": v["undo"]["backup"] })));
+    assert_eq!(status, 200, "{r}");
+    assert_eq!(f.svc.lots.get(&id).map(|l| l.name), Some("Toolkit".to_string()));
+    assert_eq!(lot_purchases(&f, SHOCK, &json!(id)), [(2.0, "2018-08-01".to_string(), 2)]);
+    // Restoring the backup taken by the restore goes back to no lot again.
+    call(&f.api, "POST", "/api/games/mtg/backups/restore", Some(json!({ "name": r["undo"]["backup"] })));
+    assert!(f.svc.lots.get(&id).is_none());
+
+    // Importing the collection file into a collection without the lot adds it.
+    let g = fixture();
+    let resp = g.api.handle(&request("POST", "/api/games/mtg/import?preview=1", file.clone()));
+    let p: Value = serde_json::from_slice(resp.body()).unwrap();
+    assert!(p["notes"].as_array().unwrap().iter().any(|n| n.as_str().unwrap().contains("Toolkit")), "{p}");
+    let (status, _) = call(&g.api, "POST", "/api/games/mtg/import/commit", Some(json!({ "token": p["token"] })));
+    assert_eq!(status, 200);
+    assert_eq!(g.svc.lots.get(&id).map(|l| l.total_paid), Some(4.0));
+    // Imported again: the lot is already there, so it isn't added twice.
+    let resp = g.api.handle(&request("POST", "/api/games/mtg/import?preview=1", file));
+    let p: Value = serde_json::from_slice(resp.body()).unwrap();
+    assert!(p["notes"].as_array().unwrap().is_empty(), "{p}");
+    assert_eq!(g.svc.lots.all().len(), 1);
+}
+
+#[test]
+fn copies_in_a_lost_lot() {
+    let f = fixture();
+    let (_, lot) = call(
+        &f.api,
+        "POST",
+        "/api/games/mtg/lots",
+        Some(
+            json!({"name": "Bundle", "total_paid": 3, "acquired_date": "2018-08-01", "count": {"kind": "known", "cards": 2}, "split": "even"}),
+        ),
+    );
+    let id = lot["id"].as_str().unwrap().to_string();
+    call(&f.api, "POST", &format!("/api/games/mtg/lots/cards?id={id}"), Some(json!({"cards": [{"key": SHOCK}]})));
+    assert!(get(&f.api, "/api/games/mtg/lots/lost")["lots"].as_array().unwrap().is_empty());
+    // The lot's record goes (as when an older backup brings back its copies' lot).
+    let forget = || {
+        f.svc
+            .lots
+            .update_all(|all| {
+                all.retain(|l| l.id != id);
+                Ok(())
+            })
+            .unwrap()
+    };
+    forget();
+
+    let lost = get(&f.api, "/api/games/mtg/lots/lost");
+    let l = &lost["lots"][0];
+    assert_eq!(
+        (l["id"].as_str(), l["cards"].as_i64(), l["copies"].as_i64(), l["paid"].as_f64(), l["first_date"].as_str(), l["names"][0].as_str()),
+        (Some(id.as_str()), Some(1), Some(2), Some(3.0), Some("2018-08-01"), Some("Shock"))
+    );
+    // Recovered: a finished lot again, paid what its copies were costed at; their prices stay.
+    let (status, r) = call(&f.api, "POST", "/api/games/mtg/lots/lost", Some(json!({ "id": id, "action": "recover" })));
+    assert_eq!(status, 200, "{r}");
+    assert_eq!(
+        (r["lot"]["name"].as_str(), r["lot"]["total_paid"].as_f64(), r["lot"]["open"].as_bool()),
+        (Some("Recovered lot (2018-08-01)"), Some(3.0), Some(false))
+    );
+    assert_eq!(r["lot"]["copies"], 2);
+    assert_eq!(lot_purchases(&f, SHOCK, &json!(id)), [(1.5, "2018-08-01".to_string(), 2)]);
+    assert!(get(&f.api, "/api/games/mtg/lots/lost")["lots"].as_array().unwrap().is_empty());
+
+    // Released instead: the copies leave the lot and keep their price, with Undo.
+    forget();
+    let (status, r) = call(&f.api, "POST", "/api/games/mtg/lots/lost", Some(json!({ "id": id, "action": "release" })));
+    assert_eq!((status, r["freed"].as_i64()), (200, Some(1)), "{r}");
+    assert!(r["undo"]["backup"].is_string());
+    let p = get(&f.api, &format!("/api/games/mtg/card?key={SHOCK}"))["card"]["purchases"][0].clone();
+    assert_eq!((p["lot"].as_str(), p["price_paid"].as_f64()), (Some(""), Some(1.5)));
+
+    assert_eq!(call(&f.api, "POST", "/api/games/mtg/lots/lost", Some(json!({ "id": id, "action": "recover" }))).0, 404, "nothing lost now");
+}

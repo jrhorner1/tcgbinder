@@ -5,6 +5,7 @@
 use anyhow::{Result, bail};
 
 use super::Store;
+use crate::collection::tags::lot_of;
 use crate::collection::tags::{
     LOT_PREFIX, SYSTEM_PREFIXES, card_has_tag, clean_user_tag, is_system_tag, lot_tag, normalize_tags, same_tag, tags_in_use,
     with_spellings,
@@ -18,6 +19,24 @@ use crate::lots::{LotCopy, LotPrices};
 pub struct CopyPick {
     pub key: String,
     pub quantity: Option<i64>,
+}
+
+/// Copies still marked as bought in a lot whose record is gone (deleted, or lost with an
+/// older backup), by lot.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
+pub struct LostLot {
+    /// The lot's ID, from the copies' `lot:<id>` tag.
+    pub id: String,
+    /// Printings.
+    pub cards: usize,
+    pub copies: i64,
+    /// What the copies were costed at, all together.
+    pub paid: f64,
+    /// The earliest and latest acquired dates among them ("" if none).
+    pub first_date: String,
+    pub last_date: String,
+    /// A few of the cards' names, to recognize the lot by.
+    pub names: Vec<String>,
 }
 
 /// What renaming or deleting a tag did: purchases changed, and the backup taken
@@ -53,6 +72,42 @@ impl Store {
             }
             out
         })
+    }
+
+    /// The lots copies are marked as bought in that `exists` says aren't there, with
+    /// what they hold; in ID order.
+    pub fn lost_lots(&self, exists: impl Fn(&str) -> bool) -> Vec<LostLot> {
+        let mut out: std::collections::BTreeMap<String, LostLot> = Default::default();
+        self.file.read(|data| {
+            for c in data.cards.values() {
+                let mut counted = std::collections::HashSet::new();
+                for (_, _, p) in c.copies.each() {
+                    let Some(id) = lot_of(&p.tags).filter(|id| !exists(id)) else { continue };
+                    let l = out.entry(id.to_string()).or_insert_with(|| LostLot { id: id.to_string(), ..LostLot::default() });
+                    if counted.insert(id.to_string()) {
+                        l.cards += 1;
+                        if l.names.len() < 3 {
+                            l.names.push(c.name.clone());
+                        }
+                    }
+                    l.copies += p.quantity;
+                    l.paid += p.price_paid * p.quantity as f64;
+                    let d = &p.acquired_date;
+                    if !d.is_empty() && (l.first_date.is_empty() || *d < l.first_date) {
+                        l.first_date = d.clone();
+                    }
+                    if *d > l.last_date {
+                        l.last_date = d.clone();
+                    }
+                }
+            }
+        });
+        out.into_values()
+            .map(|mut l| {
+                l.paid = (l.paid * 100.0).round() / 100.0;
+                l
+            })
+            .collect()
     }
 
     /// Sets the price paid (from `prices`) and acquired date of every copy in a lot, in

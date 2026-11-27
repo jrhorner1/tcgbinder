@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use tcgbinder_core::collection::{
-    BulkChange, Card, Condition, Query, SortKey, card_has_tag, card_key, clean_user_tag, is_any, is_system_tag, lot_of, lot_tag,
+    BulkChange, Card, Condition, Copies, Query, SortKey, card_has_tag, card_key, clean_user_tag, is_any, is_system_tag, lot_of, lot_tag,
     round_cents, sort_cards, split_tags, unique_cards, with_printing,
 };
 use tcgbinder_core::service::GameService;
@@ -85,7 +85,7 @@ impl Api {
     /// named f.<filter name>. Sorting: sort (a [`SortKey`] name)
     /// and dir (asc or desc); without sort, the Card order setting.
     pub(crate) fn cards(&self, g: &GameService, params: &HashMap<String, String>) -> Result {
-        let (filtered, key, descending) = self.filtered_cards(g, params)?;
+        let (filtered, key, descending) = self.filtered_cards(g, params, false)?;
         let card_count: i64 = filtered.iter().map(Card::copy_count).sum();
         let sets: HashSet<String> = filtered.iter().map(|c| c.set.to_uppercase()).collect();
         let market: f64 = filtered.iter().map(|c| c.market_value().0).sum();
@@ -101,7 +101,15 @@ impl Api {
     }
 
     /// The cards `GET /cards` would list for these parameters, and the order used.
-    pub(crate) fn filtered_cards(&self, g: &GameService, params: &HashMap<String, String>) -> Result<(Vec<Card>, SortKey, bool)> {
+    /// The cards the filters in `params` match, sorted. With `copies_only`, each card
+    /// keeps only the copies the filters pick (a finish, a lot, a tag…), as the table
+    /// shows them; otherwise every copy.
+    pub(crate) fn filtered_cards(
+        &self,
+        g: &GameService,
+        params: &HashMap<String, String>,
+        copies_only: bool,
+    ) -> Result<(Vec<Card>, SortKey, bool)> {
         let filters = g.game.filters();
         let get = |k: &str| params.get(k).map(|v| v.trim().to_string()).unwrap_or_default();
         let flag = |k: &str| matches!(get(k).as_str(), "1" | "true" | "yes");
@@ -123,8 +131,11 @@ impl Api {
         // `lot=`: a lot's ID, or "none" for cards with copies in no lot.
         let no_lot = get("lot") == "none";
         let lot = Some(get("lot")).filter(|l| !l.is_empty() && !no_lot).map(|l| lot_tag(&l));
+        let lot_copy = lot.clone();
         let q = Query {
             text: get("q"),
+            // The list's filter box keeps to names, sets, numbers and tags.
+            rules_text: false,
             set: get("set"),
             rarity: get("rarity"),
             finish: get("finish"),
@@ -166,7 +177,24 @@ impl Api {
                 (key, descending)
             }
         };
-        Ok((sort_cards(g.store.cards_where(q.matcher()), key, descending, g.game.rarities()), key, descending))
+        let mut cards = g.store.cards_where(q.matcher());
+        if copies_only {
+            // Only the copies the filters pick, as the table shows them.
+            let keeps = |c: &Card, f: &str, cond, p: &Purchase| {
+                q.keeps_copy(c, f, cond, p)
+                    && lot_copy.as_ref().is_none_or(|tag| p.tags.iter().any(|t| t.eq_ignore_ascii_case(tag)))
+                    && (!no_lot || lot_of(&p.tags).is_none())
+            };
+            for c in &mut cards {
+                let mut copies = Copies::default();
+                for (f, cond, p) in c.copies.each().filter(|(f, cond, p)| keeps(c, f, *cond, p)) {
+                    copies.add(f, cond, p.clone());
+                }
+                c.copies = copies;
+            }
+            cards.retain(|c| c.copy_count() > 0);
+        }
+        Ok((sort_cards(cards, key, descending, g.game.rarities()), key, descending))
     }
 
     pub(crate) fn find(&self, g: &GameService, key: &str) -> Result<Card> {
@@ -335,7 +363,7 @@ impl Api {
                 change.apply(&c).map_err(|e| bad(format!("{e:#}")))?;
             }
         }
-        let backup = g.store.backup(if change.delete { "bulk-delete" } else { "bulk-edit" }).map_err(internal)?;
+        let backup = g.backup(if change.delete { "bulk-delete" } else { "bulk-edit" }).map_err(internal)?;
         let res = g.store.bulk_edit(&req.keys, &change).map_err(internal)?;
         tracing::info!(game = g.game.id(), cards = req.keys.len(), updated = res.updated, deleted = res.deleted, "bulk edit");
         let mut answer = serde_json::to_value(res).map_err(|e| internal(e.into()))?;

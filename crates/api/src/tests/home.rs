@@ -5,14 +5,22 @@ use super::*;
 #[test]
 fn pages_and_info() {
     let f = fixture();
-    for p in ["/", "/js/main.js", "/js/pages/home.js", "/app.css", "/icon.png"] {
-        let resp = f.api.handle(&request("GET", p, Vec::new()));
-        assert_eq!(resp.status(), 200, "{p}");
-        assert_eq!(resp.headers()["X-Content-Type-Options"], "nosniff");
+    // The page answers whether or not the UI is built (ui/dist); unbuilt, it says how.
+    let page = f.api.handle(&request("GET", "/", Vec::new()));
+    assert_eq!(page.status(), 200);
+    assert_eq!(page.headers()["X-Content-Type-Options"], "nosniff");
+    let html = String::from_utf8_lossy(page.body()).into_owned();
+    // Built, its script loads, as a module only does with a JavaScript type.
+    if let Some(at) = html.find("./assets/") {
+        let script = &html[at + 1..at + html[at..].find('"').unwrap()];
+        if script.ends_with(".js") {
+            let js = f.api.handle(&request("GET", script, Vec::new()));
+            assert_eq!(js.status(), 200, "{script}");
+            assert_eq!(js.headers()["Content-Type"], "text/javascript");
+        }
+    } else {
+        assert!(html.contains("npm run build"), "{html}");
     }
-    // Module scripts load only with a JavaScript type.
-    let js = f.api.handle(&request("GET", "/js/main.js", Vec::new()));
-    assert_eq!(js.headers()["Content-Type"], "text/javascript");
     assert_eq!(f.api.handle(&request("GET", "/nope.txt", Vec::new())).status(), 404);
     let info = get(&f.api, "/api/info");
     assert_eq!(info["games"][0]["ID"], "mtg");

@@ -140,15 +140,22 @@ impl Api {
         })))
     }
 
-    /// Searches every game's collection.
+    /// Searches every game's collection: names, sets, numbers, tags and rules text. Cards
+    /// whose name has every word come first, then those found by the rest.
     pub(crate) fn search_all(&self, q: &str) -> Reply {
         let q = q.trim();
+        let words: Vec<String> = q.to_lowercase().split_whitespace().map(str::to_string).collect();
         let games: Vec<Value> = self
             .games
             .iter()
             .map(|g| {
-                let matches =
-                    sort_cards(g.store.cards_where(Query { text: q.into(), ..Default::default() }.matcher()), SortKey::Name, false, &[]);
+                let found = g.store.cards_where(Query { text: q.into(), rules_text: true, ..Default::default() }.matcher());
+                let mut matches = sort_cards(found, SortKey::Name, false, &[]);
+                let by_name = |c: &Card| {
+                    let name = c.name.to_lowercase();
+                    words.iter().all(|w| name.contains(w.as_str()))
+                };
+                matches.sort_by_key(|c| !by_name(c)); // stable: each part stays by name
                 let shown = &matches[..matches.len().min(200)];
                 json!({ "Game": g.game.id(), "Name": g.game.name(), "Total": matches.len(), "Cards": views(shown) })
             })
